@@ -238,20 +238,33 @@ function pointAdd([X1, Y1, Z1], [X2, Y2, Z2]) {
   return [X3, Y3, Z3];
 }
 
-function scalarMulG(k) {
+function scalarMulPoint(k, px, py) {
+  const x = mod(px, SECP256K1_P);
+  const y = mod(py, SECP256K1_P);
+  // Verify point lies on secp256k1: y^2 == x^3 + 7 (mod p)
+  const lhs = mod(y * y, SECP256K1_P);
+  const rhs = mod(mod(x * x, SECP256K1_P) * x + 7n, SECP256K1_P);
+  if (lhs !== rhs) {
+    throw new Error('Invalid peer secp256k1 public key point');
+  }
   let n = mod(k, SECP256K1_N);
+  if (n === 0n) throw new Error('Invalid zero ECDH scalar');
   let res = [0n, 1n, 0n];
-  let addend = [SECP_GX, SECP_GY, 1n];
+  let addend = [x, y, 1n];
   while (n > 0n) {
     if (n & 1n) res = pointAdd(res, addend);
     addend = pointDouble(addend);
     n >>= 1n;
   }
-  if (res[2] === 0n) throw new Error('Invalid point at infinity');
+  if (res[2] === 0n) throw new Error('Invalid ECDH point at infinity');
   const zInv = modInv(res[2], SECP256K1_P);
   const zInv2 = mod(zInv * zInv);
   const zInv3 = mod(zInv2 * zInv);
   return [mod(res[0] * zInv2), mod(res[1] * zInv3)];
+}
+
+function scalarMulG(k) {
+  return scalarMulPoint(k, SECP_GX, SECP_GY);
 }
 
 function bigIntTo32Bytes(n) {
@@ -312,6 +325,64 @@ export function computeAddress(privateKeyHex) {
   const pubUncompressed = concatBytes(bigIntTo32Bytes(px), bigIntTo32Bytes(py));
   const hash = keccak256Bytes(pubUncompressed);
   return bytesToHex(hash.slice(12, 32), true);
+}
+
+/**
+ * Compute a 32-byte `secp256k1` ECDH shared secret (`keccak256(domain || sharedX)`)
+ * from `privateKeyHex` and `peerUncompressedPubHex` (`64`-byte `X||Y` or `65`-byte `0x04||X||Y`).
+ */
+export function ecdhSharedSecretBytes(
+  privateKeyHex,
+  peerUncompressedPubHex,
+  domain = 'SLX_ECDH_V1'
+) {
+  const normPriv = normalizePrivateKeyHex(privateKeyHex);
+  const d = bytesToBigInt(hexToBytes(normPriv));
+  const raw =
+    peerUncompressedPubHex instanceof Uint8Array
+      ? peerUncompressedPubHex
+      : hexToBytes(peerUncompressedPubHex);
+  let xy;
+  if (raw.length === 65 && raw[0] === 0x04) {
+    xy = raw.slice(1, 65);
+  } else if (raw.length === 64) {
+    xy = raw;
+  } else {
+    throw new Error('ECDH expects 64-byte raw X||Y or 65-byte 0x04||X||Y uncompressed public key');
+  }
+  const px = bytesToBigInt(xy.slice(0, 32));
+  const py = bytesToBigInt(xy.slice(32, 64));
+  const [sx] = scalarMulPoint(d, px, py);
+  return keccak256Bytes(concatBytes(utf8ToBytes(domain), bigIntTo32Bytes(sx)));
+}
+
+/**
+ * Symmetric Keccak-256 CTR stream cipher over an `ecdhSharedSecretBytes` key + context nonce.
+ * Encrypts and decrypts identically (`ecdhXorTransform(key, ctx, cipher) === plain`).
+ */
+export function ecdhXorTransform(sharedSecret32, contextBytes, payloadBytes) {
+  const key = typeof sharedSecret32 === 'string' ? hexToBytes(sharedSecret32) : sharedSecret32;
+  const ctx =
+    typeof contextBytes === 'string'
+      ? contextBytes.startsWith('0x')
+        ? hexToBytes(contextBytes)
+        : utf8ToBytes(contextBytes)
+      : contextBytes;
+  const data = typeof payloadBytes === 'string' ? hexToBytes(payloadBytes) : payloadBytes;
+  const out = new Uint8Array(data.length);
+  const ctr = new Uint8Array(4);
+  for (let off = 0, blk = 0; off < data.length; off += 32, blk++) {
+    ctr[0] = (blk >>> 24) & 0xff;
+    ctr[1] = (blk >>> 16) & 0xff;
+    ctr[2] = (blk >>> 8) & 0xff;
+    ctr[3] = blk & 0xff;
+    const stream = keccak256Bytes(concatBytes(key, ctx, ctr));
+    const take = Math.min(32, data.length - off);
+    for (let i = 0; i < take; i++) {
+      out[off + i] = data[off + i] ^ stream[i];
+    }
+  }
+  return out;
 }
 
 export function signSecp256k1(privateKeyHex, digest32) {

@@ -11,6 +11,8 @@ import {
   generatePrivateKeyHex,
   deriveKeypairInfo,
   computeAddress,
+  ecdhSharedSecretBytes,
+  ecdhXorTransform,
   signSecp256k1,
   SECP256K1_N,
   signLexiconTx,
@@ -109,7 +111,17 @@ assert.equal(compiled.serverFilters.length, 2);
 assert.equal(matchesCompiledFilter({ address: cA, topics: [tB] }, compiled), true);
 assert.equal(matchesCompiledFilter({ address: cA, topics: ['0x' + '33'.repeat(32)] }, compiled), false);
 
-// 6. Headless Wallet Manager
+// 6. Headless Wallet Manager & secp256k1 ECDH Round-Trip
+const kp2 = deriveKeypairInfo(freshPriv);
+const sharedAB = ecdhSharedSecretBytes(kp1.privateKey, kp2.uncompressedPubKey);
+const sharedBA = ecdhSharedSecretBytes(kp2.privateKey, kp1.uncompressedPubKey);
+assert.equal(bytesToHex(sharedAB), bytesToHex(sharedBA), 'ECDH symmetry failed');
+const secretClue = new Uint8Array([1, 14, 99, 204, 77]);
+const cipher = ecdhXorTransform(sharedAB, 'CASE_42', secretClue);
+assert.notEqual(bytesToHex(cipher), bytesToHex(secretClue));
+const plain = ecdhXorTransform(sharedBA, 'CASE_42', cipher);
+assert.equal(bytesToHex(plain), bytesToHex(secretClue), 'ECDH stream decrypt failed');
+
 const w = new SlxWalletManager({ privateKey: kp1.privateKey });
 assert.equal(w.keypair.address, kp1.address);
 w.saveIdentityRecord({ identityAddr: cA, nickname: 'Valkyrie' });

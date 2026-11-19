@@ -86,6 +86,16 @@ export function generatePrivateKeyHex(): string;
 export function normalizePrivateKeyHex(rawInput: string): string;
 export function deriveKeypairInfo(privateKeyHex: string): KeypairInfo;
 export function computeAddress(privateKeyHex: string): string;
+export function ecdhSharedSecretBytes(
+  privateKeyHex: string,
+  peerUncompressedPubHex: string | Uint8Array,
+  domain?: string
+): Uint8Array;
+export function ecdhXorTransform(
+  sharedSecret32: string | Uint8Array,
+  contextBytes: string | Uint8Array,
+  payloadBytes: string | Uint8Array
+): Uint8Array;
 export function signSecp256k1(
   privateKeyHex: string,
   digest32: string | Uint8Array

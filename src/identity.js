@@ -551,6 +551,22 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Dead Drop HFS Match',
     placeholder: 'e.g. Berlin Station Leak Hunt',
   },
+  SOVEREIGN_RISK: {
+    typeName: 'SOVEREIGN_RISK',
+    icon: '🌍',
+    shortLabel: 'Risk Theater',
+    deployBtnText: '+ New Theater',
+    modalTitle: 'Deploy & Register New Sovereign Risk World Theater',
+    placeholder: 'e.g. Pacific Rim Conquest Theater',
+  },
+  MANSION_CLUEDO: {
+    typeName: 'MANSION_CLUEDO',
+    icon: '🔎',
+    shortLabel: 'Mansion Parlor',
+    deployBtnText: '+ New Parlor',
+    modalTitle: 'Deploy & Register New Tudor Cipher Cluedo Parlor',
+    placeholder: 'e.g. Blackwood Manor Mystery',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {
