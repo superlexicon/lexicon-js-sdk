@@ -438,9 +438,12 @@ export function mountSlxWalletHeader({
                       <span style="color:#6ee7b7;font-weight:700;">✓ ${escapeHtmlText(tx.contractLabel)}.${escapeHtmlText(tx.fnLabel)} <span style="color:#94a3b8;">(${tx.selector})</span></span>
                       <span style="color:#fcd34d;">Blk #${tx.blockNumber} • Nonce #${tx.nonce}</span>
                     </div>
-                    <div style="color:#cbd5e1;display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
+                    <div style="color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
                       <span>txHash: <strong style="color:#7dd3fc;">${shortHex(tx.txHash, 12, 8)}</strong></span>
-                      <span>from: <strong>${shortHex(tx.from, 8, 6)}</strong> &rarr; to: <strong>${shortHex(tx.to, 8, 6)}</strong></span>
+                      <div style="display:inline-flex;align-items:center;gap:0.35rem;">
+                        <button type="button" class="slx-mini-btn" data-copy="${escapeHtmlText(tx.txHash)}" style="padding:0.16rem 0.45rem;font-size:0.65rem;">Copy Hash</button>
+                        <a href="/?tx=${encodeURIComponent(tx.txHash)}#slide-4" class="slx-mini-btn sky" data-verify-tx="${escapeHtmlText(tx.txHash)}" style="padding:0.16rem 0.5rem;font-size:0.65rem;text-decoration:none;">🔍 Verify in Explorer ↗</a>
+                      </div>
                     </div>
                   </div>
                 `
@@ -472,6 +475,18 @@ export function mountSlxWalletHeader({
         navigator.clipboard?.writeText(val);
         statusBanner = `Copied ${shortHex(val, 10, 6)} to clipboard.`;
         renderModal();
+      });
+    });
+    modal.querySelectorAll('[data-verify-tx]').forEach((link) => {
+      link.addEventListener('click', (ev) => {
+        const txHash = link.getAttribute('data-verify-tx');
+        const path = window.location?.pathname || '';
+        if (path === '/' || path.endsWith('/index.html')) {
+          ev.preventDefault();
+          modal.classList.remove('is-open');
+          if (typeof window.goToSlide === 'function') window.goToSlide(3);
+          window.dispatchEvent(new CustomEvent('slx:inspect-tx', { detail: { txHash } }));
+        }
       });
     });
     modal.querySelector('#slxBtnTogglePriv')?.addEventListener('click', () => {
@@ -846,7 +861,7 @@ export function mountSlxChainBar({
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/#slide-4',
+  explorerHref = '/?view=explorer#slide-4',
   embedded = false,
 } = {}) {
   if (typeof document === 'undefined') return null;
@@ -903,7 +918,7 @@ export function mountSlxChainBar({
           ? `<button type="button" class="slx-cb-chip clickable" data-cb="nodebtn" title="Toggle RPC Node &amp; Deployment Inspector">⚙ Node</button>`
           : ''
       }
-      <a class="slx-cb-link" href="${escapeHtmlText(explorerHref)}" title="Open Subnet 1 Live Validator &amp; HFS Explorer">📊 Explorer ↗</a>
+      <a class="slx-cb-link" data-cb="explorer" href="${escapeHtmlText(explorerHref)}" title="Open Subnet 1 Cryptographic Block Explorer &amp; Receipt Verifier">📊 Explorer ↗</a>
     </div>
   `;
   host.appendChild(bar);
@@ -919,6 +934,7 @@ export function mountSlxChainBar({
     totaltxs: bar.querySelector('[data-cb="totaltxs"]'),
     hfs: bar.querySelector('[data-cb="hfs"]'),
     nodebtn: bar.querySelector('[data-cb="nodebtn"]'),
+    explorer: bar.querySelector('[data-cb="explorer"]'),
     phases: Array.from(bar.querySelectorAll('[data-cb-phase]')),
   };
 
@@ -1062,6 +1078,18 @@ export function mountSlxChainBar({
 
   refs.nodebtn?.addEventListener('click', () => {
     if (typeof onToggleNodeDrawer === 'function') onToggleNodeDrawer();
+  });
+
+  refs.explorer?.addEventListener('click', (ev) => {
+    const path = window.location?.pathname || '';
+    if (
+      (path === '/' || path.endsWith('/index.html')) &&
+      String(explorerHref).includes('#slide-4')
+    ) {
+      ev.preventDefault();
+      if (typeof window.goToSlide === 'function') window.goToSlide(3);
+      window.dispatchEvent(new CustomEvent('slx:open-explorer'));
+    }
   });
 
   const statsSub = slxSubscribeStats(rpcUrlFn, (snap) => {
@@ -1980,7 +2008,7 @@ export function mountSlxUnifiedHeader({
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/#slide-4',
+  explorerHref = '/?view=explorer#slide-4',
   onWalletSwitch = null,
   getAppPeers = null,
   socialClient = null,

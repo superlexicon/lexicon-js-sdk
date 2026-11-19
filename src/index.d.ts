@@ -237,6 +237,7 @@ export function slxWatchChainApp(opts?: {
 // identity & registry
 export function readOnChainIdentityNickname(rpcUrl: string, identityAddr: string): Promise<string>;
 export function readOnChainIdentityOwner(rpcUrl: string, identityAddr: string): Promise<string>;
+export function lookupCachedSignedTx(txHash: string): Record<string, any> | null;
 
 export class SlxWalletManager {
   keypair: KeypairInfo;

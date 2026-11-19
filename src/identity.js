@@ -493,9 +493,38 @@ export class SlxWalletManager {
     };
     this.txHistory.unshift(entry);
     if (this.txHistory.length > 35) this.txHistory.length = 35;
+    saveCachedSignedTx(entry);
     this._emit();
     return entry;
   }
+}
+
+const STORAGE_KEY_SIGNED_TX_PROOFS = 'slx_signed_tx_proof_cache_v1';
+
+export function lookupCachedSignedTx(txHash) {
+  if (!txHash || typeof localStorage === 'undefined') return null;
+  try {
+    const map = JSON.parse(localStorage.getItem(STORAGE_KEY_SIGNED_TX_PROOFS) || '{}');
+    return map[String(txHash).toLowerCase()] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveCachedSignedTx(entry) {
+  if (!entry?.txHash || typeof localStorage === 'undefined') return;
+  try {
+    const map = JSON.parse(localStorage.getItem(STORAGE_KEY_SIGNED_TX_PROOFS) || '{}');
+    const key = String(entry.txHash).toLowerCase();
+    map[key] = entry;
+    const keys = Object.keys(map);
+    if (keys.length > 60) {
+      for (const oldKey of keys.slice(0, keys.length - 60)) {
+        delete map[oldKey];
+      }
+    }
+    localStorage.setItem(STORAGE_KEY_SIGNED_TX_PROOFS, JSON.stringify(map));
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------------------
