@@ -32,6 +32,7 @@ function escapeHtmlText(s) {
 const FALLBACK_CSS = `
 .slx-sticky-top-stack{position:sticky;top:0;z-index:45;display:flex;flex-direction:column;width:100%;flex-shrink:0}
 .slx-chain-bar{display:flex;align-items:center;justify-content:space-between;gap:.65rem;width:100%;height:34px;min-height:34px;padding:0 .9rem;background:linear-gradient(90deg,#040914 0%,#071226 50%,#040914 100%);border-bottom:1px solid rgba(56,189,248,.28);font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.68rem;color:#cbd5e1;white-space:nowrap;overflow-x:auto;scrollbar-width:none;flex-shrink:0;z-index:50}
+.slx-chain-bar.embedded{height:28px;min-height:28px;padding:0 1rem;background:rgba(4,9,20,.92);border-top:1px solid rgba(56,189,248,.2);border-bottom:none;font-size:.65rem}
 .slx-chain-bar::-webkit-scrollbar{display:none}
 .slx-cb-group{display:inline-flex;align-items:center;gap:.48rem;flex-shrink:0}
 .slx-cb-sep{color:rgba(100,116,139,.45);user-select:none}
@@ -86,7 +87,7 @@ const FALLBACK_CSS = `
 .slx-social-badge.violet{background:rgba(168,85,247,.28);border:1px solid rgba(192,132,252,.65);color:#f3e8ff}
 .slx-social-badge.amber{background:rgba(245,158,11,.28);border:1px solid rgba(251,191,36,.85);color:#fde68a;box-shadow:0 0 8px rgba(245,158,11,.45)}
 .slx-social-badge.cyan{background:rgba(14,165,233,.28);border:1px solid rgba(56,189,248,.8);color:#e0f2fe}
-.slx-social-drawer-backdrop{position:fixed;top:34px;right:0;bottom:0;left:0;z-index:9850;background:rgba(2,6,23,.48);backdrop-filter:blur(3px);display:none;justify-content:flex-end}
+.slx-social-drawer-backdrop{position:fixed;top:var(--slx-unified-hdr-h,76px);right:0;bottom:0;left:0;z-index:9850;background:rgba(2,6,23,.48);backdrop-filter:blur(3px);display:none;justify-content:flex-end}
 .slx-social-drawer-backdrop.is-open{display:flex}
 .slx-social-drawer{width:min(440px,96vw);height:100%;background:linear-gradient(180deg,#080f1e 0%,#0b1326 100%);border-left:1.5px solid rgba(56,189,248,.45);box-shadow:-20px 0 56px rgba(0,0,0,.78);color:#f1f5f9;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow:hidden}
 .slx-soc-hdr{padding:.75rem .95rem .6rem;background:#060b17;border-bottom:1px solid rgba(71,85,105,.45);display:flex;flex-direction:column;gap:.52rem;flex-shrink:0}
@@ -104,6 +105,31 @@ const FALLBACK_CSS = `
 .slx-soc-msg-bubble{padding:.48rem .64rem;border-radius:.6rem;background:rgba(15,23,42,.92);border:1px solid rgba(71,85,105,.5);display:flex;flex-direction:column;gap:.2rem;font-size:.75rem}
 .slx-soc-msg-bubble.mine{background:rgba(12,74,110,.38);border-color:rgba(56,189,248,.55);margin-left:1.1rem}
 .slx-soc-composer{padding:.65rem .95rem;background:#060b17;border-top:1px solid rgba(71,85,105,.48);display:flex;gap:.42rem;align-items:center;flex-shrink:0}
+.slx-unified-header{position:sticky;top:0;z-index:60;display:flex;flex-direction:column;width:100%;flex-shrink:0;background:linear-gradient(180deg,#0d172b 0%,#091122 100%);border-bottom:1px solid rgba(56,189,248,.34);box-shadow:0 8px 28px rgba(0,0,0,.45);color:#f8fafc;font-family:Inter,system-ui,-apple-system,sans-serif}
+.slx-uh-main-row{display:flex;align-items:center;justify-content:space-between;gap:.75rem;min-height:48px;padding:.38rem 1rem;flex-wrap:wrap}
+.slx-uh-left{display:flex;align-items:center;gap:.7rem;min-width:0;flex:1 1 auto}
+.slx-uh-logo-link{display:inline-flex;align-items:center;flex-shrink:0;text-decoration:none;transition:opacity .15s ease,transform .15s ease}
+.slx-uh-logo-link:hover{opacity:.92;transform:translateY(-1px)}
+.slx-uh-logo{height:36px;width:auto;object-fit:contain;display:block}
+@media(max-width:640px){.slx-uh-logo{height:28px}}
+.slx-uh-divider{width:1px;height:30px;background:rgba(100,116,139,.48);flex-shrink:0}
+.slx-uh-titles{display:flex;flex-direction:column;min-width:0;gap:1px}
+.slx-uh-title{font-size:.96rem;font-weight:800;color:#f8fafc;letter-spacing:-.015em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slx-uh-subtitle{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.66rem;color:#94a3b8;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:900px){.slx-uh-subtitle{display:none}}
+.slx-uh-context{display:inline-flex;align-items:center;gap:.42rem;flex-wrap:wrap;margin-left:.25rem}
+.slx-uh-right{display:inline-flex;align-items:center;gap:.38rem;flex-wrap:wrap;flex-shrink:0}
+.slx-uh-extra{display:inline-flex;align-items:center;gap:.36rem;flex-wrap:wrap}
+.slx-uh-apps-wrap{position:relative;display:inline-flex}
+.slx-uh-apps-btn{display:inline-flex;align-items:center;gap:.36rem;padding:.32rem .64rem;border-radius:.6rem;background:rgba(14,165,233,.14);border:1px solid rgba(56,189,248,.55);color:#e0f2fe;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.69rem;font-weight:700;cursor:pointer;transition:all .15s ease;white-space:nowrap}
+.slx-uh-apps-btn:hover,.slx-uh-apps-btn[aria-expanded='true']{background:rgba(14,165,233,.26);border-color:#38bdf8;color:#fff}
+.slx-uh-apps-menu{position:absolute;top:calc(100% + 6px);right:0;width:295px;max-height:82vh;overflow-y:auto;padding:.45rem;border-radius:.8rem;background:#0a1224;border:1.5px solid rgba(56,189,248,.52);box-shadow:0 20px 48px rgba(0,0,0,.78);display:none;flex-direction:column;gap:.18rem;z-index:9930}
+.slx-uh-apps-menu.is-open{display:flex}
+.slx-uh-apps-group-lbl{padding:.28rem .48rem .12rem;font-family:monospace;font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#64748b}
+.slx-uh-app-item{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.42rem .55rem;border-radius:.5rem;border:1px solid transparent;color:#e2e8f0;text-decoration:none;transition:all .13s ease}
+.slx-uh-app-item:hover{background:rgba(30,41,59,.85);border-color:rgba(56,189,248,.35);color:#fff}
+.slx-uh-app-item.active{background:rgba(14,165,233,.18);border-color:rgba(56,189,248,.65);color:#7dd3fc}
+.slx-uh-suite-pills{display:inline-flex;align-items:center;gap:.34rem;flex-wrap:wrap}
 `;
 
 export function injectSlxUiStyles() {
@@ -255,9 +281,8 @@ export function mountSlxWalletHeader({
       <span id="slxWalletAddrBadge">${escapeHtmlText(formatPillLabel())}</span>
     </button>
     <button type="button" class="slx-wasm-proof-pill" id="slxWasmOpenBtn" title="Inspect live signed Subnet 1 EIP-155 transactions">
-      <span id="slxWasmCountBadge">📡 Subnet 1 Live</span>
-      <span style="opacity:0.45;">|</span>
-      <span id="slxTxCountBadge">0 Signed Txs</span>
+      <span>📜</span>
+      <span id="slxTxCountBadge">0 Txs</span>
     </button>
   `;
   mountContainer.prepend(wrap);
@@ -284,7 +309,7 @@ export function mountSlxWalletHeader({
 
     const txBadgeEl = wrap.querySelector('#slxTxCountBadge');
     if (txBadgeEl) {
-      txBadgeEl.textContent = `${wallet.txHistory.length} Signed Tx${wallet.txHistory.length === 1 ? '' : 's'}`;
+      txBadgeEl.textContent = `${wallet.txHistory.length} Tx${wallet.txHistory.length === 1 ? '' : 's'}`;
     }
 
     if (!modal.classList.contains('is-open')) return;
@@ -817,6 +842,7 @@ export function mountSlxChainBar({
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
   explorerHref = '/dashboard.html',
+  embedded = false,
 } = {}) {
   if (typeof document === 'undefined') return null;
   injectSlxUiStyles();
@@ -835,7 +861,7 @@ export function mountSlxChainBar({
   host.innerHTML = '';
 
   const bar = document.createElement('div');
-  bar.className = 'slx-chain-bar';
+  bar.className = embedded ? 'slx-chain-bar embedded' : 'slx-chain-bar';
   bar.setAttribute('role', 'region');
   bar.setAttribute('aria-label', 'SuperLexicon Live Blockchain Telemetry');
   bar.innerHTML = `
@@ -1839,6 +1865,349 @@ export function mountSlxSocialWidgets({
       unsubClient();
       unsubWallet();
       pillWrap.remove();
+    },
+  };
+}
+
+export const SLX_PLATFORM_APPS = [
+  {
+    id: 'deck',
+    icon: '📽️',
+    label: 'Presentation Slides',
+    shortLabel: 'Slides Deck',
+    sub: 'Blockchain 3.0 & HFS Architecture',
+    href: '/',
+    group: 'SuperLexicon Platform',
+  },
+  {
+    id: 'explorer',
+    icon: '📊',
+    label: 'Subnet 1 Explorer',
+    shortLabel: 'Explorer',
+    sub: 'Live BFT Validators & HFS Metrics',
+    href: '/dashboard.html',
+    group: 'SuperLexicon Platform',
+  },
+  {
+    id: 'dex',
+    icon: '📈',
+    label: 'DEX Central Limit Book',
+    shortLabel: 'DEX CLOB',
+    sub: '16 Multi-Asset Orderbooks',
+    href: '/dex.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
+    id: 'charter',
+    icon: '🏛️',
+    label: 'CorporateCharter',
+    shortLabel: 'Charter',
+    sub: 'Governance, Quorums & Share Auctions',
+    href: '/charter.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
+    id: 'commerce',
+    icon: '🛒',
+    label: 'E-Commerce Storefront',
+    shortLabel: 'E-Commerce',
+    sub: 'ProductLedger & Double-Entry Retail',
+    href: '/commerce.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
+    id: 'social',
+    icon: '📡',
+    label: 'CommonsRF Social',
+    shortLabel: 'CommonsRF',
+    sub: 'Radio-Bounded Guild & Storefronts',
+    href: '/social.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
+    id: 'battleship',
+    icon: '⚓',
+    label: 'Phantom Fleet',
+    shortLabel: 'Phantom Fleet',
+    sub: '100-Player Naval Warfare',
+    href: '/battleship.html',
+    group: 'Multiplayer On-Chain Games',
+  },
+  {
+    id: 'hegemony',
+    icon: '⬢',
+    label: 'Fractured Hegemony',
+    shortLabel: 'Hegemony',
+    sub: 'Simultaneous World Conquest',
+    href: '/hegemony.html',
+    group: 'Multiplayer On-Chain Games',
+  },
+  {
+    id: 'cipher-noir',
+    icon: '🔐',
+    label: 'Cipher Noir',
+    shortLabel: 'Cipher Noir',
+    sub: 'ECDH Sabotage Deduction',
+    href: '/cipher-noir.html',
+    group: 'Multiplayer On-Chain Games',
+  },
+];
+
+const APP_ID_ALIASES = {
+  slides: 'deck',
+  presentation: 'deck',
+  dashboard: 'explorer',
+  'commons-rf': 'social',
+  commonsrf: 'social',
+  'phantom-fleet': 'battleship',
+  fleet: 'battleship',
+  noir: 'cipher-noir',
+};
+
+/**
+ * Standardized 2-Row Unified Header (`mountSlxUnifiedHeader`)
+ *
+ * Unifies the SuperLexicon Presentation Slides header with all Subnet 1 App UIs and the Live
+ * Explorer (`~76px` sticky header):
+ *  - Row 1 (`48px`): SuperLexicon Logo (`/`), Title & Subtitle, optional HFS Context Slot,
+ *    optional App Action Slot, `⊞ Apps ▾` Experience Switcher, `👥 Network`, `💬 Messages`,
+ *    and `🪪 Identity / Wallet` + `📜 Txs`.
+ *  - Row 2 (`28px`): Integrated real-time Subnet 1 Blockchain Telemetry Strip (`mountSlxChainBar`).
+ */
+export function mountSlxUnifiedHeader({
+  mountContainer = null,
+  wallet = null,
+  activeAppId = 'deck',
+  title = 'SuperLexicon — Blockchain 3.0 & Decentralized Apps',
+  subtitle = 'Infrastructure-Free Radio Mesh • Zero Gas, Zero ISPs • Hardware-Native Autonomous Ecosystem',
+  logoSrc = '/assets/presentation/slide_asset_01_ff6f13a11e4a.png',
+  logoHref = '/',
+  rpcUrlFn = () => getDefaultNodeWsUrl(),
+  getContractAddr = () => '',
+  getContractLabel = () => 'HFS',
+  onToggleNodeDrawer = null,
+  explorerHref = '/dashboard.html',
+  onWalletSwitch = null,
+  getAppPeers = null,
+  socialClient = null,
+  contextElements = [],
+  extraElements = [],
+  appsList = SLX_PLATFORM_APPS,
+} = {}) {
+  if (typeof document === 'undefined') return null;
+  injectSlxUiStyles();
+
+  let host = mountContainer;
+  if (!host) {
+    host = document.getElementById('slxUnifiedHeaderMount');
+  }
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'slxUnifiedHeaderMount';
+    document.body.prepend(host);
+  }
+
+  host.innerHTML = '';
+
+  const canonicalActiveId = APP_ID_ALIASES[activeAppId] || activeAppId;
+  const activeAppSpec = appsList.find((a) => a.id === canonicalActiveId) || null;
+
+  const groups = [];
+  for (const app of appsList) {
+    let g = groups.find((x) => x.name === app.group);
+    if (!g) {
+      g = { name: app.group, items: [] };
+      groups.push(g);
+    }
+    g.items.push(app);
+  }
+
+  const appsMenuHtml = groups
+    .map(
+      (g) => `
+      <div class="slx-uh-apps-group-lbl">${escapeHtmlText(g.name)}</div>
+      ${g.items
+        .map((it) => {
+          const isAct = it.id === canonicalActiveId;
+          return `
+            <a href="${escapeHtmlText(it.href)}" class="slx-uh-app-item ${isAct ? 'active' : ''}">
+              <div style="display:flex;align-items:center;gap:0.5rem;min-width:0;">
+                <span style="font-size:0.95rem;flex-shrink:0;">${it.icon}</span>
+                <div style="min-width:0;">
+                  <div style="font-size:0.74rem;font-weight:700;line-height:1.2;">${escapeHtmlText(it.label)}</div>
+                  <div style="font-size:0.63rem;color:#94a3b8;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtmlText(it.sub || '')}</div>
+                </div>
+              </div>
+              ${isAct ? '<span style="font-family:monospace;font-size:0.6rem;font-weight:800;color:#6ee7b7;">ACTIVE</span>' : '<span style="color:#64748b;font-size:0.72rem;">→</span>'}
+            </a>
+          `;
+        })
+        .join('')}
+    `
+    )
+    .join('');
+
+  const hdr = document.createElement('header');
+  hdr.className = 'slx-unified-header';
+  hdr.setAttribute('role', 'banner');
+  hdr.innerHTML = `
+    <div class="slx-uh-main-row">
+      <div class="slx-uh-left">
+        <a href="${escapeHtmlText(logoHref)}" class="slx-uh-logo-link" title="SuperLexicon — Blockchain 3.0 Presentation Slides">
+          <img
+            src="${escapeHtmlText(logoSrc)}"
+            alt="SuperLexicon Logo"
+            class="slx-uh-logo"
+            onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo_horizontal.png';}"
+          />
+        </a>
+        <span class="slx-uh-divider" aria-hidden="true"></span>
+        <div class="slx-uh-titles">
+          <div class="slx-uh-title" data-uh="title">${escapeHtmlText(title)}</div>
+          <div class="slx-uh-subtitle" data-uh="subtitle">${escapeHtmlText(subtitle)}</div>
+        </div>
+        <div class="slx-uh-context" data-uh="context"></div>
+      </div>
+
+      <div class="slx-uh-right">
+        <div class="slx-uh-extra" data-uh="extra"></div>
+
+        <div class="slx-uh-apps-wrap">
+          <button type="button" class="slx-uh-apps-btn" data-uh="appsBtn" aria-expanded="false" title="Switch between Presentation Slides, Subnet 1 Explorer &amp; Live HFS Apps">
+            <span>${activeAppSpec ? activeAppSpec.icon : '⊞'}</span>
+            <span data-uh="appsLabel">${escapeHtmlText(activeAppSpec ? activeAppSpec.shortLabel : 'Apps')}</span>
+            <span style="opacity:0.75;font-size:0.62rem;">▾</span>
+          </button>
+          <div class="slx-uh-apps-menu" data-uh="appsMenu" role="menu">
+            ${appsMenuHtml}
+          </div>
+        </div>
+
+        <div class="slx-uh-suite-pills" data-uh="suitePills"></div>
+      </div>
+    </div>
+
+    <div data-uh="telemetryMount"></div>
+  `;
+
+  host.appendChild(hdr);
+
+  const refs = {
+    title: hdr.querySelector('[data-uh="title"]'),
+    subtitle: hdr.querySelector('[data-uh="subtitle"]'),
+    context: hdr.querySelector('[data-uh="context"]'),
+    extra: hdr.querySelector('[data-uh="extra"]'),
+    appsBtn: hdr.querySelector('[data-uh="appsBtn"]'),
+    appsMenu: hdr.querySelector('[data-uh="appsMenu"]'),
+    suitePills: hdr.querySelector('[data-uh="suitePills"]'),
+    telemetryMount: hdr.querySelector('[data-uh="telemetryMount"]'),
+  };
+
+  // Adopt any caller-provided DOM elements (preserving IDs & event listeners!)
+  for (const el of contextElements || []) {
+    if (el && refs.context) {
+      if (el.style?.display === 'none' && el.hasAttribute('data-uh-unhide')) {
+        el.style.display = '';
+      }
+      refs.context.appendChild(el);
+    }
+  }
+  for (const el of extraElements || []) {
+    if (el && refs.extra) {
+      if (el.style?.display === 'none' && el.hasAttribute('data-uh-unhide')) {
+        el.style.display = '';
+      }
+      refs.extra.appendChild(el);
+    }
+  }
+
+  const closeAppsMenu = () => {
+    refs.appsMenu?.classList.remove('is-open');
+    refs.appsBtn?.setAttribute('aria-expanded', 'false');
+  };
+
+  refs.appsBtn?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = refs.appsMenu?.classList.toggle('is-open');
+    refs.appsBtn?.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+
+  const onDocClick = (ev) => {
+    if (!hdr.contains(ev.target)) {
+      closeAppsMenu();
+    }
+  };
+  const onDocKey = (ev) => {
+    if (ev.key === 'Escape') closeAppsMenu();
+  };
+  document.addEventListener('click', onDocClick);
+  document.addEventListener('keydown', onDocKey);
+
+  // Mount Wallet + Social/Messages pills in standardized order: [👥 Network] [💬 Messages] [🪪 Wallet] [📜 Txs]
+  let walletUi = null;
+  let socialUi = null;
+  if (wallet && refs.suitePills) {
+    walletUi = mountSlxWalletHeader({
+      wallet,
+      mountContainer: refs.suitePills,
+      appTitle: title,
+      onWalletSwitch,
+    });
+    socialUi = mountSlxSocialWidgets({
+      wallet,
+      mountContainer: refs.suitePills,
+      appId: canonicalActiveId || 'subnet1',
+      appTitle: activeAppSpec?.label || title,
+      rpcUrlFn,
+      getAppPeers,
+      socialClient,
+    });
+  }
+
+  const chainBar = mountSlxChainBar({
+    mountContainer: refs.telemetryMount,
+    rpcUrlFn,
+    getContractAddr,
+    getContractLabel,
+    onToggleNodeDrawer,
+    explorerHref,
+    embedded: true,
+  });
+
+  const syncHeaderHeightVar = () => {
+    const h = hdr.offsetHeight || 76;
+    document.documentElement?.style?.setProperty('--slx-unified-hdr-h', `${h}px`);
+  };
+  syncHeaderHeightVar();
+  let ro = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    ro = new ResizeObserver(syncHeaderHeightVar);
+    ro.observe(hdr);
+  }
+
+  return {
+    headerEl: hdr,
+    contextSlot: refs.context,
+    extraSlot: refs.extra,
+    walletUi,
+    socialUi,
+    chainBar,
+    setTitle: (nextTitle, nextSub = undefined) => {
+      if (refs.title && nextTitle !== undefined) refs.title.textContent = nextTitle;
+      if (refs.subtitle && nextSub !== undefined) refs.subtitle.textContent = nextSub;
+    },
+    refresh: () => {
+      chainBar?.refresh?.();
+      walletUi?.refresh?.();
+      socialUi?.refresh?.();
+    },
+    destroy: () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onDocKey);
+      ro?.disconnect();
+      chainBar?.destroy?.();
+      socialUi?.destroy?.();
+      hdr.remove();
     },
   };
 }

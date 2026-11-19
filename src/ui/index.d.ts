@@ -47,6 +47,7 @@ export function mountSlxChainBar(opts?: {
   getContractLabel?: () => string;
   onToggleNodeDrawer?: (() => void) | null;
   explorerHref?: string;
+  embedded?: boolean;
 }): {
   refresh: () => void;
   destroy: () => void;
@@ -65,5 +66,46 @@ export function mountSlxSocialWidgets(opts: {
   refresh: () => Promise<SlxSocialClient>;
   openNetwork: () => Promise<void>;
   openMessages: (peerIdentityAddr?: string) => Promise<void>;
+  destroy: () => void;
+} | null;
+
+export const SLX_PLATFORM_APPS: Array<{
+  id: string;
+  icon: string;
+  label: string;
+  shortLabel: string;
+  sub: string;
+  href: string;
+  group: string;
+}>;
+
+export function mountSlxUnifiedHeader(opts?: {
+  mountContainer?: HTMLElement | null;
+  wallet?: SlxWalletManager | null;
+  activeAppId?: string;
+  title?: string;
+  subtitle?: string;
+  logoSrc?: string;
+  logoHref?: string;
+  rpcUrlFn?: () => string;
+  getContractAddr?: () => string;
+  getContractLabel?: () => string;
+  onToggleNodeDrawer?: (() => void) | null;
+  explorerHref?: string;
+  onWalletSwitch?: ((kp: KeypairInfo) => Promise<void> | void) | null;
+  getAppPeers?: (() => Array<{ identityAddr: string; label?: string; role?: string }>) | null;
+  socialClient?: SlxSocialClient | null;
+  contextElements?: Array<HTMLElement | null>;
+  extraElements?: Array<HTMLElement | null>;
+  appsList?: typeof SLX_PLATFORM_APPS;
+}): {
+  headerEl: HTMLElement;
+  contextSlot: HTMLElement | null;
+  extraSlot: HTMLElement | null;
+  walletUi: ReturnType<typeof mountSlxWalletHeader>;
+  socialUi: ReturnType<typeof mountSlxSocialWidgets>;
+  chainBar: ReturnType<typeof mountSlxChainBar>;
+  setTitle: (nextTitle?: string, nextSub?: string) => void;
+  refresh: () => void;
   destroy: () => void;
 } | null;
