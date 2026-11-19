@@ -842,7 +842,7 @@ export function mountSlxChainBar({
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/dashboard.html',
+  explorerHref = '/#slide-4',
   embedded = false,
 } = {}) {
   if (typeof document === 'undefined') return null;
@@ -1881,15 +1881,6 @@ export const SLX_PLATFORM_APPS = [
     group: 'SuperLexicon Platform',
   },
   {
-    id: 'explorer',
-    icon: '📊',
-    label: 'Subnet 1 Explorer',
-    shortLabel: 'Explorer',
-    sub: 'Live BFT Validators & HFS Metrics',
-    href: '/dashboard.html',
-    group: 'SuperLexicon Platform',
-  },
-  {
     id: 'dex',
     icon: '📈',
     label: 'DEX Central Limit Book',
@@ -1987,7 +1978,7 @@ export function mountSlxUnifiedHeader({
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/dashboard.html',
+  explorerHref = '/#slide-4',
   onWalletSwitch = null,
   getAppPeers = null,
   socialClient = null,
