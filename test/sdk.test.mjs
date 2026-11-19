@@ -97,9 +97,9 @@ assert.equal(bytesToHex(hexToBytes('0xdeadbeef')), '0xdeadbeef');
 
 // 5. Pub/Sub URL Mapping & Multi-Topic / Multi-Address Filter Compilation
 assert.equal(toPubSubWsUrl('wss://node1.superlexicon.com/rpc'), 'wss://node1.superlexicon.com');
-assert.equal(toPubSubWsUrl('ws://192.168.50.91:8545'), 'ws://192.168.50.91:8546');
-assert.equal(toPubSubWsUrl('http://192.168.50.92:8555'), 'ws://192.168.50.92:8556');
-assert.ok(derivePubSubWsCandidates('ws://192.168.50.93:8545').includes('ws://192.168.50.91:8546'));
+assert.equal(toPubSubWsUrl('ws://127.0.0.1:8545'), 'ws://127.0.0.1:8546');
+assert.equal(toPubSubWsUrl('http://localhost:8555'), 'ws://localhost:8556');
+assert.ok(derivePubSubWsCandidates('ws://127.0.0.1:8545').includes('wss://node1.superlexicon.com'));
 
 const tA = '0x' + '11'.repeat(32);
 const tB = '0x' + '22'.repeat(32);

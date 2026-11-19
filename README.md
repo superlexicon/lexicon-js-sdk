@@ -81,9 +81,20 @@ const tx2 = signOrderedLexiconTx({
 
 ```js
 import { SlxWalletManager } from '@superlexicon/sdk';
-import { mountSlxWalletHeader, mountHfsRegistryDropdown } from '@superlexicon/sdk/ui';
+import {
+  mountSlxChainBar,
+  mountSlxWalletHeader,
+  mountHfsRegistryDropdown,
+} from '@superlexicon/sdk/ui';
 
 const wallet = new SlxWalletManager();
+
+// Standardized 34px top horizontal live blockchain telemetry bar (Block #, Hash, P1-P4 Phase, TPS, Mempool, Total Txs, Active HFS)
+mountSlxChainBar({
+  mountContainer: document.getElementById('slxChainBarMount'),
+  getContractLabel: () => 'DEX',
+  getContractAddr: () => activeContractAddr,
+});
 
 mountSlxWalletHeader({
   wallet,
@@ -107,6 +118,6 @@ mountHfsRegistryDropdown({
 # Run unit test suite (Keccak-256, secp256k1, RLP, ordered txHash, ABI, event filters)
 npm test
 
-# Sync into /home/mano/Projects/lexicon/web/packages/sdk for self-contained Docker builds
+# Sync into ../lexicon/web/packages/sdk for self-contained Docker builds
 npm run sync:web
 ```

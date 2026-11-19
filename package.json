@@ -4,6 +4,11 @@
   "description": "Zero-dependency JavaScript/TypeScript SDK for SuperLexicon Subnet 1 & Halt-Free Subroutines (HFS): secp256k1 keypairs, $0-gas extraTargets RLP signing, ABI codecs, multiplexed WebSocket JSON-RPC, real-time eth_subscribe event streams, and Unified Identity.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/superlexicon/lexicon-js-sdk.git"
+  },
+  "homepage": "https://github.com/superlexicon/lexicon-js-sdk",
   "sideEffects": [
     "**/*.css"
   ],

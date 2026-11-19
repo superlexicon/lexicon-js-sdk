@@ -11,6 +11,7 @@
 
 import { shortHex, truncAddr4 } from '../abi.js';
 import { getDefaultNodeWsUrl, SlxHfsCache } from '../rpc.js';
+import { slxSubscribeStats, slxSubscribeNewHeads } from '../events.js';
 import {
   HFS_TYPES,
   fetchRegisteredHfsByType,
@@ -28,6 +29,27 @@ function escapeHtmlText(s) {
 }
 
 const FALLBACK_CSS = `
+.slx-sticky-top-stack{position:sticky;top:0;z-index:45;display:flex;flex-direction:column;width:100%;flex-shrink:0}
+.slx-chain-bar{display:flex;align-items:center;justify-content:space-between;gap:.65rem;width:100%;height:34px;min-height:34px;padding:0 .9rem;background:linear-gradient(90deg,#040914 0%,#071226 50%,#040914 100%);border-bottom:1px solid rgba(56,189,248,.28);font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.68rem;color:#cbd5e1;white-space:nowrap;overflow-x:auto;scrollbar-width:none;flex-shrink:0;z-index:50}
+.slx-chain-bar::-webkit-scrollbar{display:none}
+.slx-cb-group{display:inline-flex;align-items:center;gap:.48rem;flex-shrink:0}
+.slx-cb-sep{color:rgba(100,116,139,.45);user-select:none}
+.slx-cb-net{display:inline-flex;align-items:center;gap:.36rem;font-weight:800;color:#ecfdf5;letter-spacing:.03em}
+.slx-cb-dot{width:7px;height:7px;border-radius:999px;background:#f59e0b;box-shadow:0 0 7px #f59e0b;display:inline-block;transition:all .2s ease}
+.slx-cb-dot.live{background:#10b981;box-shadow:0 0 8px #10b981}
+.slx-cb-chip{display:inline-flex;align-items:center;gap:.28rem;padding:.12rem .44rem;border-radius:.36rem;background:rgba(15,23,42,.92);border:1px solid rgba(71,85,105,.52);color:#e2e8f0;font-family:inherit;font-size:.66rem;font-weight:700;line-height:1.2}
+.slx-cb-chip.clickable{cursor:pointer;transition:all .14s ease}
+.slx-cb-chip.clickable:hover{border-color:#38bdf8;color:#fff;background:rgba(14,165,233,.16)}
+.slx-cb-chip.emerald{border-color:rgba(52,211,153,.45);background:rgba(6,78,59,.35);color:#6ee7b7}
+.slx-cb-chip.cyan{border-color:rgba(56,189,248,.45);background:rgba(12,74,110,.32);color:#7dd3fc}
+.slx-cb-blk{font-weight:800;color:#38bdf8;transition:color .18s ease,transform .18s ease;display:inline-block}
+.slx-cb-blk.bump{color:#6ee7b7;transform:translateY(-1px)}
+.slx-cb-phases{display:inline-flex;align-items:center;gap:2px;padding:1px;border-radius:.36rem;background:rgba(2,6,23,.85);border:1px solid rgba(51,65,85,.65)}
+.slx-cb-phase{padding:.1rem .34rem;border-radius:.26rem;font-size:.61rem;font-weight:700;color:#64748b;transition:all .12s ease}
+.slx-cb-phase.active{background:rgba(56,189,248,.22);color:#7dd3fc;box-shadow:inset 0 0 0 1px rgba(56,189,248,.55)}
+.slx-cb-phase.active.p4{background:rgba(16,185,129,.24);color:#6ee7b7;box-shadow:inset 0 0 0 1px rgba(52,211,153,.6)}
+.slx-cb-link{display:inline-flex;align-items:center;gap:.24rem;padding:.12rem .46rem;border-radius:.36rem;border:1px solid rgba(56,189,248,.42);background:rgba(14,165,233,.12);color:#7dd3fc;text-decoration:none;font-weight:700;font-size:.66rem;transition:all .14s ease}
+.slx-cb-link:hover{background:rgba(14,165,233,.24);border-color:#38bdf8;color:#fff}
 .slx-wallet-pill-group{display:inline-flex;align-items:center;gap:.35rem;flex-wrap:wrap}
 .slx-wallet-btn{display:inline-flex;align-items:center;gap:.42rem;padding:.34rem .68rem;border-radius:.6rem;background:linear-gradient(135deg,rgba(16,185,129,.18),rgba(14,165,233,.18));border:1.5px solid rgba(52,211,153,.6);color:#ecfdf5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;font-weight:700;cursor:pointer}
 .slx-wallet-dot{width:7px;height:7px;border-radius:999px;background:#34d399;box-shadow:0 0 8px #34d399;display:inline-block}
@@ -734,4 +756,333 @@ export function mountHfsRegistryDropdown({
   }
 
   return { refreshList, getInstances: () => instances, openDeployModal, setSelectedAddr };
+}
+
+function fmtInt(n) {
+  return Number(n || 0).toLocaleString('en-US');
+}
+
+function normHexPrefixed(h) {
+  if (!h) return '';
+  const s = String(h).trim();
+  if (!s || s.startsWith('seed-')) return '';
+  return s.startsWith('0x') || s.startsWith('0X') ? s.toLowerCase() : '0x' + s.toLowerCase();
+}
+
+/**
+ * Standardized 34px Horizontal Live Blockchain Telemetry Bar (`mountSlxChainBar`)
+ *
+ * Mounts at the identical top edge (`y = 0`) across all SuperLexicon App UIs (`DEX`, `Charter`,
+ * `Commerce`, `Phantom Fleet`, `CommonsRF`, `Dead Drop`) and external SDK apps, streaming live
+ * validator `stats` + `newHeads` over the shared multiplexed WebSocket with zero polling:
+ *  - Subnet 1 Live Status + Active Validator Quorum (`3 Val`)
+ *  - Finalized Block Height (`#56,500`) + Click-to-Copy Block Hash
+ *  - Real-Time 4-Phase Consensus Progression (`P1 TX -> P2 VOTE -> P3 PROP -> P4 FIN`)
+ *  - Live Throughput (`tx/s`), Block Fill (`txs/blk`) & Finality Latency (`4.27s`)
+ *  - Live Mempool Queue + Cumulative Chain Confirmed Transactions + `$0.00 Gas`
+ *  - Active HFS Contract Address Chip (Click-to-Copy) + Optional `⚙ Node` Toggle + `📊 Explorer ↗`
+ */
+export function mountSlxChainBar({
+  mountContainer = null,
+  rpcUrlFn = () => getDefaultNodeWsUrl(),
+  getContractAddr = () => '',
+  getContractLabel = () => 'HFS',
+  onToggleNodeDrawer = null,
+  explorerHref = '/dashboard.html',
+} = {}) {
+  if (typeof document === 'undefined') return null;
+  injectSlxUiStyles();
+
+  let host = mountContainer;
+  if (!host) {
+    host = document.getElementById('slxChainBarMount');
+  }
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'slxChainBarMount';
+    document.body.prepend(host);
+  }
+
+  // Idempotent replace if already mounted in this container
+  host.innerHTML = '';
+
+  const bar = document.createElement('div');
+  bar.className = 'slx-chain-bar';
+  bar.setAttribute('role', 'region');
+  bar.setAttribute('aria-label', 'SuperLexicon Live Blockchain Telemetry');
+  bar.innerHTML = `
+    <div class="slx-cb-group">
+      <span class="slx-cb-net" title="Connected to SuperLexicon Subnet 1 BFT Mesh">
+        <span class="slx-cb-dot" data-cb="dot"></span>
+        <span>SUBNET 1</span>
+      </span>
+      <span class="slx-cb-chip" data-cb="vals" title="Active BFT Validators &amp; Mesh Peers">— Val</span>
+      <span class="slx-cb-sep">│</span>
+      <span>BLK <strong class="slx-cb-blk" data-cb="height">#—</strong></span>
+      <button type="button" class="slx-cb-chip clickable" data-cb="hash" title="Click to copy latest finalized block hash" style="display:none;">—</button>
+      <span class="slx-cb-sep">│</span>
+      <div class="slx-cb-phases" title="Real-Time 4-Phase BFT Consensus Pipeline">
+        <span class="slx-cb-phase" data-cb-phase="1">P1 TX</span>
+        <span class="slx-cb-phase" data-cb-phase="2">P2 VOTE</span>
+        <span class="slx-cb-phase" data-cb-phase="3">P3 PROP</span>
+        <span class="slx-cb-phase p4" data-cb-phase="4">P4 FIN</span>
+      </div>
+    </div>
+
+    <div class="slx-cb-group">
+      <span class="slx-cb-chip emerald" data-cb="tps" title="Rolling finalized Subnet 1 throughput">⚡ — tx/s</span>
+      <span class="slx-cb-chip" data-cb="blkmeta" title="Transactions &amp; BFT finality latency of latest block">— txs/blk • —s</span>
+      <span class="slx-cb-chip" data-cb="mempool" title="Merged Subnet 1 mempool queue">Mempool: 0</span>
+      <span class="slx-cb-chip" data-cb="totaltxs" title="Cumulative finalized transactions since Subnet 1 genesis">∑ — txs</span>
+      <span class="slx-cb-chip emerald" title="Zero gas fees via explicit extraTargets parallel execution">$0.00 Gas</span>
+    </div>
+
+    <div class="slx-cb-group">
+      <button type="button" class="slx-cb-chip cyan clickable" data-cb="hfs" title="Click to copy active HFS smart contract address" style="display:none;"></button>
+      ${
+        typeof onToggleNodeDrawer === 'function'
+          ? `<button type="button" class="slx-cb-chip clickable" data-cb="nodebtn" title="Toggle RPC Node &amp; Deployment Inspector">⚙ Node</button>`
+          : ''
+      }
+      <a class="slx-cb-link" href="${escapeHtmlText(explorerHref)}" title="Open Subnet 1 Live Validator &amp; HFS Explorer">📊 Explorer ↗</a>
+    </div>
+  `;
+  host.appendChild(bar);
+
+  const refs = {
+    dot: bar.querySelector('[data-cb="dot"]'),
+    vals: bar.querySelector('[data-cb="vals"]'),
+    height: bar.querySelector('[data-cb="height"]'),
+    hash: bar.querySelector('[data-cb="hash"]'),
+    tps: bar.querySelector('[data-cb="tps"]'),
+    blkmeta: bar.querySelector('[data-cb="blkmeta"]'),
+    mempool: bar.querySelector('[data-cb="mempool"]'),
+    totaltxs: bar.querySelector('[data-cb="totaltxs"]'),
+    hfs: bar.querySelector('[data-cb="hfs"]'),
+    nodebtn: bar.querySelector('[data-cb="nodebtn"]'),
+    phases: Array.from(bar.querySelectorAll('[data-cb-phase]')),
+  };
+
+  const st = {
+    live: false,
+    height: 0,
+    blockHash: '',
+    phase: 0,
+    validators: 0,
+    peers: 0,
+    mempool: 0,
+    confirmedTotal: 0,
+    lastBlockTxs: 0,
+    lastConfirmMs: 0,
+    recentBlocks: new Map(), // height -> { txs, confirmMs }
+    tps: 0,
+    hashCopiedUntil: 0,
+    hfsCopiedUntil: 0,
+  };
+
+  function recomputeRollingTps() {
+    const entries = Array.from(st.recentBlocks.values()).slice(-6);
+    if (entries.length === 0) return;
+    let sumTxs = 0;
+    let sumMs = 0;
+    const fallbackMs = st.lastConfirmMs > 0 ? st.lastConfirmMs : 4280;
+    for (const e of entries) {
+      sumTxs += Number(e.txs || 0);
+      sumMs += Number(e.confirmMs > 0 ? e.confirmMs : fallbackMs);
+    }
+    if (sumMs > 0) {
+      st.tps = sumTxs / (sumMs / 1000);
+    }
+  }
+
+  function setPhaseHighlight(p) {
+    st.phase = p;
+    for (const el of refs.phases) {
+      const idx = Number(el.getAttribute('data-cb-phase'));
+      el.classList.toggle('active', idx === p);
+    }
+  }
+
+  function applyP4Sample(pm) {
+    if (!pm) return;
+    const h = Number(pm.blockHeight || 0);
+    if (h >= st.height) {
+      if (h > st.height && st.height > 0 && refs.height) {
+        refs.height.classList.add('bump');
+        setTimeout(() => refs.height?.classList.remove('bump'), 450);
+      }
+      if (h > 0) st.height = h;
+      const bh = normHexPrefixed(pm.blockHash);
+      if (bh) st.blockHash = bh;
+    }
+    const cMs = Number(pm.confirmMs || pm.rollingAvgConfirmMs || 0);
+    if (cMs > 0) {
+      st.lastConfirmMs = cMs;
+    }
+    if (typeof pm.phaseValue === 'number' && pm.phaseValue >= 0) {
+      if (h >= st.height) st.lastBlockTxs = pm.phaseValue;
+      if (h > 0) {
+        st.recentBlocks.set(h, { txs: pm.phaseValue, confirmMs: cMs || st.lastConfirmMs || 4280 });
+        while (st.recentBlocks.size > 8) {
+          const oldest = st.recentBlocks.keys().next().value;
+          if (oldest !== undefined) st.recentBlocks.delete(oldest);
+        }
+      }
+    }
+    recomputeRollingTps();
+  }
+
+  function renderHfsChip() {
+    if (!refs.hfs) return;
+    const addr = normHexPrefixed(getContractAddr?.());
+    if (!addr || /^0x0{40}$/.test(addr)) {
+      refs.hfs.style.display = 'none';
+      return;
+    }
+    refs.hfs.style.display = 'inline-flex';
+    const label = String(getContractLabel?.() || 'HFS').trim();
+    if (Date.now() < st.hfsCopiedUntil) {
+      refs.hfs.textContent = `✓ Copied ${shortHex(addr, 6, 4)}`;
+    } else {
+      refs.hfs.textContent = `${label} ${shortHex(addr, 6, 4)}`;
+    }
+    refs.hfs.title = `Active ${label} HFS: ${addr} (click to copy)`;
+  }
+
+  function renderBar() {
+    if (refs.dot) refs.dot.classList.toggle('live', st.live);
+    if (refs.vals) {
+      refs.vals.textContent = st.validators > 0 ? `${st.validators} Val` : 'Sync…';
+      refs.vals.title = `${st.validators} Active BFT Validators • ${st.peers} Connected Mesh Peers`;
+    }
+    if (refs.height && st.height > 0) {
+      refs.height.textContent = `#${fmtInt(st.height)}`;
+    }
+    if (refs.hash) {
+      if (st.blockHash) {
+        refs.hash.style.display = 'inline-flex';
+        refs.hash.textContent =
+          Date.now() < st.hashCopiedUntil ? '✓ Copied!' : shortHex(st.blockHash, 8, 4);
+        refs.hash.title = `Finalized Block #${fmtInt(st.height)} Hash: ${st.blockHash} (click to copy)`;
+      } else {
+        refs.hash.style.display = 'none';
+      }
+    }
+    if (refs.tps) {
+      refs.tps.textContent = st.lastConfirmMs > 0 ? `⚡ ${st.tps.toFixed(1)} tx/s` : '⚡ Live';
+    }
+    if (refs.blkmeta) {
+      const finStr = st.lastConfirmMs > 0 ? `${(st.lastConfirmMs / 1000).toFixed(2)}s` : '—s';
+      refs.blkmeta.textContent = `${fmtInt(st.lastBlockTxs)} txs/blk • ${finStr}`;
+    }
+    if (refs.mempool) {
+      refs.mempool.textContent = `Mempool: ${fmtInt(st.mempool)}`;
+    }
+    if (refs.totaltxs && st.confirmedTotal > 0) {
+      refs.totaltxs.textContent = `∑ ${fmtInt(st.confirmedTotal)} txs`;
+    }
+    renderHfsChip();
+  }
+
+  refs.hash?.addEventListener('click', () => {
+    if (!st.blockHash) return;
+    navigator.clipboard?.writeText(st.blockHash).catch(() => {});
+    st.hashCopiedUntil = Date.now() + 1400;
+    renderBar();
+    setTimeout(renderBar, 1450);
+  });
+
+  refs.hfs?.addEventListener('click', () => {
+    const addr = normHexPrefixed(getContractAddr?.());
+    if (!addr) return;
+    navigator.clipboard?.writeText(addr).catch(() => {});
+    st.hfsCopiedUntil = Date.now() + 1400;
+    renderHfsChip();
+    setTimeout(renderHfsChip, 1450);
+  });
+
+  refs.nodebtn?.addEventListener('click', () => {
+    if (typeof onToggleNodeDrawer === 'function') onToggleNodeDrawer();
+  });
+
+  const statsSub = slxSubscribeStats(rpcUrlFn, (snap) => {
+    if (!snap || typeof snap !== 'object') return;
+    st.live = true;
+    if (snap.height > st.height) {
+      if (st.height > 0 && refs.height) {
+        refs.height.classList.add('bump');
+        setTimeout(() => refs.height?.classList.remove('bump'), 450);
+      }
+      st.height = Number(snap.height);
+    }
+    if (typeof snap.validatorCount === 'number') st.validators = snap.validatorCount;
+    if (typeof snap.peerCount === 'number') st.peers = snap.peerCount;
+    st.mempool = Number(snap.mergedMempoolCount ?? snap.localMempoolCount ?? 0);
+    if (snap.confirmedTxTotal > st.confirmedTotal) {
+      st.confirmedTotal = Number(snap.confirmedTxTotal);
+    }
+
+    if (Array.isArray(snap.phaseMetricsHistory) && snap.phaseMetricsHistory.length > 0) {
+      for (const histPm of snap.phaseMetricsHistory) {
+        if (histPm && Number(histPm.phase) === 4) {
+          applyP4Sample(histPm);
+        }
+      }
+    }
+
+    const pm = snap.phaseMetrics;
+    if (pm && typeof pm === 'object') {
+      const p = Number(pm.phase || 0);
+      if (p >= 1 && p <= 4) setPhaseHighlight(p);
+      if (p === 4) {
+        applyP4Sample(pm);
+      } else if (pm.rollingAvgConfirmMs > 0 && st.lastConfirmMs === 0) {
+        st.lastConfirmMs = Number(pm.rollingAvgConfirmMs);
+      }
+    }
+
+    renderBar();
+  });
+
+  const headsSub = slxSubscribeNewHeads(rpcUrlFn, (head) => {
+    if (!head) return;
+    st.live = true;
+    if (head.blockNumberNum > st.height) {
+      if (st.height > 0 && refs.height) {
+        refs.height.classList.add('bump');
+        setTimeout(() => refs.height?.classList.remove('bump'), 450);
+      }
+      st.height = head.blockNumberNum;
+    }
+    const bh = normHexPrefixed(head.hash);
+    if (bh) st.blockHash = bh;
+    if (typeof head.txCountNum === 'number' && head.txCountNum >= 0) {
+      st.lastBlockTxs = head.txCountNum;
+      if (head.blockNumberNum > 0) {
+        const prev = st.recentBlocks.get(head.blockNumberNum);
+        st.recentBlocks.set(head.blockNumberNum, {
+          txs: head.txCountNum,
+          confirmMs: prev?.confirmMs || st.lastConfirmMs || 4280,
+        });
+        while (st.recentBlocks.size > 8) {
+          const oldest = st.recentBlocks.keys().next().value;
+          if (oldest !== undefined) st.recentBlocks.delete(oldest);
+        }
+      }
+      recomputeRollingTps();
+    }
+    setPhaseHighlight(4);
+    renderBar();
+  });
+
+  renderBar();
+
+  return {
+    refresh: renderHfsChip,
+    destroy: () => {
+      statsSub.unsubscribe();
+      headsSub.unsubscribe();
+      bar.remove();
+    },
+  };
 }

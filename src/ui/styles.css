@@ -1,7 +1,180 @@
 /* ==========================================================================
  * @superlexicon/sdk/ui/styles.css
- * Drop-in Wallet Pill, Live Tx Inspector & Global HFS Registry Selector Styles
+ * Standardized Top Blockchain Telemetry Bar, Wallet Pill & HFS Selector Styles
  * ========================================================================== */
+
+.slx-sticky-top-stack {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.slx-chain-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  padding: 0 0.9rem;
+  background: linear-gradient(90deg, #040914 0%, #071226 50%, #040914 100%);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.28);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+  z-index: 50;
+}
+
+.slx-chain-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.slx-cb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.48rem;
+  flex-shrink: 0;
+}
+
+.slx-cb-sep {
+  color: rgba(100, 116, 139, 0.45);
+  user-select: none;
+}
+
+.slx-cb-net {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  font-weight: 800;
+  color: #ecfdf5;
+  letter-spacing: 0.03em;
+}
+
+.slx-cb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #f59e0b;
+  box-shadow: 0 0 7px #f59e0b;
+  display: inline-block;
+  transition: all 0.2s ease;
+}
+
+.slx-cb-dot.live {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.slx-cb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.12rem 0.44rem;
+  border-radius: 0.36rem;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(71, 85, 105, 0.52);
+  color: #e2e8f0;
+  font-family: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.slx-cb-chip.clickable {
+  cursor: pointer;
+  transition: all 0.14s ease;
+}
+
+.slx-cb-chip.clickable:hover {
+  border-color: #38bdf8;
+  color: #ffffff;
+  background: rgba(14, 165, 233, 0.16);
+}
+
+.slx-cb-chip.emerald {
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(6, 78, 59, 0.35);
+  color: #6ee7b7;
+}
+
+.slx-cb-chip.cyan {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(12, 74, 110, 0.32);
+  color: #7dd3fc;
+}
+
+.slx-cb-blk {
+  font-weight: 800;
+  color: #38bdf8;
+  transition: color 0.18s ease, transform 0.18s ease;
+  display: inline-block;
+}
+
+.slx-cb-blk.bump {
+  color: #6ee7b7;
+  transform: translateY(-1px);
+}
+
+.slx-cb-phases {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px;
+  border-radius: 0.36rem;
+  background: rgba(2, 6, 23, 0.85);
+  border: 1px solid rgba(51, 65, 85, 0.65);
+}
+
+.slx-cb-phase {
+  padding: 0.1rem 0.34rem;
+  border-radius: 0.26rem;
+  font-size: 0.61rem;
+  font-weight: 700;
+  color: #64748b;
+  transition: all 0.12s ease;
+}
+
+.slx-cb-phase.active {
+  background: rgba(56, 189, 248, 0.22);
+  color: #7dd3fc;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55);
+}
+
+.slx-cb-phase.active.p4 {
+  background: rgba(16, 185, 129, 0.24);
+  color: #6ee7b7;
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.6);
+}
+
+.slx-cb-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  padding: 0.12rem 0.46rem;
+  border-radius: 0.36rem;
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  background: rgba(14, 165, 233, 0.12);
+  color: #7dd3fc;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.66rem;
+  transition: all 0.14s ease;
+}
+
+.slx-cb-link:hover {
+  background: rgba(14, 165, 233, 0.24);
+  border-color: #38bdf8;
+  color: #ffffff;
+}
 
 .slx-wallet-pill-group {
   display: inline-flex;

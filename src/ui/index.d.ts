@@ -39,3 +39,15 @@ export function mountHfsRegistryDropdown(opts: {
   openDeployModal: () => void;
   setSelectedAddr: (addrHex: string) => void;
 } | null;
+
+export function mountSlxChainBar(opts?: {
+  mountContainer?: HTMLElement | null;
+  rpcUrlFn?: () => string;
+  getContractAddr?: () => string;
+  getContractLabel?: () => string;
+  onToggleNodeDrawer?: (() => void) | null;
+  explorerHref?: string;
+}): {
+  refresh: () => void;
+  destroy: () => void;
+} | null;

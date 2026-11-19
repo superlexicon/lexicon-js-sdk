@@ -1,7 +1,6 @@
 /**
  * Sync `@superlexicon/sdk` (`package.json`, `README.md`, `LICENSE`, `src/**`) into
- * `/home/mano/Projects/lexicon/web/packages/sdk` so Docker builds in `lexicon/web`
- * stay 100% self-contained without requiring external private git/npm credentials.
+ * `../lexicon/web/packages/sdk` (or `SLX_WEB_SDK_DIR`) so Docker builds stay self-contained.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const sdkRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const targetRoot =
-  process.env.SLX_WEB_SDK_DIR || '/home/mano/Projects/lexicon/web/packages/sdk';
+  process.env.SLX_WEB_SDK_DIR || path.resolve(sdkRoot, '../lexicon/web/packages/sdk');
 
 function copyRecursive(src, dest) {
   const stat = fs.statSync(src);

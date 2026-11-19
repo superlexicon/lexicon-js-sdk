@@ -86,11 +86,6 @@ export function derivePubSubWsCandidates(rpcUrl) {
   const primary = toPubSubWsUrl(rpcUrl);
   pushUnique(primary);
 
-  if (!isHttpsPage && primary.startsWith('ws://192.168.50.')) {
-    pushUnique('ws://192.168.50.91:8546');
-    pushUnique('ws://192.168.50.92:8556');
-  }
-
   for (const pub of PUBLIC_PUBSUB_WS_NODES) {
     pushUnique(pub);
   }
