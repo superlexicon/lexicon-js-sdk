@@ -17,16 +17,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.65rem;
+  gap: 0.75rem;
   width: 100%;
-  height: 34px;
-  min-height: 34px;
-  padding: 0 0.9rem;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 1.2rem;
   background: linear-gradient(90deg, #040914 0%, #071226 50%, #040914 100%);
   border-bottom: 1px solid rgba(56, 189, 248, 0.28);
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
-  color: #cbd5e1;
+  font-size: 0.76rem;
+  color: #dbeafe;
   white-space: nowrap;
   overflow-x: auto;
   scrollbar-width: none;
@@ -35,13 +35,13 @@
 }
 
 .slx-chain-bar.embedded {
-  height: 28px;
-  min-height: 28px;
-  padding: 0 1rem;
-  background: rgba(4, 9, 20, 0.92);
-  border-top: 1px solid rgba(56, 189, 248, 0.2);
+  height: 38px;
+  min-height: 38px;
+  padding: 0 1.25rem;
+  background: rgba(4, 9, 20, 0.94);
+  border-top: 1px solid rgba(56, 189, 248, 0.24);
   border-bottom: none;
-  font-size: 0.65rem;
+  font-size: 0.76rem;
 }
 
 .slx-chain-bar::-webkit-scrollbar {
@@ -63,15 +63,16 @@
 .slx-cb-net {
   display: inline-flex;
   align-items: center;
-  gap: 0.36rem;
+  gap: 0.42rem;
+  font-size: 0.78rem;
   font-weight: 800;
   color: #ecfdf5;
   letter-spacing: 0.03em;
 }
 
 .slx-cb-dot {
-  width: 7px;
-  height: 7px;
+  width: 8.5px;
+  height: 8.5px;
   border-radius: 999px;
   background: #f59e0b;
   box-shadow: 0 0 7px #f59e0b;
@@ -81,22 +82,22 @@
 
 .slx-cb-dot.live {
   background: #10b981;
-  box-shadow: 0 0 8px #10b981;
+  box-shadow: 0 0 9px #10b981;
 }
 
 .slx-cb-chip {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
-  padding: 0.12rem 0.44rem;
-  border-radius: 0.36rem;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(71, 85, 105, 0.52);
-  color: #e2e8f0;
+  gap: 0.32rem;
+  padding: 0.18rem 0.56rem;
+  border-radius: 0.42rem;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(71, 85, 105, 0.58);
+  color: #f1f5f9;
   font-family: inherit;
-  font-size: 0.66rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.25;
 }
 
 .slx-cb-chip.clickable {
@@ -123,6 +124,7 @@
 }
 
 .slx-cb-blk {
+  font-size: 0.82rem;
   font-weight: 800;
   color: #38bdf8;
   transition: color 0.18s ease, transform 0.18s ease;
@@ -137,46 +139,46 @@
 .slx-cb-phases {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 1px;
-  border-radius: 0.36rem;
-  background: rgba(2, 6, 23, 0.85);
-  border: 1px solid rgba(51, 65, 85, 0.65);
+  gap: 3px;
+  padding: 2px;
+  border-radius: 0.42rem;
+  background: rgba(2, 6, 23, 0.88);
+  border: 1px solid rgba(51, 65, 85, 0.7);
 }
 
 .slx-cb-phase {
-  padding: 0.1rem 0.34rem;
-  border-radius: 0.26rem;
-  font-size: 0.61rem;
+  padding: 0.15rem 0.44rem;
+  border-radius: 0.3rem;
+  font-size: 0.69rem;
   font-weight: 700;
   color: #64748b;
   transition: all 0.12s ease;
 }
 
 .slx-cb-phase.active {
-  background: rgba(56, 189, 248, 0.22);
-  color: #7dd3fc;
-  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.55);
+  background: rgba(56, 189, 248, 0.24);
+  color: #bae6fd;
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.6);
 }
 
 .slx-cb-phase.active.p4 {
-  background: rgba(16, 185, 129, 0.24);
+  background: rgba(16, 185, 129, 0.26);
   color: #6ee7b7;
-  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.65);
 }
 
 .slx-cb-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.24rem;
-  padding: 0.12rem 0.46rem;
-  border-radius: 0.36rem;
-  border: 1px solid rgba(56, 189, 248, 0.42);
-  background: rgba(14, 165, 233, 0.12);
+  gap: 0.28rem;
+  padding: 0.18rem 0.56rem;
+  border-radius: 0.42rem;
+  border: 1px solid rgba(56, 189, 248, 0.46);
+  background: rgba(14, 165, 233, 0.14);
   color: #7dd3fc;
   text-decoration: none;
   font-weight: 700;
-  font-size: 0.66rem;
+  font-size: 0.74rem;
   transition: all 0.14s ease;
 }
 
@@ -196,14 +198,14 @@
 .slx-wallet-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.42rem;
-  padding: 0.34rem 0.68rem;
-  border-radius: 0.6rem;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(14, 165, 233, 0.18));
-  border: 1.5px solid rgba(52, 211, 153, 0.6);
+  gap: 0.45rem;
+  padding: 0.44rem 0.82rem;
+  border-radius: 0.65rem;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(14, 165, 233, 0.2));
+  border: 1.5px solid rgba(52, 211, 153, 0.65);
   color: #ecfdf5;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.16s ease;
@@ -217,8 +219,8 @@
 }
 
 .slx-wallet-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
   background: #34d399;
   box-shadow: 0 0 8px #34d399;
@@ -228,14 +230,14 @@
 .slx-wasm-proof-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.32rem 0.6rem;
-  border-radius: 0.6rem;
-  background: rgba(15, 23, 42, 0.9);
-  border: 1px solid rgba(56, 189, 248, 0.5);
+  gap: 0.38rem;
+  padding: 0.42rem 0.72rem;
+  border-radius: 0.65rem;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.52);
   color: #bae6fd;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.69rem;
+  font-size: 0.76rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.16s ease;
@@ -255,13 +257,13 @@
 .slx-hfs-selector-bar {
   display: inline-flex;
   align-items: center;
-  gap: 0.32rem;
-  padding: 0.2rem 0.42rem;
+  gap: 0.38rem;
+  padding: 0.32rem 0.6rem;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.88);
-  border: 1px solid rgba(56, 189, 248, 0.4);
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid rgba(56, 189, 248, 0.45);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.71rem;
+  font-size: 0.77rem;
   color: #e2e8f0;
 }
 
@@ -270,9 +272,9 @@
   border: none;
   color: #f8fafc;
   font-family: inherit;
-  font-size: 0.71rem;
+  font-size: 0.77rem;
   font-weight: 700;
-  max-width: 270px;
+  max-width: 280px;
   cursor: pointer;
   outline: none;
 }
@@ -283,13 +285,13 @@
 }
 
 .slx-hfs-deploy-btn {
-  padding: 0.22rem 0.52rem;
+  padding: 0.28rem 0.62rem;
   border-radius: 999px;
-  border: 1px solid rgba(52, 211, 153, 0.5);
-  background: rgba(16, 185, 129, 0.18);
+  border: 1px solid rgba(52, 211, 153, 0.55);
+  background: rgba(16, 185, 129, 0.2);
   color: #6ee7b7;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.68rem;
+  font-size: 0.73rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -512,14 +514,14 @@
 .slx-social-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.34rem;
-  padding: 0.32rem 0.6rem;
-  border-radius: 0.6rem;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(168, 85, 247, 0.52);
+  gap: 0.4rem;
+  padding: 0.42rem 0.76rem;
+  border-radius: 0.65rem;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(168, 85, 247, 0.58);
   color: #e9d5ff;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.69rem;
+  font-size: 0.77rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.16s ease;
@@ -548,11 +550,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 0.32rem;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 0.36rem;
   border-radius: 999px;
-  font-size: 0.62rem;
+  font-size: 0.68rem;
   font-weight: 800;
   line-height: 1;
 }
@@ -578,7 +580,7 @@
 
 .slx-social-drawer-backdrop {
   position: fixed;
-  top: var(--slx-unified-hdr-h, 76px);
+  top: var(--slx-unified-hdr-h, 114px);
   right: 0;
   bottom: 0;
   left: 0;
@@ -768,16 +770,16 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  min-height: 48px;
-  padding: 0.38rem 1rem;
+  gap: 0.9rem;
+  min-height: 76px;
+  padding: 0.55rem 1.25rem;
   flex-wrap: wrap;
 }
 
 .slx-uh-left {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: 0.95rem;
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -791,27 +793,33 @@
 }
 
 .slx-uh-logo-link:hover {
-  opacity: 0.92;
+  opacity: 0.94;
   transform: translateY(-1px);
 }
 
 .slx-uh-logo {
-  height: 36px;
+  height: 66px;
   width: auto;
   object-fit: contain;
   display: block;
 }
 
+@media (max-width: 1024px) {
+  .slx-uh-logo {
+    height: 52px;
+  }
+}
+
 @media (max-width: 640px) {
   .slx-uh-logo {
-    height: 28px;
+    height: 40px;
   }
 }
 
 .slx-uh-divider {
-  width: 1px;
-  height: 30px;
-  background: rgba(100, 116, 139, 0.48);
+  width: 1.5px;
+  height: 46px;
+  background: rgba(100, 116, 139, 0.5);
   flex-shrink: 0;
 }
 
@@ -819,15 +827,15 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 1px;
+  gap: 3px;
 }
 
 .slx-uh-title {
-  font-size: 0.96rem;
+  font-size: 1.18rem;
   font-weight: 800;
   color: #f8fafc;
   letter-spacing: -0.015em;
-  line-height: 1.2;
+  line-height: 1.22;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -835,9 +843,9 @@
 
 .slx-uh-subtitle {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.66rem;
+  font-size: 0.78rem;
   color: #94a3b8;
-  line-height: 1.25;
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -852,15 +860,15 @@
 .slx-uh-context {
   display: inline-flex;
   align-items: center;
-  gap: 0.42rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  margin-left: 0.25rem;
+  margin-left: 0.35rem;
 }
 
 .slx-uh-right {
   display: inline-flex;
   align-items: center;
-  gap: 0.38rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
   flex-shrink: 0;
 }
@@ -868,7 +876,7 @@
 .slx-uh-extra {
   display: inline-flex;
   align-items: center;
-  gap: 0.36rem;
+  gap: 0.42rem;
   flex-wrap: wrap;
 }
 
@@ -880,14 +888,14 @@
 .slx-uh-apps-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.36rem;
-  padding: 0.32rem 0.64rem;
-  border-radius: 0.6rem;
-  background: rgba(14, 165, 233, 0.14);
-  border: 1px solid rgba(56, 189, 248, 0.55);
+  gap: 0.42rem;
+  padding: 0.42rem 0.8rem;
+  border-radius: 0.65rem;
+  background: rgba(14, 165, 233, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.58);
   color: #e0f2fe;
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.69rem;
+  font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
