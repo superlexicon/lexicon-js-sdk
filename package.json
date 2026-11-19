@@ -1,0 +1,50 @@
+{
+  "name": "@superlexicon/sdk",
+  "version": "0.1.0",
+  "description": "Zero-dependency JavaScript/TypeScript SDK for SuperLexicon Subnet 1 & Halt-Free Subroutines (HFS): secp256k1 keypairs, $0-gas extraTargets RLP signing, ABI codecs, multiplexed WebSocket JSON-RPC, real-time eth_subscribe event streams, and Unified Identity.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./crypto": "./src/crypto.js",
+    "./abi": "./src/abi.js",
+    "./rpc": "./src/rpc.js",
+    "./events": "./src/events.js",
+    "./identity": "./src/identity.js",
+    "./ui": {
+      "types": "./src/ui/index.d.ts",
+      "default": "./src/ui/index.js"
+    },
+    "./ui/styles.css": "./src/ui/styles.css"
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node ./test/sdk.test.mjs",
+    "sync:web": "node ./scripts/sync-to-web.mjs"
+  },
+  "keywords": [
+    "superlexicon",
+    "lexicon",
+    "hfs",
+    "haltproof-subroutines",
+    "wasm",
+    "secp256k1",
+    "keccak256",
+    "rlp",
+    "websocket",
+    "eth_subscribe"
+  ]
+}
