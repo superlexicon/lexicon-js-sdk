@@ -106,21 +106,25 @@ const FALLBACK_CSS = `
 .slx-soc-msg-bubble.mine{background:rgba(12,74,110,.38);border-color:rgba(56,189,248,.55);margin-left:1.1rem}
 .slx-soc-composer{padding:.7rem 1rem;background:#060b17;border-top:1px solid rgba(71,85,105,.48);display:flex;gap:.45rem;align-items:center;flex-shrink:0}
 .slx-unified-header{position:sticky;top:0;z-index:60;display:flex;flex-direction:column;width:100%;flex-shrink:0;background:linear-gradient(180deg,#0d172b 0%,#091122 100%);border-bottom:1px solid rgba(56,189,248,.34);box-shadow:0 8px 28px rgba(0,0,0,.45);color:#f8fafc;font-family:Inter,system-ui,-apple-system,sans-serif}
-.slx-uh-main-row{display:flex;align-items:center;justify-content:space-between;gap:.9rem;min-height:76px;padding:.55rem 1.25rem;flex-wrap:wrap}
-.slx-uh-left{display:flex;align-items:center;gap:.95rem;min-width:0;flex:1 1 auto}
+.slx-uh-main-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:76px;padding:.55rem 1.25rem;flex-wrap:nowrap}
+@media(max-width:960px){.slx-uh-main-row{flex-wrap:wrap}}
+.slx-uh-left{display:flex;align-items:center;gap:.95rem;min-width:0;flex:1 1 0%;overflow:hidden}
 .slx-uh-logo-link{display:inline-flex;align-items:center;flex-shrink:0;text-decoration:none;transition:opacity .15s ease,transform .15s ease}
 .slx-uh-logo-link:hover{opacity:.94;transform:translateY(-1px)}
 .slx-uh-logo{height:66px;width:auto;object-fit:contain;display:block}
 @media(max-width:1024px){.slx-uh-logo{height:52px}}
 @media(max-width:640px){.slx-uh-logo{height:40px}}
 .slx-uh-divider{width:1.5px;height:46px;background:rgba(100,116,139,.5);flex-shrink:0}
-.slx-uh-titles{display:flex;flex-direction:column;min-width:0;gap:3px}
+.slx-uh-titles{display:flex;flex-direction:column;min-width:0;flex:1 1 0%;overflow:hidden;gap:3px}
 .slx-uh-title{font-size:1.18rem;font-weight:800;color:#f8fafc;letter-spacing:-.015em;line-height:1.22;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slx-uh-subtitle{font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;color:#94a3b8;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:900px){.slx-uh-subtitle{display:none}}
-.slx-uh-context{display:inline-flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-left:.35rem}
-.slx-uh-right{display:inline-flex;align-items:center;gap:.45rem;flex-wrap:wrap;flex-shrink:0}
-.slx-uh-extra{display:inline-flex;align-items:center;gap:.42rem;flex-wrap:wrap}
+.slx-uh-context{display:inline-flex;align-items:center;gap:.55rem;flex-wrap:wrap}
+.slx-uh-right{display:inline-flex;align-items:center;gap:.45rem;flex-wrap:nowrap;flex-shrink:0}
+@media(max-width:960px){.slx-uh-right{flex-wrap:wrap}}
+.slx-uh-extra{display:inline-flex;align-items:center;gap:.45rem;flex-wrap:wrap;margin-left:auto}
+.slx-uh-app-bar{display:none;align-items:center;justify-content:space-between;gap:.75rem;min-height:44px;padding:.38rem 1.25rem;background:linear-gradient(90deg,#071021 0%,#0a162d 50%,#071021 100%);border-top:1px solid rgba(56,189,248,.24);flex-wrap:wrap}
+.slx-uh-app-bar.has-items{display:flex}
 .slx-uh-apps-wrap{position:relative;display:inline-flex}
 .slx-uh-apps-btn{display:inline-flex;align-items:center;gap:.42rem;padding:.42rem .8rem;border-radius:.65rem;background:rgba(14,165,233,.16);border:1px solid rgba(56,189,248,.58);color:#e0f2fe;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;font-weight:700;cursor:pointer;transition:all .15s ease;white-space:nowrap}
 .slx-uh-apps-btn:hover,.slx-uh-apps-btn[aria-expanded='true']{background:rgba(14,165,233,.26);border-color:#38bdf8;color:#fff}
@@ -1162,12 +1166,10 @@ export function mountSlxSocialWidgets({
   if (!wallet || !mountContainer || typeof document === 'undefined') return null;
   injectSlxUiStyles();
 
-  // Ensure mountContainer lays out HFS selector, Social pills, and Wallet pills cleanly on one line
-  if (!mountContainer.style.display) {
+  if (!mountContainer.className && !mountContainer.style.display) {
     mountContainer.style.display = 'inline-flex';
     mountContainer.style.alignItems = 'center';
-    mountContainer.style.gap = '0.36rem';
-    mountContainer.style.flexWrap = 'wrap';
+    mountContainer.style.gap = '0.4rem';
   }
 
   const client =
@@ -1984,6 +1986,7 @@ export function mountSlxUnifiedHeader({
   socialClient = null,
   contextElements = [],
   extraElements = [],
+  mobileElements = [],
   appsList = SLX_PLATFORM_APPS,
 } = {}) {
   if (typeof document === 'undefined') return null;
@@ -2058,14 +2061,13 @@ export function mountSlxUnifiedHeader({
           <div class="slx-uh-title" data-uh="title">${escapeHtmlText(title)}</div>
           <div class="slx-uh-subtitle" data-uh="subtitle">${escapeHtmlText(subtitle)}</div>
         </div>
-        <div class="slx-uh-context" data-uh="context"></div>
       </div>
 
       <div class="slx-uh-right">
-        <div class="slx-uh-extra" data-uh="extra"></div>
+        <div data-uh="mobileSlot" style="display:inline-flex;align-items:center;gap:0.35rem;"></div>
 
         <div class="slx-uh-apps-wrap">
-          <button type="button" class="slx-uh-apps-btn" data-uh="appsBtn" aria-expanded="false" title="Switch between Presentation Slides, Subnet 1 Explorer &amp; Live HFS Apps">
+          <button type="button" class="slx-uh-apps-btn" data-uh="appsBtn" aria-expanded="false" title="Switch between Presentation Slides &amp; Live Subnet 1 HFS Apps">
             <span>${activeAppSpec ? activeAppSpec.icon : '⊞'}</span>
             <span data-uh="appsLabel">${escapeHtmlText(activeAppSpec ? activeAppSpec.shortLabel : 'Apps')}</span>
             <span style="opacity:0.75;font-size:0.62rem;">▾</span>
@@ -2080,6 +2082,11 @@ export function mountSlxUnifiedHeader({
     </div>
 
     <div data-uh="telemetryMount"></div>
+
+    <div class="slx-uh-app-bar" data-uh="appBar">
+      <div class="slx-uh-context" data-uh="context"></div>
+      <div class="slx-uh-extra" data-uh="extra"></div>
+    </div>
   `;
 
   host.appendChild(hdr);
@@ -2087,8 +2094,10 @@ export function mountSlxUnifiedHeader({
   const refs = {
     title: hdr.querySelector('[data-uh="title"]'),
     subtitle: hdr.querySelector('[data-uh="subtitle"]'),
+    appBar: hdr.querySelector('[data-uh="appBar"]'),
     context: hdr.querySelector('[data-uh="context"]'),
     extra: hdr.querySelector('[data-uh="extra"]'),
+    mobileSlot: hdr.querySelector('[data-uh="mobileSlot"]'),
     appsBtn: hdr.querySelector('[data-uh="appsBtn"]'),
     appsMenu: hdr.querySelector('[data-uh="appsMenu"]'),
     suitePills: hdr.querySelector('[data-uh="suitePills"]'),
@@ -2096,6 +2105,14 @@ export function mountSlxUnifiedHeader({
   };
 
   // Adopt any caller-provided DOM elements (preserving IDs & event listeners!)
+  for (const el of mobileElements || []) {
+    if (el && refs.mobileSlot) {
+      if (el.style?.display === 'none' && el.hasAttribute('data-uh-unhide')) {
+        el.style.display = '';
+      }
+      refs.mobileSlot.appendChild(el);
+    }
+  }
   for (const el of contextElements || []) {
     if (el && refs.context) {
       if (el.style?.display === 'none' && el.hasAttribute('data-uh-unhide')) {
@@ -2111,6 +2128,21 @@ export function mountSlxUnifiedHeader({
       }
       refs.extra.appendChild(el);
     }
+  }
+
+  const syncAppBarVisibility = () => {
+    if (!refs.appBar) return;
+    const hasAny =
+      (refs.context?.children?.length || 0) > 0 || (refs.extra?.children?.length || 0) > 0;
+    refs.appBar.classList.toggle('has-items', hasAny);
+  };
+  syncAppBarVisibility();
+
+  let appBarMo = null;
+  if (typeof MutationObserver !== 'undefined') {
+    appBarMo = new MutationObserver(syncAppBarVisibility);
+    if (refs.context) appBarMo.observe(refs.context, { childList: true });
+    if (refs.extra) appBarMo.observe(refs.extra, { childList: true });
   }
 
   const closeAppsMenu = () => {
@@ -2197,6 +2229,7 @@ export function mountSlxUnifiedHeader({
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKey);
       ro?.disconnect();
+      appBarMo?.disconnect();
       chainBar?.destroy?.();
       socialUi?.destroy?.();
       hdr.remove();

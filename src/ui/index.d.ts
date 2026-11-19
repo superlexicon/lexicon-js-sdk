@@ -97,6 +97,7 @@ export function mountSlxUnifiedHeader(opts?: {
   socialClient?: SlxSocialClient | null;
   contextElements?: Array<HTMLElement | null>;
   extraElements?: Array<HTMLElement | null>;
+  mobileElements?: Array<HTMLElement | null>;
   appsList?: typeof SLX_PLATFORM_APPS;
 }): {
   headerEl: HTMLElement;
