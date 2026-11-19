@@ -81,8 +81,6 @@ export const SlxHfsCache = {
       rpcUrl: useRpc,
       battleshipAddr: manifest?.battleship?.contractAddr || cached.battleshipAddr || '',
       battleId: manifest?.battleship?.battleId || cached.battleId || '',
-      deadDropAddr: manifest?.deadDrop?.contractAddr || cached.deadDropAddr || '',
-      matchId: manifest?.deadDrop?.matchId || cached.matchId || '',
       socialCharterAddr:
         manifest?.fleetSocial?.charter ||
         cachedSocialCharter ||

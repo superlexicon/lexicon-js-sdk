@@ -543,14 +543,6 @@ export const HFS_TYPES = {
     modalTitle: 'Select SocialCharter HFS',
     placeholder: '',
   },
-  DEAD_DROP: {
-    typeName: 'DEAD_DROP',
-    icon: '🕵️',
-    shortLabel: 'Dead Drop HFS',
-    deployBtnText: '+ New Match',
-    modalTitle: 'Deploy & Register New Dead Drop HFS Match',
-    placeholder: 'e.g. Berlin Station Leak Hunt',
-  },
   FRACTURED_HEGEMONY: {
     typeName: 'FRACTURED_HEGEMONY',
     icon: '⬢',

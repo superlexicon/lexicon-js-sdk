@@ -801,7 +801,7 @@ function normHexPrefixed(h) {
  * Standardized 34px Horizontal Live Blockchain Telemetry Bar (`mountSlxChainBar`)
  *
  * Mounts at the identical top edge (`y = 0`) across all SuperLexicon App UIs (`DEX`, `Charter`,
- * `Commerce`, `Phantom Fleet`, `CommonsRF`, `Dead Drop`) and external SDK apps, streaming live
+ * `Commerce`, `Phantom Fleet`, `CommonsRF`, `Fractured Hegemony`, `Cipher Noir`) and external SDK apps, streaming live
  * validator `stats` + `newHeads` over the shared multiplexed WebSocket with zero polling:
  *  - Subnet 1 Live Status + Active Validator Quorum (`3 Val`)
  *  - Finalized Block Height (`#56,500`) + Click-to-Copy Block Hash
@@ -1120,7 +1120,7 @@ export function mountSlxChainBar({
  *
  * Mounts two compact header pills (`👥 Network` + `💬 Messages`) right beside `mountSlxWalletHeader`
  * across all SuperLexicon App UIs (`DEX`, `CorporateCharter`, `E-Commerce`, `Phantom Fleet`,
- * `Dead Drop`, `Fractured Hegemony`, `Cipher Noir`, and `CommonsRF`) backed by Subnet 1's shared
+ * `Fractured Hegemony`, `Cipher Noir`, and `CommonsRF`) backed by Subnet 1's shared
  * `SocialCharter`, `SocialRelationships`, `SocialFeed`, and `Messaging` Haltproof Subroutines.
  */
 export function mountSlxSocialWidgets({
