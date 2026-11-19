@@ -500,22 +500,32 @@ export class SlxWalletManager {
 }
 
 const STORAGE_KEY_SIGNED_TX_PROOFS = 'slx_signed_tx_proof_cache_v1';
+const _memSignedTxProofs = new Map();
 
 export function lookupCachedSignedTx(txHash) {
-  if (!txHash || typeof localStorage === 'undefined') return null;
+  if (!txHash) return null;
+  const key = String(txHash).toLowerCase();
+  if (_memSignedTxProofs.has(key)) return _memSignedTxProofs.get(key);
   try {
+    if (typeof localStorage === 'undefined') return null;
     const map = JSON.parse(localStorage.getItem(STORAGE_KEY_SIGNED_TX_PROOFS) || '{}');
-    return map[String(txHash).toLowerCase()] || null;
+    return map[key] || null;
   } catch (_) {
     return null;
   }
 }
 
 function saveCachedSignedTx(entry) {
-  if (!entry?.txHash || typeof localStorage === 'undefined') return;
+  if (!entry?.txHash) return;
+  const key = String(entry.txHash).toLowerCase();
+  _memSignedTxProofs.set(key, entry);
+  if (_memSignedTxProofs.size > 60) {
+    const oldest = _memSignedTxProofs.keys().next().value;
+    if (oldest) _memSignedTxProofs.delete(oldest);
+  }
   try {
+    if (typeof localStorage === 'undefined') return;
     const map = JSON.parse(localStorage.getItem(STORAGE_KEY_SIGNED_TX_PROOFS) || '{}');
-    const key = String(entry.txHash).toLowerCase();
     map[key] = entry;
     const keys = Object.keys(map);
     if (keys.length > 60) {
