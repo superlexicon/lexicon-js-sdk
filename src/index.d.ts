@@ -293,3 +293,83 @@ export function registerHfsInstanceOnChain(opts: {
 export function getUrlHfsParam(): string;
 export function setUrlHfsParam(primaryAddr: string, push?: boolean): void;
 export function clearUrlHfsParam(push?: boolean): void;
+
+// social & messaging
+export const SUBNET1_FLEET_SOCIAL_DEFAULT: {
+  identityRegistry: string;
+  messaging: string;
+  charter: string;
+  relationships: string;
+  feed: string;
+  events: string;
+};
+export function deterministicEncounterNonce(
+  charterAddr: string,
+  initiatorIdAddr: string,
+  targetIdAddr: string
+): string;
+export function computeEncounterCommit(
+  charterAddr: string,
+  initiatorIdAddr: string,
+  targetIdAddr: string,
+  secretNonceHex: string
+): string;
+export function appChannelHash(appId?: string): string;
+export const SlxSocialAbi: Record<string, (...args: any[]) => string>;
+export function decodeSocialMessagesHex(hex: string): Array<{
+  block: number;
+  authorAddr: string;
+  text: string;
+}>;
+export function decodeSocialCharterSnapshotHex(hex: string): any;
+export function decodeSocialRelSnapshotHex(hex: string): { edges: any[]; handshakes: any[] };
+export function decodeSocialFeedSnapshotHex(hex: string): { totalPosts: number; posts: any[] };
+
+export class SlxSocialClient {
+  rpcUrlFn: () => string;
+  appId: string;
+  myIdentityAddr: string;
+  charterSnap: any;
+  relSnap: { edges: any[]; handshakes: any[] };
+  feedSnap: { totalPosts: number; posts: any[] };
+  appChannelMsgs: any[];
+  dmMsgs: any[];
+  activeDmPeerId: string;
+  connectedIds: Set<string>;
+  incomingHandshakes: any[];
+  outgoingIds: Set<string>;
+  constructor(opts?: { rpcUrlFn?: () => string; appId?: string; suiteOverride?: any });
+  onChange(fn: (client: SlxSocialClient) => void): () => void;
+  ensureSuite(): Promise<any>;
+  resolveDisplayTag(identityAddr: string, onResolved?: ((tag: string) => void) | null): string;
+  resolveWalletIdentity(wallet: SlxWalletManager): Promise<string>;
+  refresh(wallet?: SlxWalletManager | null): Promise<SlxSocialClient>;
+  setActiveDmPeer(peerIdentityAddr: string, wallet?: SlxWalletManager | null): Promise<any[]>;
+  startLiveWatch(
+    wallet: SlxWalletManager,
+    opts?: { onIncomingEvent?: ((log: any) => void) | null }
+  ): () => void;
+  connectPeer(
+    wallet: SlxWalletManager,
+    targetIdentityAddr: string,
+    opts?: { appName?: string }
+  ): Promise<boolean>;
+  acceptHandshake(
+    wallet: SlxWalletManager,
+    initiatorIdentityAddr: string,
+    opts?: { appName?: string }
+  ): Promise<boolean>;
+  sendDirectMessage(
+    wallet: SlxWalletManager,
+    peerIdentityAddr: string,
+    text: string,
+    opts?: { appName?: string }
+  ): Promise<boolean>;
+  postAppChannel(wallet: SlxWalletManager, text: string, opts?: { appName?: string }): Promise<boolean>;
+  postWall(
+    wallet: SlxWalletManager,
+    text: string,
+    opts?: { visibility?: number; appName?: string }
+  ): Promise<boolean>;
+  reactWallPost(wallet: SlxWalletManager, postId: number, opts?: { appName?: string }): Promise<boolean>;
+}

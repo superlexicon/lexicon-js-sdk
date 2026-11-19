@@ -71,13 +71,24 @@ export const SlxHfsCache = {
       cachedRpc.includes('superlexicon.com:8545') ||
       (isHttpsPage && cachedRpc.startsWith('ws://'));
     const useRpc = isStaleCachedRpc ? defaultWs : cachedRpc;
+    const LEGACY_COMMONS_CHARTER = '0x24707a2b8115992bc864c014b2f5e71e831ab8d5';
+    const cachedSocialCharter =
+      cached.socialCharterAddr &&
+      String(cached.socialCharterAddr).toLowerCase() !== LEGACY_COMMONS_CHARTER
+        ? cached.socialCharterAddr
+        : '';
     const merged = {
       rpcUrl: useRpc,
       battleshipAddr: manifest?.battleship?.contractAddr || cached.battleshipAddr || '',
       battleId: manifest?.battleship?.battleId || cached.battleId || '',
       deadDropAddr: manifest?.deadDrop?.contractAddr || cached.deadDropAddr || '',
       matchId: manifest?.deadDrop?.matchId || cached.matchId || '',
-      socialCharterAddr: manifest?.commonsRf?.charter || cached.socialCharterAddr || '',
+      socialCharterAddr:
+        manifest?.fleetSocial?.charter ||
+        cachedSocialCharter ||
+        manifest?.commonsRf?.charter ||
+        '',
+      fleetSocial: manifest?.fleetSocial || cached.fleetSocial || null,
       personaIdentities: manifest?.commonsRf?.personaIdentities || [],
       personaPrivs: manifest?.commonsRf?.personaPrivs || [],
       citizenOnboardingPool: manifest?.commonsRf?.citizenOnboardingPool || [],

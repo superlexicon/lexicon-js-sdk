@@ -1,4 +1,4 @@
-import type { KeypairInfo, IdentityRecord, SlxWalletManager } from '../index.js';
+import type { KeypairInfo, IdentityRecord, SlxWalletManager, SlxSocialClient } from '../index.js';
 
 export function injectSlxUiStyles(): void;
 
@@ -49,5 +49,21 @@ export function mountSlxChainBar(opts?: {
   explorerHref?: string;
 }): {
   refresh: () => void;
+  destroy: () => void;
+} | null;
+
+export function mountSlxSocialWidgets(opts: {
+  wallet: SlxWalletManager;
+  mountContainer: HTMLElement | null;
+  appId?: string;
+  appTitle?: string;
+  rpcUrlFn?: () => string;
+  getAppPeers?: (() => Array<{ identityAddr: string; label?: string; role?: string }>) | null;
+  socialClient?: SlxSocialClient | null;
+}): {
+  client: SlxSocialClient;
+  refresh: () => Promise<SlxSocialClient>;
+  openNetwork: () => Promise<void>;
+  openMessages: (peerIdentityAddr?: string) => Promise<void>;
   destroy: () => void;
 } | null;

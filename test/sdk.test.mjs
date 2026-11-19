@@ -27,6 +27,11 @@ import {
   toPubSubWsUrl,
   derivePubSubWsCandidates,
   SlxWalletManager,
+  SUBNET1_FLEET_SOCIAL_DEFAULT,
+  deterministicEncounterNonce,
+  computeEncounterCommit,
+  appChannelHash,
+  SlxSocialAbi,
 } from '../src/index.js';
 
 // 1. Official Keccak-256 & Solidity Selector Vectors
@@ -127,5 +132,25 @@ assert.equal(w.keypair.address, kp1.address);
 w.saveIdentityRecord({ identityAddr: cA, nickname: 'Valkyrie' });
 assert.equal(w.getIdentityRecord().nickname, 'Valkyrie');
 
-console.log('✅ @superlexicon/sdk unit test suite passed (6/6 test groups)!');
+// 7. Unified Social Graph & Handshake Vectors
+assert.equal(
+  SUBNET1_FLEET_SOCIAL_DEFAULT.charter,
+  '0xdc68f6666864931d83a85f14189489679d5ef0ee',
+  'Default SocialCharter must point to Unified Fleet/Subnet Guild'
+);
+const idA = '0x' + '12'.repeat(20);
+const idB = '0x' + '34'.repeat(20);
+const encNonce = deterministicEncounterNonce(SUBNET1_FLEET_SOCIAL_DEFAULT.charter, idA, idB);
+const encCommit = computeEncounterCommit(SUBNET1_FLEET_SOCIAL_DEFAULT.charter, idA, idB, encNonce);
+assert.equal(encNonce.length, 66);
+assert.equal(encCommit.length, 66);
+assert.notEqual(
+  deterministicEncounterNonce(SUBNET1_FLEET_SOCIAL_DEFAULT.charter, idB, idA),
+  encNonce,
+  'Handshake nonce must be directional (initiator -> target)'
+);
+assert.equal(appChannelHash('DEX'), appChannelHash('dex'));
+assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorHex('sendDirectMessage(address,bytes)')));
+
+console.log('✅ @superlexicon/sdk unit test suite passed (7/7 test groups)!');
 process.exit(0);

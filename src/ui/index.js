@@ -19,6 +19,7 @@ import {
   setUrlHfsParam,
   registerIdentityPromptHandler,
 } from '../identity.js';
+import { SlxSocialClient } from '../social.js';
 
 function escapeHtmlText(s) {
   return String(s ?? '')
@@ -76,6 +77,33 @@ const FALLBACK_CSS = `
 .slx-mini-btn.sky{background:#0ea5e9;border-color:#38bdf8;color:#082f49}
 .slx-input-field{flex:1;min-width:200px;padding:.45rem .65rem;border-radius:.5rem;border:1px solid rgba(100,116,139,.65);background:#050a14;color:#f8fafc;font-family:monospace;font-size:.73rem}
 .slx-tx-item{padding:.52rem .65rem;border-radius:.55rem;background:#060b16;border:1px solid rgba(52,211,153,.35);font-family:monospace;font-size:.68rem;display:flex;flex-direction:column;gap:.24rem}
+.slx-social-pill-group{display:inline-flex;align-items:center;gap:.34rem;flex-wrap:wrap}
+.slx-social-btn{display:inline-flex;align-items:center;gap:.34rem;padding:.32rem .6rem;border-radius:.6rem;background:rgba(15,23,42,.92);border:1px solid rgba(168,85,247,.52);color:#e9d5ff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.69rem;font-weight:700;cursor:pointer;transition:all .16s ease;white-space:nowrap}
+.slx-social-btn:hover{border-color:#c084fc;background:rgba(88,28,135,.36);color:#fff}
+.slx-social-btn.msgs{border-color:rgba(56,189,248,.52);color:#bae6fd}
+.slx-social-btn.msgs:hover{border-color:#38bdf8;background:rgba(14,165,233,.22);color:#fff}
+.slx-social-badge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 .32rem;border-radius:999px;font-size:.62rem;font-weight:800;line-height:1}
+.slx-social-badge.violet{background:rgba(168,85,247,.28);border:1px solid rgba(192,132,252,.65);color:#f3e8ff}
+.slx-social-badge.amber{background:rgba(245,158,11,.28);border:1px solid rgba(251,191,36,.85);color:#fde68a;box-shadow:0 0 8px rgba(245,158,11,.45)}
+.slx-social-badge.cyan{background:rgba(14,165,233,.28);border:1px solid rgba(56,189,248,.8);color:#e0f2fe}
+.slx-social-drawer-backdrop{position:fixed;top:34px;right:0;bottom:0;left:0;z-index:9850;background:rgba(2,6,23,.48);backdrop-filter:blur(3px);display:none;justify-content:flex-end}
+.slx-social-drawer-backdrop.is-open{display:flex}
+.slx-social-drawer{width:min(440px,96vw);height:100%;background:linear-gradient(180deg,#080f1e 0%,#0b1326 100%);border-left:1.5px solid rgba(56,189,248,.45);box-shadow:-20px 0 56px rgba(0,0,0,.78);color:#f1f5f9;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+.slx-soc-hdr{padding:.75rem .95rem .6rem;background:#060b17;border-bottom:1px solid rgba(71,85,105,.45);display:flex;flex-direction:column;gap:.52rem;flex-shrink:0}
+.slx-soc-mode-tabs{display:grid;grid-template-columns:1fr 1fr;gap:.38rem}
+.slx-soc-mode-btn{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;padding:.42rem .6rem;border-radius:.5rem;border:1px solid rgba(71,85,105,.55);background:rgba(15,23,42,.75);color:#94a3b8;font-family:monospace;font-size:.71rem;font-weight:700;cursor:pointer}
+.slx-soc-mode-btn.active{background:rgba(14,165,233,.18);border-color:rgba(56,189,248,.75);color:#f8fafc}
+.slx-soc-subtabs{display:flex;gap:.32rem;padding:.45rem .95rem;background:#081020;border-bottom:1px solid rgba(51,65,85,.55);flex-shrink:0}
+.slx-soc-subtab{flex:1;padding:.32rem .45rem;border-radius:.42rem;border:1px solid transparent;background:rgba(15,23,42,.65);color:#94a3b8;font-family:monospace;font-size:.66rem;font-weight:700;cursor:pointer;text-align:center}
+.slx-soc-subtab.active{background:rgba(16,185,129,.18);border-color:rgba(52,211,153,.6);color:#6ee7b7}
+.slx-soc-scroll{flex:1;overflow-y:auto;padding:.75rem .95rem;display:flex;flex-direction:column;gap:.65rem}
+.slx-soc-sec-title{display:flex;align-items:center;justify-content:space-between;font-family:monospace;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#7dd3fc;margin-top:.15rem}
+.slx-soc-peer-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.5rem .62rem;border-radius:.55rem;background:rgba(15,25,45,.92);border:1px solid rgba(71,85,105,.45)}
+.slx-soc-peer-row.ally{border-color:rgba(52,211,153,.42);background:rgba(6,78,59,.2)}
+.slx-soc-peer-row.incoming{border-color:rgba(251,191,36,.65);background:rgba(120,53,15,.25)}
+.slx-soc-msg-bubble{padding:.48rem .64rem;border-radius:.6rem;background:rgba(15,23,42,.92);border:1px solid rgba(71,85,105,.5);display:flex;flex-direction:column;gap:.2rem;font-size:.75rem}
+.slx-soc-msg-bubble.mine{background:rgba(12,74,110,.38);border-color:rgba(56,189,248,.55);margin-left:1.1rem}
+.slx-soc-composer{padding:.65rem .95rem;background:#060b17;border-top:1px solid rgba(71,85,105,.48);display:flex;gap:.42rem;align-items:center;flex-shrink:0}
 `;
 
 export function injectSlxUiStyles() {
@@ -1083,6 +1111,734 @@ export function mountSlxChainBar({
       statsSub.unsubscribe();
       headsSub.unsubscribe();
       bar.remove();
+    },
+  };
+}
+
+/**
+ * Standardized Cross-App Social Network & Messaging Widgets (`mountSlxSocialWidgets`)
+ *
+ * Mounts two compact header pills (`👥 Network` + `💬 Messages`) right beside `mountSlxWalletHeader`
+ * across all SuperLexicon App UIs (`DEX`, `CorporateCharter`, `E-Commerce`, `Phantom Fleet`,
+ * `Dead Drop`, `Fractured Hegemony`, `Cipher Noir`, and `CommonsRF`) backed by Subnet 1's shared
+ * `SocialCharter`, `SocialRelationships`, `SocialFeed`, and `Messaging` Haltproof Subroutines.
+ */
+export function mountSlxSocialWidgets({
+  wallet,
+  mountContainer,
+  appId = 'subnet1',
+  appTitle = 'Subnet 1',
+  rpcUrlFn = () => getDefaultNodeWsUrl(),
+  getAppPeers = null,
+  socialClient = null,
+} = {}) {
+  if (!wallet || !mountContainer || typeof document === 'undefined') return null;
+  injectSlxUiStyles();
+
+  // Ensure mountContainer lays out HFS selector, Social pills, and Wallet pills cleanly on one line
+  if (!mountContainer.style.display) {
+    mountContainer.style.display = 'inline-flex';
+    mountContainer.style.alignItems = 'center';
+    mountContainer.style.gap = '0.36rem';
+    mountContainer.style.flexWrap = 'wrap';
+  }
+
+  const client =
+    socialClient ||
+    new SlxSocialClient({
+      rpcUrlFn,
+      appId,
+    });
+
+  const pillWrap = document.createElement('div');
+  pillWrap.className = 'slx-social-pill-group';
+  pillWrap.innerHTML = `
+    <button type="button" class="slx-social-btn" data-soc-open="network" title="Unified Subnet 1 Social Graph — Connected Allies &amp; Mutual RF Handshakes">
+      <span>👥</span>
+      <span>Network</span>
+      <span class="slx-social-badge violet" data-soc="allyCount">0</span>
+      <span class="slx-social-badge amber" data-soc="hsBadge" style="display:none;">+0</span>
+    </button>
+    <button type="button" class="slx-social-btn msgs" data-soc-open="messages" title="Direct Messages, Live #${escapeHtmlText(appId)} Lounge &amp; Subnet Wall">
+      <span>💬</span>
+      <span>Messages</span>
+      <span class="slx-social-badge cyan" data-soc="unreadBadge" style="display:none;">0</span>
+    </button>
+  `;
+
+  const walletGroup = mountContainer.querySelector('.slx-wallet-pill-group');
+  if (walletGroup) {
+    mountContainer.insertBefore(pillWrap, walletGroup);
+  } else {
+    mountContainer.appendChild(pillWrap);
+  }
+
+  let backdrop = document.getElementById('slxSocialDrawerBackdrop');
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'slxSocialDrawerBackdrop';
+    backdrop.className = 'slx-social-drawer-backdrop';
+    document.body.appendChild(backdrop);
+  }
+
+  let activeMode = 'network'; // 'network' | 'messages'
+  let activeMsgTab = 'dm'; // 'dm' | 'lounge' | 'wall'
+  let searchFilter = '';
+  let statusText = '';
+  let statusTone = 'info';
+  let busy = false;
+  let lastSeenTotalMsgs = null;
+  let unreadCount = 0;
+
+  backdrop.innerHTML = `
+    <aside class="slx-social-drawer" onclick="event.stopPropagation()">
+      <div class="slx-soc-hdr">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+          <div>
+            <div style="display:flex;align-items:center;gap:0.42rem;flex-wrap:wrap;">
+              <strong style="font-size:0.88rem;color:#f8fafc;">🌐 Subnet 1 Social &amp; Comms</strong>
+              <span style="padding:0.1rem 0.42rem;border-radius:999px;background:rgba(16,185,129,0.18);border:1px solid rgba(52,211,153,0.5);color:#6ee7b7;font-family:monospace;font-size:0.62rem;font-weight:700;">Unified HFS Graph</span>
+            </div>
+            <div data-soc="myIdLine" style="font-size:0.68rem;color:#94a3b8;margin-top:2px;">
+              Syncing Unified Identity…
+            </div>
+          </div>
+          <button type="button" class="slx-mini-btn" data-soc="closeBtn">✕</button>
+        </div>
+
+        <div class="slx-soc-mode-tabs">
+          <button type="button" class="slx-soc-mode-btn active" data-soc-mode="network">
+            <span>👥 Network</span>
+            <span class="slx-social-badge violet" data-soc="tabAllyCount">0</span>
+            <span class="slx-social-badge amber" data-soc="tabHsCount" style="display:none;">+0</span>
+          </button>
+          <button type="button" class="slx-soc-mode-btn" data-soc-mode="messages">
+            <span>💬 Messages &amp; Lounge</span>
+          </button>
+        </div>
+
+        <div data-soc="statusStrip" style="display:none;padding:0.38rem 0.58rem;border-radius:0.45rem;font-family:monospace;font-size:0.68rem;"></div>
+      </div>
+
+      <div data-soc="networkPane" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div style="padding:0.5rem 0.95rem;background:#081020;border-bottom:1px solid rgba(51,65,85,0.55);display:flex;gap:0.4rem;align-items:center;">
+          <input type="text" class="slx-input-field" data-soc="filterInput" placeholder="Filter allies, players or Subnet citizens…" style="min-width:0;padding:0.34rem 0.55rem;font-size:0.7rem;" />
+          <a href="/social.html" class="slx-mini-btn" title="Open Full CommonsRF Map &amp; Governance UI" style="text-decoration:none;">📡 Map ↗</a>
+        </div>
+        <div class="slx-soc-scroll" data-soc="networkList"></div>
+      </div>
+
+      <div data-soc="messagesPane" style="display:none;flex-direction:column;flex:1;min-height:0;">
+        <div class="slx-soc-subtabs">
+          <button type="button" class="slx-soc-subtab active" data-soc-subtab="dm">🔒 Direct</button>
+          <button type="button" class="slx-soc-subtab" data-soc-subtab="lounge">📡 #${escapeHtmlText(appId)}</button>
+          <button type="button" class="slx-soc-subtab" data-soc-subtab="wall">🌐 Wall</button>
+        </div>
+
+        <div data-soc="dmPeerBar" style="padding:0.48rem 0.95rem;background:#070e1c;border-bottom:1px solid rgba(51,65,85,0.5);display:flex;align-items:center;gap:0.42rem;">
+          <span style="font-family:monospace;font-size:0.66rem;color:#94a3b8;white-space:nowrap;">To Ally:</span>
+          <select data-soc="dmPeerSelect" class="slx-input-field" style="min-width:0;padding:0.3rem 0.5rem;font-size:0.71rem;"></select>
+        </div>
+
+        <div class="slx-soc-scroll" data-soc="msgScroll"></div>
+
+        <form class="slx-soc-composer" data-soc="msgForm">
+          <input type="text" class="slx-input-field" data-soc="msgInput" maxlength="220" placeholder="Write on-chain message ($0.00 gas)…" style="min-width:0;padding:0.42rem 0.6rem;font-size:0.73rem;" />
+          <button type="submit" class="slx-mini-btn emerald" data-soc="msgSendBtn" style="padding:0.42rem 0.78rem;">Send →</button>
+        </form>
+      </div>
+    </aside>
+  `;
+
+  const refs = {
+    allyCount: pillWrap.querySelector('[data-soc="allyCount"]'),
+    hsBadge: pillWrap.querySelector('[data-soc="hsBadge"]'),
+    unreadBadge: pillWrap.querySelector('[data-soc="unreadBadge"]'),
+    myIdLine: backdrop.querySelector('[data-soc="myIdLine"]'),
+    closeBtn: backdrop.querySelector('[data-soc="closeBtn"]'),
+    modeBtns: Array.from(backdrop.querySelectorAll('[data-soc-mode]')),
+    tabAllyCount: backdrop.querySelector('[data-soc="tabAllyCount"]'),
+    tabHsCount: backdrop.querySelector('[data-soc="tabHsCount"]'),
+    statusStrip: backdrop.querySelector('[data-soc="statusStrip"]'),
+    networkPane: backdrop.querySelector('[data-soc="networkPane"]'),
+    filterInput: backdrop.querySelector('[data-soc="filterInput"]'),
+    networkList: backdrop.querySelector('[data-soc="networkList"]'),
+    messagesPane: backdrop.querySelector('[data-soc="messagesPane"]'),
+    subTabBtns: Array.from(backdrop.querySelectorAll('[data-soc-subtab]')),
+    dmPeerBar: backdrop.querySelector('[data-soc="dmPeerBar"]'),
+    dmPeerSelect: backdrop.querySelector('[data-soc="dmPeerSelect"]'),
+    msgScroll: backdrop.querySelector('[data-soc="msgScroll"]'),
+    msgForm: backdrop.querySelector('[data-soc="msgForm"]'),
+    msgInput: backdrop.querySelector('[data-soc="msgInput"]'),
+    msgSendBtn: backdrop.querySelector('[data-soc="msgSendBtn"]'),
+  };
+
+  function setStatus(msg, tone = 'info') {
+    statusText = msg || '';
+    statusTone = tone;
+    if (!refs.statusStrip) return;
+    if (!statusText) {
+      refs.statusStrip.style.display = 'none';
+      return;
+    }
+    refs.statusStrip.style.display = 'block';
+    refs.statusStrip.textContent = statusText;
+    if (tone === 'err') {
+      refs.statusStrip.style.background = 'rgba(127,29,29,0.35)';
+      refs.statusStrip.style.border = '1px solid rgba(248,113,113,0.6)';
+      refs.statusStrip.style.color = '#fecaca';
+    } else if (tone === 'ok') {
+      refs.statusStrip.style.background = 'rgba(6,78,59,0.4)';
+      refs.statusStrip.style.border = '1px solid rgba(52,211,153,0.6)';
+      refs.statusStrip.style.color = '#a7f3d0';
+    } else {
+      refs.statusStrip.style.background = 'rgba(14,165,233,0.18)';
+      refs.statusStrip.style.border = '1px solid rgba(56,189,248,0.5)';
+      refs.statusStrip.style.color = '#bae6fd';
+    }
+  }
+
+  function renderPillsAndHeader() {
+    const allyN = client.connectedIds.size;
+    const hsN = client.incomingHandshakes.length;
+    if (refs.allyCount) refs.allyCount.textContent = String(allyN);
+    if (refs.tabAllyCount) refs.tabAllyCount.textContent = String(allyN);
+
+    if (refs.hsBadge) {
+      refs.hsBadge.style.display = hsN > 0 ? 'inline-flex' : 'none';
+      refs.hsBadge.textContent = `+${hsN}`;
+    }
+    if (refs.tabHsCount) {
+      refs.tabHsCount.style.display = hsN > 0 ? 'inline-flex' : 'none';
+      refs.tabHsCount.textContent = `+${hsN}`;
+    }
+
+    const totalNow = (client.dmMsgs?.length || 0) + (client.appChannelMsgs?.length || 0);
+    if (lastSeenTotalMsgs === null) {
+      lastSeenTotalMsgs = totalNow;
+    } else if (totalNow > lastSeenTotalMsgs) {
+      if (!backdrop.classList.contains('is-open') || activeMode !== 'messages') {
+        unreadCount += totalNow - lastSeenTotalMsgs;
+      }
+      lastSeenTotalMsgs = totalNow;
+    } else {
+      lastSeenTotalMsgs = totalNow;
+    }
+
+    if (refs.unreadBadge) {
+      refs.unreadBadge.style.display = unreadCount > 0 ? 'inline-flex' : 'none';
+      refs.unreadBadge.textContent = String(unreadCount);
+    }
+
+    const idRec = wallet.getIdentityRecord?.();
+    const myIdLow = String(client.myIdentityAddr || idRec?.identityAddr || '').toLowerCase();
+    const meMem = client.charterSnap?.members?.find((m) => m.identityAddr === myIdLow);
+    if (refs.myIdLine) {
+      if (idRec?.nickname) {
+        const trustStr = meMem ? ` • Trust ${meMem.trustScore}` : ' • Ready to Enroll';
+        refs.myIdLine.innerHTML = `Signed as <strong style="color:#6ee7b7;">${escapeHtmlText(idRec.nickname)} · ${truncAddr4(wallet.keypair.address)}</strong>${escapeHtmlText(trustStr)}`;
+      } else {
+        refs.myIdLine.innerHTML = `Keypair <code>${shortHex(wallet.keypair.address)}</code> — <button type="button" class="slx-mini-btn emerald" data-soc-act="createId" style="padding:0.1rem 0.42rem;font-size:0.62rem;">🪪 Create Identity</button>`;
+        refs.myIdLine.querySelector('[data-soc-act="createId"]')?.addEventListener('click', async () => {
+          await wallet.ensureIdentityWithPrompt({ rpcUrl: rpcUrlFn(), appName: appTitle });
+          await client.refresh(wallet);
+        });
+      }
+    }
+
+    for (const b of refs.modeBtns) {
+      b.classList.toggle('active', b.getAttribute('data-soc-mode') === activeMode);
+    }
+    if (refs.networkPane) {
+      refs.networkPane.style.display = activeMode === 'network' ? 'flex' : 'none';
+    }
+    if (refs.messagesPane) {
+      refs.messagesPane.style.display = activeMode === 'messages' ? 'flex' : 'none';
+    }
+  }
+
+  function renderNetworkPane() {
+    if (!refs.networkList || !backdrop.classList.contains('is-open') || activeMode !== 'network') {
+      return;
+    }
+    const q = searchFilter.trim().toLowerCase();
+    const myIdLow = String(client.myIdentityAddr || '').toLowerCase();
+    const members = client.charterSnap?.members || [];
+    const memByAddr = new Map(members.map((m) => [m.identityAddr, m]));
+
+    const matchesFilter = (name, role, addr) => {
+      if (!q) return true;
+      return (
+        String(name || '').toLowerCase().includes(q) ||
+        String(role || '').toLowerCase().includes(q) ||
+        String(addr || '').toLowerCase().includes(q)
+      );
+    };
+
+    let html = '';
+
+    // 1. Incoming Handshakes
+    if (client.incomingHandshakes.length > 0) {
+      html += `<div class="slx-soc-sec-title"><span style="color:#fbbf24;">⚡ Incoming Handshakes (${client.incomingHandshakes.length})</span><span>+3 Trust</span></div>`;
+      for (const hs of client.incomingHandshakes) {
+        const tag = client.resolveDisplayTag(hs.initiatorIdentity);
+        const m = memByAddr.get(hs.initiatorIdentity);
+        html += `
+          <div class="slx-soc-peer-row incoming">
+            <div style="min-width:0;">
+              <div style="font-weight:700;font-size:0.77rem;color:#fef3c7;">${escapeHtmlText(tag)}</div>
+              <div style="font-size:0.66rem;color:#fde68a;">${escapeHtmlText(m?.role || 'Subnet Citizen')} • Wants to connect</div>
+            </div>
+            <button type="button" class="slx-mini-btn emerald" data-soc-accept="${escapeHtmlText(hs.initiatorIdentity)}" ${busy ? 'disabled' : ''}>✓ Accept</button>
+          </div>
+        `;
+      }
+    }
+
+    // 2. Connected Allies (shared with Phantom Fleet & CommonsRF!)
+    const allies = [...client.connectedIds]
+      .map((idAddr) => {
+        const m = memByAddr.get(idAddr);
+        const tag = client.resolveDisplayTag(idAddr);
+        return {
+          identityAddr: idAddr,
+          tag,
+          role: m?.role || 'Connected Ally',
+          trust: m?.trustScore ?? 50,
+        };
+      })
+      .filter((a) => matchesFilter(a.tag, a.role, a.identityAddr));
+
+    html += `<div class="slx-soc-sec-title"><span style="color:#6ee7b7;">🤝 Connected Allies (${client.connectedIds.size})</span><span>Phantom Fleet + Subnet</span></div>`;
+    if (allies.length === 0) {
+      html += `<div style="padding:0.55rem 0.65rem;border-radius:0.5rem;background:rgba(15,23,42,0.65);border:1px dashed rgba(100,116,139,0.45);color:#94a3b8;font-size:0.71rem;">No connected allies match yet — click <strong>🤝 Connect</strong> below to establish a mutual on-chain relationship (AI Captains, Sovereigns &amp; Operatives auto-accept!).</div>`;
+    } else {
+      for (const a of allies) {
+        html += `
+          <div class="slx-soc-peer-row ally">
+            <div style="min-width:0;">
+              <div style="font-weight:700;font-size:0.76rem;color:#ecfdf5;">${escapeHtmlText(a.tag)}</div>
+              <div style="font-size:0.65rem;color:#a7f3d0;">${escapeHtmlText(a.role)} • Trust ${a.trust}</div>
+            </div>
+            <button type="button" class="slx-mini-btn sky" data-soc-dm="${escapeHtmlText(a.identityAddr)}">💬 Message</button>
+          </div>
+        `;
+      }
+    }
+
+    // 3. Active in Current App (`getAppPeers`)
+    let appPeers = [];
+    if (typeof getAppPeers === 'function') {
+      try {
+        const rawPeers = getAppPeers() || [];
+        const seen = new Set();
+        for (const p of rawPeers) {
+          const idAddr = String(p?.identityAddr || '').toLowerCase();
+          if (
+            !idAddr ||
+            /^0x0{40}$/.test(idAddr) ||
+            idAddr === myIdLow ||
+            seen.has(idAddr) ||
+            client.connectedIds.has(idAddr)
+          ) {
+            continue;
+          }
+          seen.add(idAddr);
+          const m = memByAddr.get(idAddr);
+          const label = p.label || client.resolveDisplayTag(idAddr);
+          const role = p.role || m?.role || appTitle;
+          if (matchesFilter(label, role, idAddr)) {
+            appPeers.push({ identityAddr: idAddr, label, role });
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (appPeers.length > 0) {
+      html += `<div class="slx-soc-sec-title"><span>🎯 Active in ${escapeHtmlText(appTitle)} (${appPeers.length})</span><span>In-Session</span></div>`;
+      for (const p of appPeers) {
+        const isPending = client.outgoingIds.has(p.identityAddr);
+        html += `
+          <div class="slx-soc-peer-row">
+            <div style="min-width:0;">
+              <div style="font-weight:700;font-size:0.75rem;color:#f1f5f9;">${escapeHtmlText(p.label)}</div>
+              <div style="font-size:0.65rem;color:#94a3b8;">${escapeHtmlText(p.role)}</div>
+            </div>
+            ${
+              isPending
+                ? `<span style="font-family:monospace;font-size:0.65rem;color:#fbbf24;">⏳ Pending…</span>`
+                : `<button type="button" class="slx-mini-btn emerald" data-soc-connect="${escapeHtmlText(p.identityAddr)}" ${busy ? 'disabled' : ''}>🤝 Connect</button>`
+            }
+          </div>
+        `;
+      }
+    }
+
+    // 4. Subnet 1 Citizens Directory (`SocialCharter`)
+    const appPeerSet = new Set(appPeers.map((p) => p.identityAddr));
+    const directory = members.filter(
+      (m) =>
+        m.identityAddr !== myIdLow &&
+        !client.connectedIds.has(m.identityAddr) &&
+        !appPeerSet.has(m.identityAddr) &&
+        matchesFilter(m.name, m.role, m.identityAddr)
+    );
+
+    html += `<div class="slx-soc-sec-title"><span>🌐 Subnet 1 Citizens (${directory.length})</span><span>SocialCharter</span></div>`;
+    for (const m of directory) {
+      const tag = client.resolveDisplayTag(m.identityAddr);
+      const isPending = client.outgoingIds.has(m.identityAddr);
+      html += `
+        <div class="slx-soc-peer-row">
+          <div style="min-width:0;">
+            <div style="font-weight:700;font-size:0.75rem;color:#e2e8f0;">${escapeHtmlText(tag)}</div>
+            <div style="font-size:0.65rem;color:#94a3b8;">${escapeHtmlText(m.role)} • Trust ${m.trustScore}</div>
+          </div>
+          ${
+            isPending
+              ? `<span style="font-family:monospace;font-size:0.65rem;color:#fbbf24;">⏳ Pending…</span>`
+              : `<button type="button" class="slx-mini-btn" data-soc-connect="${escapeHtmlText(m.identityAddr)}" ${busy ? 'disabled' : ''}>🤝 Connect</button>`
+          }
+        </div>
+      `;
+    }
+
+    refs.networkList.innerHTML = html;
+
+    refs.networkList.querySelectorAll('[data-soc-connect]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const targetId = btn.getAttribute('data-soc-connect');
+        if (!targetId || busy) return;
+        busy = true;
+        setStatus('⏳ Signing mutual RF encounter handshake on Subnet 1…', 'info');
+        renderDrawer();
+        try {
+          await client.connectPeer(wallet, targetId, { appName: appTitle });
+          setStatus('✓ Handshake broadcast! (AI personas auto-accept within ~1 block)', 'ok');
+        } catch (err) {
+          setStatus(`⚠ ${err?.message || err}`, 'err');
+        } finally {
+          busy = false;
+          renderDrawer();
+        }
+      });
+    });
+
+    refs.networkList.querySelectorAll('[data-soc-accept]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const initId = btn.getAttribute('data-soc-accept');
+        if (!initId || busy) return;
+        busy = true;
+        setStatus('⏳ Accepting mutual handshake (+3 Trust)…', 'info');
+        renderDrawer();
+        try {
+          await client.acceptHandshake(wallet, initId, { appName: appTitle });
+          setStatus('✓ Connected! Mutual relationship verified on Subnet 1.', 'ok');
+        } catch (err) {
+          setStatus(`⚠ ${err?.message || err}`, 'err');
+        } finally {
+          busy = false;
+          renderDrawer();
+        }
+      });
+    });
+
+    refs.networkList.querySelectorAll('[data-soc-dm]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const peerId = btn.getAttribute('data-soc-dm');
+        if (!peerId) return;
+        await openMessages(peerId);
+      });
+    });
+  }
+
+  function renderMessagesPane() {
+    if (!backdrop.classList.contains('is-open') || activeMode !== 'messages') return;
+
+    for (const b of refs.subTabBtns) {
+      const t = b.getAttribute('data-soc-subtab');
+      b.classList.toggle('active', t === activeMsgTab);
+      if (t === 'dm') b.textContent = `🔒 Direct (${client.dmMsgs.length})`;
+      if (t === 'lounge') b.textContent = `📡 #${appId} (${client.appChannelMsgs.length})`;
+      if (t === 'wall') b.textContent = `🌐 Wall (${client.feedSnap?.posts?.length || 0})`;
+    }
+
+    const myIdLow = String(client.myIdentityAddr || '').toLowerCase();
+    const allies = [...client.connectedIds];
+
+    if (refs.dmPeerBar) {
+      refs.dmPeerBar.style.display = activeMsgTab === 'dm' ? 'flex' : 'none';
+    }
+
+    if (activeMsgTab === 'dm' && refs.dmPeerSelect && document.activeElement !== refs.dmPeerSelect) {
+      if (allies.length === 0) {
+        refs.dmPeerSelect.innerHTML = `<option value="">Connect with an ally first to unlock Direct Messages</option>`;
+      } else {
+        if (!client.activeDmPeerId || !client.connectedIds.has(client.activeDmPeerId)) {
+          client.activeDmPeerId = allies[0];
+        }
+        refs.dmPeerSelect.innerHTML = allies
+          .map((idAddr) => {
+            const sel = idAddr === client.activeDmPeerId ? 'selected' : '';
+            return `<option value="${escapeHtmlText(idAddr)}" ${sel}>${escapeHtmlText(client.resolveDisplayTag(idAddr))}</option>`;
+          })
+          .join('');
+      }
+    }
+
+    if (refs.msgInput) {
+      if (activeMsgTab === 'dm') {
+        refs.msgInput.placeholder =
+          allies.length > 0
+            ? `Message ${client.resolveDisplayTag(client.activeDmPeerId)} ($0.00 gas)…`
+            : 'Connect with an ally in 👥 Network to send Direct Messages…';
+        refs.msgInput.disabled = busy || allies.length === 0;
+      } else if (activeMsgTab === 'lounge') {
+        refs.msgInput.placeholder = `Broadcast to #${appId} Lounge ($0.00 gas)…`;
+        refs.msgInput.disabled = busy;
+      } else {
+        refs.msgInput.placeholder = `Publish to Subnet 1 Global Wall ($0.00 gas)…`;
+        refs.msgInput.disabled = busy;
+      }
+    }
+    if (refs.msgSendBtn) {
+      refs.msgSendBtn.disabled = busy || (activeMsgTab === 'dm' && allies.length === 0);
+      refs.msgSendBtn.textContent = busy ? '⏳…' : activeMsgTab === 'wall' ? 'Post →' : 'Send →';
+    }
+
+    if (!refs.msgScroll) return;
+
+    if (activeMsgTab === 'dm') {
+      if (allies.length === 0) {
+        refs.msgScroll.innerHTML = `
+          <div style="padding:0.85rem;border-radius:0.65rem;background:rgba(15,23,42,0.8);border:1px dashed rgba(56,189,248,0.45);display:flex;flex-direction:column;gap:0.55rem;">
+            <strong style="color:#7dd3fc;font-size:0.78rem;">🔒 Mutual RF Connection Required for Direct Comms</strong>
+            <div style="color:#cbd5e1;font-size:0.72rem;"><code>SocialFeed.sendDirectMessage</code> enforces mutual <code>SocialRelationships</code> verification on Subnet 1 so zero spam can reach your inbox.</div>
+            <div>
+              <button type="button" class="slx-mini-btn emerald" data-soc-goto-net="1">👥 Choose an Ally to Connect →</button>
+            </div>
+          </div>
+        `;
+        refs.msgScroll.querySelector('[data-soc-goto-net]')?.addEventListener('click', () => {
+          activeMode = 'network';
+          renderDrawer();
+        });
+        return;
+      }
+
+      if (client.dmMsgs.length === 0) {
+        refs.msgScroll.innerHTML = `<div style="color:#94a3b8;font-size:0.73rem;padding:0.6rem 0.2rem;">No direct messages with <strong>${escapeHtmlText(client.resolveDisplayTag(client.activeDmPeerId))}</strong> yet — say hello below!</div>`;
+      } else {
+        refs.msgScroll.innerHTML = client.dmMsgs
+          .map((m) => {
+            const mine = m.authorAddr === myIdLow;
+            const author = mine ? 'You' : client.resolveDisplayTag(m.authorAddr);
+            return `
+              <div class="slx-soc-msg-bubble ${mine ? 'mine' : ''}">
+                <div style="display:flex;justify-content:space-between;font-family:monospace;font-size:0.63rem;color:#94a3b8;">
+                  <strong style="color:${mine ? '#7dd3fc' : '#6ee7b7'};">${escapeHtmlText(author)}</strong>
+                  <span>Blk #${m.block}</span>
+                </div>
+                <div style="color:#f8fafc;word-break:break-word;">${escapeHtmlText(m.text)}</div>
+              </div>
+            `;
+          })
+          .join('');
+        refs.msgScroll.scrollTop = refs.msgScroll.scrollHeight;
+      }
+    } else if (activeMsgTab === 'lounge') {
+      if (client.appChannelMsgs.length === 0) {
+        refs.msgScroll.innerHTML = `<div style="color:#94a3b8;font-size:0.73rem;padding:0.6rem 0.2rem;">Welcome to the live <strong>#${escapeHtmlText(appId)}</strong> on-chain lounge on <code>Messaging</code> HFS! Send the first message below.</div>`;
+      } else {
+        refs.msgScroll.innerHTML = client.appChannelMsgs
+          .map((m) => {
+            const mine = m.authorAddr === myIdLow;
+            const author = mine ? 'You' : client.resolveDisplayTag(m.authorAddr);
+            return `
+              <div class="slx-soc-msg-bubble ${mine ? 'mine' : ''}">
+                <div style="display:flex;justify-content:space-between;font-family:monospace;font-size:0.63rem;color:#94a3b8;">
+                  <strong style="color:${mine ? '#7dd3fc' : '#c084fc'};">${escapeHtmlText(author)}</strong>
+                  <span>Blk #${m.block}</span>
+                </div>
+                <div style="color:#f8fafc;word-break:break-word;">${escapeHtmlText(m.text)}</div>
+              </div>
+            `;
+          })
+          .join('');
+        refs.msgScroll.scrollTop = refs.msgScroll.scrollHeight;
+      }
+    } else {
+      const posts = client.feedSnap?.posts || [];
+      const byUid = new Map((client.charterSnap?.members || []).map((m) => [m.uid, m]));
+      if (posts.length === 0) {
+        refs.msgScroll.innerHTML = `<div style="color:#94a3b8;font-size:0.73rem;padding:0.6rem 0.2rem;">No Subnet 1 Wall posts yet — share an update across all apps!</div>`;
+      } else {
+        refs.msgScroll.innerHTML = posts
+          .map((p) => {
+            const authorMem = byUid.get(p.authorUid);
+            const authorLabel = authorMem
+              ? client.resolveDisplayTag(authorMem.identityAddr)
+              : `Citizen #${p.authorUid}`;
+            return `
+              <div class="slx-soc-msg-bubble">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-family:monospace;font-size:0.63rem;color:#94a3b8;">
+                  <strong style="color:#fde68a;">${escapeHtmlText(authorLabel)}</strong>
+                  <span>Blk #${p.createdBlock}</span>
+                </div>
+                <div style="color:#f8fafc;word-break:break-word;margin:0.15rem 0;">${escapeHtmlText(p.content)}</div>
+                <div style="display:flex;justify-content:flex-end;">
+                  <button type="button" class="slx-mini-btn" data-soc-like="${p.postId}" style="padding:0.14rem 0.44rem;font-size:0.63rem;" ${busy ? 'disabled' : ''}>❤️ ${p.likeCount}</button>
+                </div>
+              </div>
+            `;
+          })
+          .join('');
+
+        refs.msgScroll.querySelectorAll('[data-soc-like]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const pid = Number(btn.getAttribute('data-soc-like'));
+            if (Number.isNaN(pid) || busy) return;
+            busy = true;
+            setStatus(`⏳ Reacting to Post #${pid}…`, 'info');
+            renderDrawer();
+            try {
+              await client.reactWallPost(wallet, pid, { appName: appTitle });
+              setStatus(`✓ Liked Post #${pid} on Subnet 1!`, 'ok');
+            } catch (err) {
+              setStatus(`⚠ ${err?.message || err}`, 'err');
+            } finally {
+              busy = false;
+              renderDrawer();
+            }
+          });
+        });
+      }
+    }
+  }
+
+  function renderDrawer() {
+    renderPillsAndHeader();
+    renderNetworkPane();
+    renderMessagesPane();
+  }
+
+  async function openNetwork() {
+    activeMode = 'network';
+    backdrop.classList.add('is-open');
+    renderDrawer();
+    await client.refresh(wallet);
+  }
+
+  async function openMessages(peerIdentityAddr = '') {
+    activeMode = 'messages';
+    unreadCount = 0;
+    if (peerIdentityAddr) {
+      activeMsgTab = 'dm';
+      client.activeDmPeerId = String(peerIdentityAddr).toLowerCase();
+    } else if (activeMsgTab === 'dm' && client.connectedIds.size === 0) {
+      activeMsgTab = 'lounge';
+    }
+    backdrop.classList.add('is-open');
+    renderDrawer();
+    await client.refresh(wallet);
+    setTimeout(() => refs.msgInput?.focus(), 40);
+  }
+
+  pillWrap.querySelector('[data-soc-open="network"]')?.addEventListener('click', () => {
+    openNetwork();
+  });
+  pillWrap.querySelector('[data-soc-open="messages"]')?.addEventListener('click', () => {
+    openMessages();
+  });
+
+  backdrop.addEventListener('click', () => {
+    backdrop.classList.remove('is-open');
+  });
+  refs.closeBtn?.addEventListener('click', () => {
+    backdrop.classList.remove('is-open');
+  });
+
+  for (const b of refs.modeBtns) {
+    b.addEventListener('click', () => {
+      activeMode = b.getAttribute('data-soc-mode') || 'network';
+      if (activeMode === 'messages') unreadCount = 0;
+      renderDrawer();
+    });
+  }
+
+  for (const b of refs.subTabBtns) {
+    b.addEventListener('click', () => {
+      activeMsgTab = b.getAttribute('data-soc-subtab') || 'dm';
+      renderDrawer();
+      setTimeout(() => refs.msgInput?.focus(), 30);
+    });
+  }
+
+  refs.filterInput?.addEventListener('input', () => {
+    searchFilter = refs.filterInput.value || '';
+    renderNetworkPane();
+  });
+
+  refs.dmPeerSelect?.addEventListener('change', async () => {
+    const nextPeer = refs.dmPeerSelect.value;
+    if (nextPeer) {
+      await client.setActiveDmPeer(nextPeer, wallet);
+    }
+  });
+
+  refs.msgForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (busy || !refs.msgInput) return;
+    const txt = String(refs.msgInput.value || '').trim();
+    if (!txt) return;
+    busy = true;
+    setStatus('⏳ Signing & confirming message on Subnet 1 ($0.00 gas)…', 'info');
+    renderDrawer();
+    try {
+      if (activeMsgTab === 'dm') {
+        await client.sendDirectMessage(wallet, client.activeDmPeerId, txt, { appName: appTitle });
+      } else if (activeMsgTab === 'lounge') {
+        await client.postAppChannel(wallet, txt, { appName: appTitle });
+      } else {
+        await client.postWall(wallet, txt, { appName: appTitle });
+      }
+      refs.msgInput.value = '';
+      setStatus('✓ Confirmed on Subnet 1!', 'ok');
+    } catch (err) {
+      setStatus(`⚠ ${err?.message || err}`, 'err');
+    } finally {
+      busy = false;
+      renderDrawer();
+      refs.msgInput?.focus();
+    }
+  });
+
+  const unsubClient = client.onChange(() => {
+    renderDrawer();
+  });
+  let lastWalletAddr = wallet.keypair?.address || '';
+  const unsubWallet = wallet.onChange((kp) => {
+    if (kp?.address && kp.address !== lastWalletAddr) {
+      lastWalletAddr = kp.address;
+      client.activeDmPeerId = '';
+      client.refresh(wallet);
+    } else {
+      renderPillsAndHeader();
+    }
+  });
+
+  const stopWatch = client.startLiveWatch(wallet);
+
+  return {
+    client,
+    refresh: () => client.refresh(wallet),
+    openNetwork,
+    openMessages,
+    destroy: () => {
+      stopWatch();
+      unsubClient();
+      unsubWallet();
+      pillWrap.remove();
     },
   };
 }

@@ -24,6 +24,7 @@
     "./rpc": "./src/rpc.js",
     "./events": "./src/events.js",
     "./identity": "./src/identity.js",
+    "./social": "./src/social.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"
