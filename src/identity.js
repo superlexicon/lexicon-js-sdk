@@ -598,6 +598,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Cipher Noir Sabotage Tribunal',
     placeholder: 'e.g. Geneva Clearinghouse Audit',
   },
+  QUANTUM_LOTTERY: {
+    typeName: 'QUANTUM_LOTTERY',
+    icon: '🎰',
+    shortLabel: '4D Lottery',
+    deployBtnText: '+ New 4D Pool',
+    modalTitle: 'Deploy & Register New Quantum 4D Threshold-VRF Jackpot Pool',
+    placeholder: 'e.g. Subnet 1 Evening 4D Sweeps',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {

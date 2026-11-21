@@ -1973,6 +1973,15 @@ export const SLX_PLATFORM_APPS = [
     href: '/cipher-noir.html',
     group: 'Multiplayer On-Chain Games',
   },
+  {
+    id: 'lottery',
+    icon: '🎰',
+    label: 'Quantum 4D Jackpot',
+    shortLabel: '4D Lottery',
+    sub: 'Validator-Quorum Threshold VRF',
+    href: '/lottery.html',
+    group: 'Multiplayer On-Chain Games',
+  },
 ];
 
 const APP_ID_ALIASES = {
@@ -1984,6 +1993,7 @@ const APP_ID_ALIASES = {
   'phantom-fleet': 'battleship',
   fleet: 'battleship',
   noir: 'cipher-noir',
+  'quantum-lottery': 'lottery',
 };
 
 /**
