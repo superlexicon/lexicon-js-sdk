@@ -1947,6 +1947,15 @@ export const SLX_PLATFORM_APPS = [
     group: 'Institutional & Social HFS',
   },
   {
+    id: 'accounting',
+    icon: '📒',
+    label: 'IFRS Accounting Ledger',
+    shortLabel: 'IFRS Ledger',
+    sub: 'IAS/IFRS Statements & Treasury Custody',
+    href: '/accounting.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
     id: 'social',
     icon: '📡',
     label: 'CommonsRF Social',
@@ -2005,6 +2014,8 @@ const APP_ID_ALIASES = {
   'quantum-lottery': 'lottery',
   'secret-ballot': 'ballot',
   ciphervote: 'ballot',
+  'ifrs-ledger': 'accounting',
+  ifrs: 'accounting',
 };
 
 /**

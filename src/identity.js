@@ -614,6 +614,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New CipherVote Homomorphic Ballot Hub',
     placeholder: 'e.g. Subnet 1 Institutional & Civic Ballot Hub',
   },
+  IFRS_LEDGER: {
+    typeName: 'IFRS_LEDGER',
+    icon: '📒',
+    shortLabel: 'IFRS Ledger',
+    deployBtnText: '+ Incorporate IFRS Suite',
+    modalTitle: 'Deploy Self-Contained IFRS AccountingLedger + Virgin Treasury Custody',
+    placeholder: 'e.g. Meridian Robotics Pte. Ltd.',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {
