@@ -14,7 +14,15 @@ import {
 import { encodeAbi } from './abi.js';
 import { slxWaitForReceipt, slxWatchChainApp } from './events.js';
 
-export const PUBLIC_SUBNET1_WSS_RPC = 'wss://node1.superlexicon.com/rpc';
+export const PUBLIC_SUBNET1_WSS_RPC_NODES = [
+  'wss://node4.superlexicon.com/rpc',
+  'wss://node1.superlexicon.com/rpc',
+  'wss://node5.superlexicon.com/rpc',
+  'wss://node2.superlexicon.com/rpc',
+  'wss://node3.superlexicon.com/rpc',
+];
+export const PUBLIC_SUBNET1_WSS_RPC = PUBLIC_SUBNET1_WSS_RPC_NODES[0];
+let _preferredPublicWssRpc = PUBLIC_SUBNET1_WSS_RPC;
 export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
 const STORAGE_KEY_HFS_CACHE = 'slx_hfs_address_cache_v1';
 
@@ -22,11 +30,11 @@ export function getDefaultNodeWsUrl() {
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const host = window.location.hostname.toLowerCase();
     if (window.location.protocol === 'https:' || host.endsWith('superlexicon.com')) {
-      return PUBLIC_SUBNET1_WSS_RPC;
+      return _preferredPublicWssRpc;
     }
     return `ws://${window.location.hostname}:8545`;
   }
-  return PUBLIC_SUBNET1_WSS_RPC;
+  return _preferredPublicWssRpc;
 }
 
 export const SlxHfsCache = {
@@ -69,7 +77,8 @@ export const SlxHfsCache = {
     const isStaleCachedRpc =
       !cachedRpc.startsWith('ws') ||
       cachedRpc.includes('superlexicon.com:8545') ||
-      (isHttpsPage && cachedRpc.startsWith('ws://'));
+      (isHttpsPage && cachedRpc.startsWith('ws://')) ||
+      (PUBLIC_SUBNET1_WSS_RPC_NODES.includes(cachedRpc) && cachedRpc !== _preferredPublicWssRpc);
     const useRpc = isStaleCachedRpc ? defaultWs : cachedRpc;
     const LEGACY_COMMONS_CHARTER = '0x24707a2b8115992bc864c014b2f5e71e831ab8d5';
     const cachedSocialCharter =
@@ -187,40 +196,60 @@ function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
   return entry;
 }
 
-export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 15000) {
-  const wsUrl = toWsEndpoint(endpointUrl);
-  const entry = getOrOpenWsEntry(wsUrl, Math.min(timeoutMs, 12000));
-  if (entry) {
-    try {
-      const ws = await entry.openPromise;
-      const id = entry.reqSeq++;
-      return await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          entry.pending.delete(id);
-          reject(new Error(`RPC timeout on ${method}`));
-        }, timeoutMs);
-        entry.pending.set(id, { resolve, reject, timer });
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
-      });
-    } catch (wsErr) {
-      if (wsUrl !== PUBLIC_SUBNET1_WSS_RPC) {
-        const pubEntry = getOrOpenWsEntry(PUBLIC_SUBNET1_WSS_RPC, Math.min(timeoutMs, 12000));
-        if (pubEntry) {
-          const pubWs = await pubEntry.openPromise;
-          const id = pubEntry.reqSeq++;
-          return await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-              pubEntry.pending.delete(id);
-              reject(new Error(`RPC timeout on ${method}`));
-            }, timeoutMs);
-            pubEntry.pending.set(id, { resolve, reject, timer });
-            pubWs.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
-          });
+async function sendSingleWsRpc(wsUrl, method, params, timeoutMs) {
+  const entry = getOrOpenWsEntry(wsUrl, Math.min(timeoutMs, 6500));
+  if (!entry) throw new Error(`WebSocket unavailable (${wsUrl})`);
+  const ws = await entry.openPromise;
+  const id = entry.reqSeq++;
+  return await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      entry.pending.delete(id);
+      reject(new Error(`RPC timeout on ${method}`));
+    }, timeoutMs);
+    entry.pending.set(id, { resolve, reject, timer });
+    ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+  });
+}
+
+export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 15000, opts = {}) {
+  const allowFailover = opts?.allowFailover !== false;
+  let wsUrl = toWsEndpoint(endpointUrl);
+
+  // Automatically route public validator calls to the currently healthy TLS validator first
+  if (
+    allowFailover &&
+    PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl) &&
+    _preferredPublicWssRpc &&
+    wsUrl !== _preferredPublicWssRpc
+  ) {
+    wsUrl = _preferredPublicWssRpc;
+  }
+
+  try {
+    const res = await sendSingleWsRpc(wsUrl, method, params, timeoutMs);
+    if (PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl)) {
+      _preferredPublicWssRpc = wsUrl;
+    }
+    return res;
+  } catch (primaryErr) {
+    if (allowFailover) {
+      const isHttpsPage =
+        typeof window !== 'undefined' && window.location?.protocol === 'https:';
+      const fallbackNodes = PUBLIC_SUBNET1_WSS_RPC_NODES.filter((u) => u !== wsUrl);
+      // Only fall back to public WSS nodes if we're on HTTPS or already targeting a public WSS node
+      if (isHttpsPage || wsUrl.startsWith('wss://')) {
+        for (const cand of fallbackNodes) {
+          try {
+            const res = await sendSingleWsRpc(cand, method, params, Math.min(timeoutMs, 8000));
+            _preferredPublicWssRpc = cand;
+            SlxHfsCache.save({ rpcUrl: cand });
+            return res;
+          } catch (_) {}
         }
       }
-      if (!String(endpointUrl || '').startsWith('http')) {
-        throw wsErr;
-      }
+    }
+    if (!String(endpointUrl || '').startsWith('http')) {
+      throw primaryErr;
     }
   }
 

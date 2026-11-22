@@ -12,10 +12,14 @@
  */
 
 export const PUBLIC_PUBSUB_WS_NODES = [
+  'wss://node4.superlexicon.com',
   'wss://node1.superlexicon.com',
+  'wss://node5.superlexicon.com',
   'wss://node2.superlexicon.com',
   'wss://node3.superlexicon.com',
 ];
+
+let _preferredPublicPubSubNode = PUBLIC_PUBSUB_WS_NODES[0];
 
 const HEADS_WATCHDOG_SILENCE_MS = 28_000;
 const MAX_DEDUP_KEYS = 4096;
@@ -84,6 +88,11 @@ export function derivePubSubWsCandidates(rpcUrl) {
   };
 
   const primary = toPubSubWsUrl(rpcUrl);
+  // If `primary` is a public validator subdomain (`wss://nodeX.superlexicon.com`), prefer the last
+  // verified-healthy TLS validator first so an expired/restarting node never stalls initial subscribe.
+  if (primary && PUBLIC_PUBSUB_WS_NODES.includes(primary) && _preferredPublicPubSubNode) {
+    pushUnique(_preferredPublicPubSubNode);
+  }
   pushUnique(primary);
 
   for (const pub of PUBLIC_PUBSUB_WS_NODES) {
@@ -359,6 +368,9 @@ class SlxEventHub {
     ws.onopen = () => {
       clearTimeout(connectDeadline);
       if (this.ws !== ws) return;
+      if (PUBLIC_PUBSUB_WS_NODES.includes(url)) {
+        _preferredPublicPubSubNode = url;
+      }
       this.connected = true;
       this.reconnectAttempts = 0;
       this.lastActivityAt = Date.now();

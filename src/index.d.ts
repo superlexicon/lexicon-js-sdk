@@ -127,6 +127,7 @@ export function encodeBytes32Label(str: string): string;
 export function decodeBytes32LabelHex(hex32: string): string;
 
 // rpc
+export const PUBLIC_SUBNET1_WSS_RPC_NODES: string[];
 export const PUBLIC_SUBNET1_WSS_RPC: string;
 export const BYTECODE_STORE_ADDRESS: string;
 export function getDefaultNodeWsUrl(): string;
@@ -135,7 +136,8 @@ export function slxNodeRpc(
   endpointUrl: string,
   method: string,
   params?: unknown[],
-  timeoutMs?: number
+  timeoutMs?: number,
+  opts?: { allowFailover?: boolean }
 ): Promise<any>;
 
 export class SlxNonceQueue {
