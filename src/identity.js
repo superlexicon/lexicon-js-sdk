@@ -606,6 +606,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Quantum 4D Threshold-VRF Jackpot Pool',
     placeholder: 'e.g. Subnet 1 Evening 4D Sweeps',
   },
+  SECRET_BALLOT: {
+    typeName: 'SECRET_BALLOT',
+    icon: '🗳️',
+    shortLabel: 'CipherVote',
+    deployBtnText: '+ New Ballot Hub',
+    modalTitle: 'Deploy & Register New CipherVote Homomorphic Ballot Hub',
+    placeholder: 'e.g. Subnet 1 Institutional & Civic Ballot Hub',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {

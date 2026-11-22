@@ -1929,6 +1929,15 @@ export const SLX_PLATFORM_APPS = [
     group: 'Institutional & Social HFS',
   },
   {
+    id: 'ballot',
+    icon: '🗳️',
+    label: 'CipherVote Secret Ballot',
+    shortLabel: 'CipherVote',
+    sub: 'Threshold Homomorphic ZK Voting',
+    href: '/ballot.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
     id: 'commerce',
     icon: '🛒',
     label: 'E-Commerce Storefront',
@@ -1994,6 +2003,8 @@ const APP_ID_ALIASES = {
   fleet: 'battleship',
   noir: 'cipher-noir',
   'quantum-lottery': 'lottery',
+  'secret-ballot': 'ballot',
+  ciphervote: 'ballot',
 };
 
 /**
