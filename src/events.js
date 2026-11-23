@@ -753,7 +753,7 @@ export function slxOnAnyNewHead(listener) {
 export async function slxWaitForReceipt(
   rpcCallFn,
   txHash,
-  { timeoutMs = 55_000, fallbackPollMs = 900 } = {}
+  { timeoutMs = 55_000, fallbackPollMs = 280 } = {}
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

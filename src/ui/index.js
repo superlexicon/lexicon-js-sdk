@@ -167,6 +167,131 @@ export function injectSlxUiStyles() {
 
 let _activePromptPromise = null;
 
+/**
+ * Shared 60-FPS animated modal deployment progress controller (used by `openIdentityCreateModal`
+ * and `mountHfsRegistryDropdown.openDeployModal`). Glides smoothly up to `95%` while awaiting
+ * Subnet 1 block finality so deployment modals always feel responsive and alive.
+ */
+function createModalProgressController(hostEl) {
+  let rafId = 0;
+  let anchorPct = 10;
+  let displayPct = 10;
+  let anchorAt = 0;
+  let active = false;
+
+  hostEl.innerHTML = `
+    <div class="slx-boot-loader" style="margin-bottom:0;padding:11px 14px;" data-mp="box">
+      <div class="slx-boot-top">
+        <div class="slx-boot-left" style="min-width:0;flex:1;">
+          <div class="slx-boot-spinner" data-mp="spinner" aria-hidden="true"></div>
+          <div style="min-width:0;">
+            <div class="slx-boot-title" data-mp="title" style="font-size:0.78rem;">Preparing transaction…</div>
+            <div class="slx-boot-sub" data-mp="sub" style="font-size:0.68rem;">Connecting to Subnet 1 validator</div>
+          </div>
+        </div>
+        <span class="slx-boot-pct" data-mp="pct">10%</span>
+      </div>
+      <div class="slx-boot-track">
+        <div class="slx-boot-fill" data-mp="fill" style="width:10%;"></div>
+      </div>
+    </div>
+  `;
+
+  const boxEl = hostEl.querySelector('[data-mp="box"]');
+  const spinnerEl = hostEl.querySelector('[data-mp="spinner"]');
+  const titleEl = hostEl.querySelector('[data-mp="title"]');
+  const subEl = hostEl.querySelector('[data-mp="sub"]');
+  const pctEl = hostEl.querySelector('[data-mp="pct"]');
+  const fillEl = hostEl.querySelector('[data-mp="fill"]');
+
+  const paintPct = (p) => {
+    const r = Math.max(8, Math.min(100, Math.round(p)));
+    if (pctEl) pctEl.textContent = `${r}%`;
+    if (fillEl) fillEl.style.width = `${r}%`;
+  };
+
+  const tick = (now) => {
+    if (!active) return;
+    const elapsed = Math.max(0, now - anchorAt);
+    const ceiling = 95;
+    if (displayPct < ceiling) {
+      const target = anchorPct + (ceiling - anchorPct) * (1 - Math.exp(-elapsed / 5200));
+      displayPct = Math.max(displayPct, target);
+      paintPct(displayPct);
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      rafId = requestAnimationFrame(tick);
+    }
+  };
+
+  const stopRaf = () => {
+    active = false;
+    if (rafId && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+  };
+
+  return {
+    start(title, sub = '', pct = 14) {
+      stopRaf();
+      hostEl.style.display = 'block';
+      boxEl?.classList.remove('complete');
+      if (boxEl) boxEl.style.borderColor = 'rgba(56, 189, 248, 0.45)';
+      if (spinnerEl) spinnerEl.style.display = '';
+      if (titleEl) {
+        titleEl.style.color = '#f0f9ff';
+        titleEl.textContent = title;
+      }
+      if (subEl) subEl.textContent = sub;
+      anchorPct = Math.max(8, Math.min(94, Number(pct) || 14));
+      displayPct = anchorPct;
+      anchorAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      paintPct(displayPct);
+      active = true;
+      if (typeof requestAnimationFrame === 'function') {
+        rafId = requestAnimationFrame(tick);
+      }
+    },
+    update(title, meta = {}) {
+      if (meta?.done || Number(meta?.pct) >= 100) {
+        this.complete(title, meta?.sub);
+        return;
+      }
+      if (title && titleEl) titleEl.textContent = title;
+      if (meta?.sub && subEl) subEl.textContent = meta.sub;
+      const nextPct = Number(meta?.pct || 0);
+      if (nextPct > displayPct) {
+        anchorPct = Math.min(94, nextPct);
+        displayPct = anchorPct;
+        anchorAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        paintPct(displayPct);
+      } else {
+        anchorPct = Math.max(anchorPct, Math.min(94, displayPct + 4));
+        anchorAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      }
+    },
+    complete(doneTitle = '✓ Confirmed on Subnet 1!', doneSub = '') {
+      stopRaf();
+      boxEl?.classList.add('complete');
+      if (titleEl && doneTitle) titleEl.textContent = doneTitle;
+      if (subEl && doneSub) subEl.textContent = doneSub;
+      paintPct(100);
+    },
+    fail(errMsg) {
+      stopRaf();
+      boxEl?.classList.remove('complete');
+      if (boxEl) boxEl.style.borderColor = 'rgba(248, 113, 113, 0.65)';
+      if (spinnerEl) spinnerEl.style.display = 'none';
+      if (titleEl) {
+        titleEl.style.color = '#fecaca';
+        titleEl.textContent = `⚠ ${errMsg}`;
+      }
+      if (subEl) subEl.textContent = 'Check your connection or click Retry below';
+    },
+  };
+}
+
 export function openIdentityCreateModal(
   wallet,
   { rpcUrl = getDefaultNodeWsUrl(), appName = 'SuperLexicon' } = {}
@@ -227,7 +352,7 @@ export function openIdentityCreateModal(
               Rendered on-chain alongside your 4-char account tag (<code>· ${truncAddr4(wallet.keypair.address)}</code>) next to your vessels in Phantom Fleet and orders in DEX CLOB.
             </div>
           </div>
-          <div id="slxIdentityCreateStatus" style="display:none;padding:0.5rem 0.7rem;border-radius:0.5rem;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.45);color:#bae6fd;font-family:monospace;font-size:0.72rem;"></div>
+          <div id="slxIdentityCreateStatus" style="display:none;"></div>
           <div style="display:flex;justify-content:flex-end;gap:0.5rem;">
             <button type="submit" id="slxIdentitySubmitBtn" class="slx-mini-btn emerald" style="padding:0.55rem 1.1rem;font-size:0.82rem;">
               🚀 Deploy Identity &amp; Nickname on Subnet 1 →
@@ -241,6 +366,7 @@ export function openIdentityCreateModal(
     const inp = backdrop.querySelector('#slxIdentityNickInput');
     const statusEl = backdrop.querySelector('#slxIdentityCreateStatus');
     const submitBtn = backdrop.querySelector('#slxIdentitySubmitBtn');
+    const prog = createModalProgressController(statusEl);
     setTimeout(() => {
       inp?.focus();
       inp?.select();
@@ -253,14 +379,23 @@ export function openIdentityCreateModal(
       inp.disabled = true;
       submitBtn.disabled = true;
       submitBtn.textContent = '⏳ Deploying Identity on Subnet 1…';
-      statusEl.style.display = 'block';
+      prog.start(
+        `Deploying "${chosen}" Unified Identity…`,
+        'Instantiating identity.wasm & sealing IdentityRegistry in 1 block',
+        14
+      );
       try {
         const deployed = await wallet.deployUnifiedIdentityWithNickname(chosen, {
           rpcUrl,
-          onStatus: (msg) => {
-            statusEl.textContent = msg;
+          onStatus: (msg, meta) => {
+            prog.update(msg, meta);
           },
         });
+        prog.complete(
+          `✓ Identity "${chosen}" (${shortHex(deployed.identityAddr)}) Live!`,
+          'Synchronized across all SuperLexicon apps'
+        );
+        await new Promise((r) => setTimeout(r, 260));
         backdrop.classList.remove('is-open');
         _activePromptPromise = null;
         resolve(deployed);
@@ -268,9 +403,7 @@ export function openIdentityCreateModal(
         inp.disabled = false;
         submitBtn.disabled = false;
         submitBtn.textContent = '🚀 Retry Identity Deployment →';
-        statusEl.style.borderColor = 'rgba(248,113,113,0.6)';
-        statusEl.style.color = '#fecaca';
-        statusEl.textContent = `⚠ ${err.message || err}`;
+        prog.fail(err.message || String(err));
       }
     });
   });
@@ -778,10 +911,10 @@ export function mountHfsRegistryDropdown({
               placeholder="${escapeHtmlText(spec.placeholder)}"
             />
           </div>
-          <div id="slxHfsDeployStatus" style="display:none;padding:0.48rem 0.7rem;border-radius:0.5rem;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.45);color:#bae6fd;font-family:monospace;font-size:0.72rem;"></div>
+          <div id="slxHfsDeployStatus" style="display:none;"></div>
           <div style="display:flex;justify-content:flex-end;gap:0.45rem;">
             <button type="button" class="slx-mini-btn" id="slxHfsDeployCancel">Cancel</button>
-            <button type="submit" class="slx-mini-btn emerald" id="slxHfsDeploySubmit" style="padding:0.5rem 1rem;">
+            <button type="submit" id="slxHfsDeploySubmit" style="padding:0.5rem 1rem;" class="slx-mini-btn emerald">
               🚀 Deploy &amp; Register on Subnet 1
             </button>
           </div>
@@ -800,6 +933,7 @@ export function mountHfsRegistryDropdown({
     const inp = backdrop.querySelector('#slxHfsDeployLabel');
     const statusEl = backdrop.querySelector('#slxHfsDeployStatus');
     const submitBtn = backdrop.querySelector('#slxHfsDeploySubmit');
+    const deployProg = createModalProgressController(statusEl);
     setTimeout(() => inp?.focus(), 40);
 
     backdrop.querySelector('#slxHfsDeployForm')?.addEventListener('submit', async (ev) => {
@@ -809,16 +943,22 @@ export function mountHfsRegistryDropdown({
       inp.disabled = true;
       submitBtn.disabled = true;
       submitBtn.textContent = '⏳ Deploying on Subnet 1…';
-      statusEl.style.display = 'block';
+      deployProg.start(
+        `Deploying "${label}" on Subnet 1…`,
+        'Instantiating WASM HFS & registering in HfsRegistry',
+        16
+      );
       try {
         const created = await defaultDeployer({
           wallet,
           label,
           rpcUrl: rpcUrlFn(),
-          onStatus: (s) => {
-            statusEl.textContent = s;
+          onStatus: (s, meta) => {
+            deployProg.update(s, meta);
           },
         });
+        deployProg.complete(`✓ "${label}" Live on Subnet 1!`);
+        await new Promise((r) => setTimeout(r, 240));
         backdrop.classList.remove('is-open');
         setUrlHfsParam(created.primaryAddr);
         await refreshList({ selectKey: created.selectionKey });
@@ -831,7 +971,7 @@ export function mountHfsRegistryDropdown({
         inp.disabled = false;
         submitBtn.disabled = false;
         submitBtn.textContent = '🚀 Retry Deploy & Register';
-        statusEl.textContent = `⚠ ${err?.message || err}`;
+        deployProg.fail(err?.message || String(err));
       }
     });
   }

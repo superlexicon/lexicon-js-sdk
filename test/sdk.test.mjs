@@ -11,6 +11,7 @@ import {
   generatePrivateKeyHex,
   deriveKeypairInfo,
   computeAddress,
+  computeCreateAddress,
   ecdhSharedSecretBytes,
   ecdhXorTransform,
   signSecp256k1,
@@ -62,6 +63,15 @@ assert.equal(
   'secp256k1 G*1 address vector mismatch'
 );
 assert.equal(computeAddress(kp1.privateKey), kp1.address);
+// Official Ethereum CREATE RLP vector: sender 0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0, nonce 0 & nonce 1
+assert.equal(
+  computeCreateAddress('0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0', 0n),
+  '0xcd234a471b72ba2f1ccf0a70fcaba648a5eecd8d'
+);
+assert.equal(
+  computeCreateAddress('0x6ac7ea33f8831ea9dcc53393aaa88b25a785dbf0', 1n),
+  '0x343c43a37d37dff08ae8c4a11544c718abb4fcf8'
+);
 
 // 3. Canonical Low-S ECDSA & Ordered Intra-Block txHash Grinding
 const freshPriv = generatePrivateKeyHex();

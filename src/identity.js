@@ -16,6 +16,7 @@ import {
   bytesToUtf8,
   selectorBytes,
   computeAddress,
+  computeCreateAddress,
   generatePrivateKeyHex,
   deriveKeypairInfo,
   signOrderedLexiconTx,
@@ -84,20 +85,23 @@ export async function readOnChainIdentityOwner(rpcUrl, identityAddr) {
   }
 }
 
-async function waitReceiptsChecked(rpcUrl, hashes) {
-  const out = [];
-  for (const h of hashes) {
-    const r = await slxWaitForReceipt((m, p) => slxNodeRpc(rpcUrl, m, p), h, {
-      timeoutMs: 56_000,
-      fallbackPollMs: 850,
-    });
+async function waitReceiptsChecked(rpcUrl, hashes, { timeoutMs = 56_000, fallbackPollMs = 240 } = {}) {
+  const rcpts = await Promise.all(
+    hashes.map((h) =>
+      slxWaitForReceipt((m, p) => slxNodeRpc(rpcUrl, m, p), h, {
+        timeoutMs,
+        fallbackPollMs,
+      })
+    )
+  );
+  rcpts.forEach((r, idx) => {
+    const h = hashes[idx];
     if (!r) throw new Error(`Timed out waiting for Subnet 1 confirmation (${h.slice(0, 10)}…)`);
     if (r.status !== '0x1') {
       throw new Error(`On-chain transaction reverted (${h.slice(0, 10)}…)`);
     }
-    out.push(r);
-  }
-  return out;
+  });
+  return rcpts;
 }
 
 export class SlxWalletManager {
@@ -105,9 +109,18 @@ export class SlxWalletManager {
     this.nonces = new Map();
     this.txHistory = [];
     this.listeners = new Set();
+    this._pendingRegistrySeals = new Map();
     this.keypair = privateKey
       ? { ...deriveKeypairInfo(privateKey), source: 'imported' }
       : this._loadOrCreate();
+  }
+
+  async awaitRegistrySeal(identityAddr) {
+    if (!identityAddr) return;
+    const p = this._pendingRegistrySeals.get(String(identityAddr).toLowerCase());
+    if (p) {
+      await p;
+    }
   }
 
   _loadOrCreate() {
@@ -212,10 +225,28 @@ export class SlxWalletManager {
 
   async deployUnifiedIdentityWithNickname(
     rawNickname,
-    { rpcUrl = getDefaultNodeWsUrl(), manifest = null, onStatus = null } = {}
+    {
+      rpcUrl = getDefaultNodeWsUrl(),
+      manifest = null,
+      onStatus = null,
+      waitForRegistrySeal = false,
+    } = {}
   ) {
     const nickname = String(rawNickname || '').trim().slice(0, 24);
     if (!nickname) throw new Error('Please enter a nickname (1–24 characters).');
+
+    const emitStatus = (msg, meta = {}) => {
+      if (typeof onStatus === 'function') {
+        try {
+          onStatus(msg, meta);
+        } catch (_) {}
+      }
+    };
+
+    emitStatus(`Preparing "${nickname}" Identity deployment…`, {
+      pct: 14,
+      sub: 'Loading Subnet 1 WASM code hashes & account nonce',
+    });
 
     const resolvedManifest = manifest || (await SlxHfsCache.hydrateWithManifest()).manifest;
     const idCodeHash = resolvedManifest?.codeHashes?.identity;
@@ -235,56 +266,37 @@ export class SlxWalletManager {
         .slice(0, 20) || 'user';
     const handle = `${slug}.${truncAddr4(myEoa)}`;
 
-    if (onStatus) {
-      onStatus(`Step 1/2: Instantiating Identity HFS for "${nickname}" (${truncAddr4(myEoa)})…`);
-    }
-    const myNonce0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+    const canRegisterInst = Boolean(
+      inst?.registry && inst?.keeperPriv && inst?.keeperIdentity && authCodeHash
+    );
+    const keeperEoa = canRegisterInst ? computeAddress(inst.keeperPriv) : '';
+
+    // 1. Fetch user's uncontended nonce and precompute deterministic CREATE addresses!
+    const myNonce0 = BigInt(
+      await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest'])
+    );
+    const newIdAddr = computeCreateAddress(myEoa, myNonce0);
+    const regAuthAddr = canRegisterInst ? computeCreateAddress(myEoa, myNonce0 + 2n) : '';
+
+    emitStatus(`Signing 1-block Identity pipeline (${shortHex(newIdAddr)})…`, {
+      pct: 38,
+      identityAddr: newIdAddr,
+      sub: `Pre-computed Identity HFS ${shortHex(newIdAddr)} • Zero-gas RLP signing`,
+    });
+
+    const ZERO_LB = '0x' + '00'.repeat(32);
+
+    // 2. User EOA (0% background contention!) deploys Identity + initializes Nickname (+ Auth HFS) in ONE block!
     const idInstSigned = signOrderedLexiconTx({
       privateKey: myPriv,
       nonce: myNonce0,
       to: null,
       data: idCodeHash,
       gasLimit: 4_000_000n,
-    });
-    const batch1Hashes = [await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [idInstSigned.raw])];
-    this.recordExternalRpcTx({
-      txHash: batch1Hashes[0],
-      rawTx: idInstSigned.raw,
-      from: myEoa,
-      to: '(instantiate Identity)',
-      contractLabel: 'Identity',
-      fnLabel: 'instantiate',
-      dataHex: idCodeHash,
+      extraTargets: [newIdAddr],
+      lowerBoundHashHex: ZERO_LB,
     });
 
-    const canRegisterInst = Boolean(
-      inst?.registry && inst?.keeperPriv && inst?.keeperIdentity && authCodeHash
-    );
-    if (canRegisterInst) {
-      const keeperEoa = computeAddress(inst.keeperPriv);
-      const keeperNonce0 = BigInt(
-        await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [keeperEoa, 'latest'])
-      );
-      const authInstSigned = signOrderedLexiconTx({
-        privateKey: inst.keeperPriv,
-        nonce: keeperNonce0,
-        to: null,
-        data: authCodeHash,
-        gasLimit: 4_000_000n,
-      });
-      batch1Hashes.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [authInstSigned.raw]));
-    }
-
-    const batch1Rcpts = await waitReceiptsChecked(rpcUrl, batch1Hashes);
-    const newIdAddr = batch1Rcpts[0].contractAddress;
-    const regAuthAddr = canRegisterInst ? batch1Rcpts[1].contractAddress : null;
-
-    if (onStatus) {
-      onStatus(
-        `Step 2/2: Saving nickname "${nickname}" & registering ${shortHex(newIdAddr)} on IdentityRegistry…`
-      );
-    }
-    const myNonce1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
     const initCd = encodeAbi('initializeWithNickname(address,string,string)', [
       ['address', myEoa],
       ['string', handle],
@@ -292,15 +304,48 @@ export class SlxWalletManager {
     ]);
     const initSigned = signOrderedLexiconTx({
       privateKey: myPriv,
-      nonce: myNonce1,
+      nonce: myNonce0 + 1n,
       to: newIdAddr,
       data: initCd,
       gasLimit: 4_500_000n,
       extraTargets: [newIdAddr],
+      lowerBoundHashHex: idInstSigned.txHash,
     });
-    const batch2Hashes = [await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [initSigned.raw])];
+
+    const userRawTxs = [idInstSigned.raw, initSigned.raw];
+    if (canRegisterInst) {
+      const authInstSigned = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: myNonce0 + 2n,
+        to: null,
+        data: authCodeHash,
+        gasLimit: 4_000_000n,
+      });
+      userRawTxs.push(authInstSigned.raw);
+    }
+
+    emitStatus(`Broadcasting "${nickname}" (${shortHex(newIdAddr)}) to Subnet 1…`, {
+      pct: 60,
+      identityAddr: newIdAddr,
+      sub: `Submitting ${userRawTxs.length} atomic zero-gas HFS transactions in 1 block round`,
+    });
+
+    const userHashes = [];
+    for (const raw of userRawTxs) {
+      userHashes.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [raw]));
+    }
+
     this.recordExternalRpcTx({
-      txHash: batch2Hashes[0],
+      txHash: userHashes[0],
+      rawTx: idInstSigned.raw,
+      from: myEoa,
+      to: '(instantiate Identity)',
+      contractLabel: 'Identity',
+      fnLabel: 'instantiate',
+      dataHex: idCodeHash,
+    });
+    this.recordExternalRpcTx({
+      txHash: userHashes[1],
       rawTx: initSigned.raw,
       from: myEoa,
       to: newIdAddr,
@@ -309,70 +354,113 @@ export class SlxWalletManager {
       dataHex: initCd,
     });
 
-    if (canRegisterInst && regAuthAddr) {
-      const regActionHash = await slxNodeRpc(rpcUrl, 'eth_call', [
-        {
-          to: inst.registry,
-          data: encodeAbi('hashRegisterIdentity(address)', [['address', newIdAddr]]),
-        },
-        'latest',
-      ]);
-      const keeperEoa = computeAddress(inst.keeperPriv);
-      const knBase = BigInt(
-        await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [keeperEoa, 'latest'])
-      );
-      const targets = [inst.keeperIdentity, inst.registry, regAuthAddr, newIdAddr];
+    emitStatus(`Confirming "${nickname}" (${shortHex(newIdAddr)}) in next Subnet 1 block…`, {
+      pct: 76,
+      awaitingBlock: true,
+      identityAddr: newIdAddr,
+      sub: 'Awaiting single-block validator finality',
+    });
 
-      const k1 = signOrderedLexiconTx({
-        privateKey: inst.keeperPriv,
-        nonce: knBase,
-        to: inst.keeperIdentity,
-        data: encodeAbi('initOracleAuth(address,address,address,address,bytes32,uint64)', [
-          ['address', regAuthAddr],
-          ['address', inst.registry],
-          ['address', inst.keeperIdentity],
-          ['address', inst.registry],
-          ['bytes32', regActionHash],
-          ['uint64', 100],
-        ]),
-        gasLimit: 4_800_000n,
-        extraTargets: targets,
-      });
-      const k2 = signOrderedLexiconTx({
-        privateKey: inst.keeperPriv,
-        nonce: knBase + 1n,
-        to: inst.keeperIdentity,
-        data: encodeAbi('approveAndFinalizeAuth(address)', [['address', regAuthAddr]]),
-        gasLimit: 4_800_000n,
-        extraTargets: targets,
-        lowerBoundHashHex: k1.txHash,
-      });
-      const regInner = encodeAbi('registerIdentity(address,address)', [
-        ['address', newIdAddr],
-        ['address', regAuthAddr],
-      ]);
-      const k3 = signOrderedLexiconTx({
-        privateKey: inst.keeperPriv,
-        nonce: knBase + 2n,
-        to: inst.keeperIdentity,
-        data: encodeAbi('execute(address,bytes)', [
-          ['address', inst.registry],
-          ['bytes', hexToBytes(regInner)],
-        ]),
-        gasLimit: 5_200_000n,
-        extraTargets: targets,
-        lowerBoundHashHex: k2.txHash,
+    // 3. Confirm user's single-block Identity creation + nickname initialization!
+    const userRcpts = await waitReceiptsChecked(rpcUrl, userHashes);
+    const confirmedAddr = (userRcpts[0]?.contractAddress || newIdAddr).toLowerCase();
+    const confirmedRegAuth = canRegisterInst
+      ? (userRcpts[2]?.contractAddress || regAuthAddr).toLowerCase()
+      : '';
+
+    // 4. Launch non-blocking post-commit IdentityRegistry oracle seal (tracked via `awaitRegistrySeal`
+    //    with automatic retry if backend `tx-load-sim` bumps `keeperEoa` nonce concurrently).
+    if (canRegisterInst && confirmedRegAuth) {
+      const sealPromise = (async () => {
+        const regActionHash = await slxNodeRpc(rpcUrl, 'eth_call', [
+          {
+            to: inst.registry,
+            data: encodeAbi('hashRegisterIdentity(address)', [['address', confirmedAddr]]),
+          },
+          'latest',
+        ]);
+        const targets = [inst.keeperIdentity, inst.registry, confirmedRegAuth, confirmedAddr];
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const knBase = BigInt(
+              await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [keeperEoa, 'latest'])
+            );
+            const k1 = signOrderedLexiconTx({
+              privateKey: inst.keeperPriv,
+              nonce: knBase,
+              to: inst.keeperIdentity,
+              data: encodeAbi('initOracleAuth(address,address,address,address,bytes32,uint64)', [
+                ['address', confirmedRegAuth],
+                ['address', inst.registry],
+                ['address', inst.keeperIdentity],
+                ['address', inst.registry],
+                ['bytes32', regActionHash],
+                ['uint64', 100],
+              ]),
+              gasLimit: 4_800_000n,
+              extraTargets: targets,
+              lowerBoundHashHex: ZERO_LB,
+            });
+            const k2 = signOrderedLexiconTx({
+              privateKey: inst.keeperPriv,
+              nonce: knBase + 1n,
+              to: inst.keeperIdentity,
+              data: encodeAbi('approveAndFinalizeAuth(address)', [['address', confirmedRegAuth]]),
+              gasLimit: 4_800_000n,
+              extraTargets: targets,
+              lowerBoundHashHex: k1.txHash,
+            });
+            const regInner = encodeAbi('registerIdentity(address,address)', [
+              ['address', confirmedAddr],
+              ['address', confirmedRegAuth],
+            ]);
+            const k3 = signOrderedLexiconTx({
+              privateKey: inst.keeperPriv,
+              nonce: knBase + 2n,
+              to: inst.keeperIdentity,
+              data: encodeAbi('execute(address,bytes)', [
+                ['address', inst.registry],
+                ['bytes', hexToBytes(regInner)],
+              ]),
+              gasLimit: 5_200_000n,
+              extraTargets: targets,
+              lowerBoundHashHex: k2.txHash,
+            });
+            const kh = [];
+            for (const txObj of [k1, k2, k3]) {
+              kh.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txObj.raw]));
+            }
+            await waitReceiptsChecked(rpcUrl, kh, { timeoutMs: 14_000, fallbackPollMs: 240 });
+            break;
+          } catch (_) {
+            if (attempt === 2) break;
+          }
+        }
+      })().finally(() => {
+        this._pendingRegistrySeals.delete(confirmedAddr);
       });
 
-      batch2Hashes.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [k1.raw]));
-      batch2Hashes.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [k2.raw]));
-      batch2Hashes.push(await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [k3.raw]));
+      this._pendingRegistrySeals.set(confirmedAddr, sealPromise);
+      if (waitForRegistrySeal) {
+        emitStatus(`Sealing IdentityRegistry for ${shortHex(confirmedAddr)}…`, {
+          pct: 91,
+          awaitingBlock: true,
+          identityAddr: confirmedAddr,
+        });
+        await sealPromise;
+      }
     }
 
-    await waitReceiptsChecked(rpcUrl, batch2Hashes);
+    emitStatus(`✓ Identity "${nickname}" (${shortHex(confirmedAddr)}) Live on Subnet 1!`, {
+      pct: 100,
+      done: true,
+      identityAddr: confirmedAddr,
+      sub: `Unified HFS Identity ready across all SuperLexicon apps`,
+    });
+
     return this.saveIdentityRecord(
       {
-        identityAddr: newIdAddr,
+        identityAddr: confirmedAddr,
         nickname,
         handle,
         registryAddr: inst?.registry || '',

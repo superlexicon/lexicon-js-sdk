@@ -86,6 +86,7 @@ export function generatePrivateKeyHex(): string;
 export function normalizePrivateKeyHex(rawInput: string): string;
 export function deriveKeypairInfo(privateKeyHex: string): KeypairInfo;
 export function computeAddress(privateKeyHex: string): string;
+export function computeCreateAddress(senderAddr: string, nonce?: bigint | number): string;
 export function ecdhSharedSecretBytes(
   privateKeyHex: string,
   peerUncompressedPubHex: string | Uint8Array,
@@ -294,10 +295,16 @@ export class SlxWalletManager {
   getIdentityRecord(eoaAddr?: string): IdentityRecord | null;
   saveIdentityRecord(record: Partial<IdentityRecord>, eoaAddr?: string): IdentityRecord;
   clearIdentityRecord(eoaAddr?: string): void;
+  awaitRegistrySeal(identityAddr?: string): Promise<void>;
   resolveVerifiedIdentity(rpcUrl?: string): Promise<IdentityRecord | null>;
   deployUnifiedIdentityWithNickname(
     rawNickname: string,
-    opts?: { rpcUrl?: string; manifest?: any; onStatus?: ((msg: string) => void) | null }
+    opts?: {
+      rpcUrl?: string;
+      manifest?: any;
+      waitForRegistrySeal?: boolean;
+      onStatus?: ((msg: string, meta?: Record<string, any>) => void) | null;
+    }
   ): Promise<IdentityRecord>;
   updateIdentityNickname(rawNickname: string, opts?: { rpcUrl?: string }): Promise<IdentityRecord>;
   ensureIdentityWithPrompt(opts?: {

@@ -454,6 +454,16 @@ export function computeRawTxHash(rawTxHex) {
   return keccak256Hex(hexToBytes(rawTxHex)).toLowerCase();
 }
 
+/**
+ * Deterministically compute the deployed contract address for a `CREATE` (`to: null`)
+ * transaction from `(senderAddr, nonce)` via `keccak256(rlp([sender, nonce]))[12..32]`.
+ */
+export function computeCreateAddress(senderAddr, nonce = 0n) {
+  const addrBytes = hexToBytes(senderAddr).slice(-20);
+  const rlp = encodeRlpBytes([addrBytes, bigIntToRlpItem(BigInt(nonce))]);
+  return bytesToHex(keccak256Bytes(rlp).slice(12), true).toLowerCase();
+}
+
 function signLexiconTxSingle({
   privateKey,
   nonce,
