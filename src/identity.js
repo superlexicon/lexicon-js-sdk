@@ -1071,7 +1071,7 @@ export const HFS_TYPES = {
     shortLabel: 'IFRS Ledger',
     deployBtnText: '+ Incorporate IFRS Suite',
     modalTitle: 'Deploy Self-Contained IFRS AccountingLedger + Virgin Treasury Custody',
-    placeholder: 'e.g. Meridian Robotics Pte. Ltd.',
+    placeholder: 'e.g. Bostun Dynamix Pte. Ltd.',
   },
 };
 
