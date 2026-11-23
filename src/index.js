@@ -20,3 +20,4 @@ export * from './rpc.js';
 export * from './events.js';
 export * from './identity.js';
 export * from './social.js';
+export * from './confidential.js';

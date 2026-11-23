@@ -51,6 +51,28 @@ import {
   computeEncounterCommit,
   appChannelHash,
   SlxSocialAbi,
+  sha512Bytes,
+  CONF_CAT_IDS,
+  IDENTITY_CIPHERTEXT_64,
+  deriveIdentityEncryptionKeys,
+  deriveCompanyAuditKeypair,
+  deriveCategoryPeriodSubkey,
+  wrapSecretForRecipientSecp,
+  unwrapSecretWithPrivKey,
+  encryptJsonWithSubkey,
+  decryptJsonWithSubkey,
+  heAddCiphertexts,
+  decryptElGamalU24,
+  proveHeRangeU24,
+  verifyHeRangeU24,
+  proveHeSumEqualsU64,
+  verifyHeSumEqualsU64,
+  proveStealthNonInsider,
+  verifyStealthNonInsider,
+  proveEd25519Schnorr,
+  verifyEd25519Schnorr,
+  randomEdScalar,
+  buildConfidentialPayableBatchTx,
 } from '../src/index.js';
 
 // 1. Official Keccak-256 & Solidity Selector Vectors
@@ -393,5 +415,103 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   );
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (12/12 test groups)!');
+// 13. Confidential Accounting & Shielded Settlement Cryptography (SHA-512, u24 Range, DLEQ Sum, IAS 24 Stealth, ECDH/KDF)
+{
+  // FIPS 180-4 SHA-512("abc") vector
+  assert.equal(
+    bytesToHex(sha512Bytes('abc'), false),
+    'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a' +
+      '2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f',
+    'FIPS 180-4 SHA-512("abc") vector mismatch'
+  );
+
+  const charterAddr = '0x9999999999999999999999999999999999999999';
+  const auditKey = deriveCompanyAuditKeypair('0x' + '42'.repeat(32), charterAddr, 1);
+  const cfoId = '0x1111111111111111111111111111111111111111';
+  const empId = '0x2222222222222222222222222222222222222222';
+  const clientId = '0x3333333333333333333333333333333333333333';
+  const cfoKeys = deriveIdentityEncryptionKeys(kp1.privateKey, cfoId);
+  const empKeys = deriveIdentityEncryptionKeys(kp2.privateKey, empId);
+  const clientPriv = generatePrivateKeyHex();
+  const clientKeys = deriveIdentityEncryptionKeys(clientPriv, clientId);
+
+  // Officer ECDH audit key wrap / unwrap + wrong-key rejection
+  const wrappedAudit = wrapSecretForRecipientSecp(auditKey.secretLeBytes32, cfoKeys.secpPub64Bytes);
+  const unwrappedAudit = unwrapSecretWithPrivKey(wrappedAudit, kp1.privateKey);
+  assert.equal(bytesToHex(unwrappedAudit), auditKey.secretHex32);
+  assert.equal(unwrapSecretWithPrivKey(wrappedAudit, kp2.privateKey), null);
+
+  // Scoped (Category, Period) KDF subkey JSON cipher
+  const subkey = deriveCategoryPeriodSubkey(unwrappedAudit, CONF_CAT_IDS.PAYROLL, 'FY2026-M11');
+  const encJson = encryptJsonWithSubkey(subkey, { total: 42500, lines: [18000, 24500] });
+  assert.deepEqual(decryptJsonWithSubkey(subkey, encJson), { total: 42500, lines: [18000, 24500] });
+
+  // 24-bit non-negative ZK range proofs + homomorphic sum DLEQ + BSGS ElGamal decryption
+  const ctxPrefix = utf8ToBytes('TEST_CONF_PAYROLL');
+  const rowVals = [18000, 24500, 0, 0];
+  let cSum = IDENTITY_CIPHERTEXT_64;
+  let rSum = 0n;
+  for (let s = 0; s < rowVals.length; s++) {
+    const prf = proveHeRangeU24(auditKey.pub32Bytes, rowVals[s], ctxPrefix, s);
+    const recCt = verifyHeRangeU24(auditKey.pub32Bytes, ctxPrefix, s, prf.proof4608);
+    assert.ok(recCt, `Slot ${s} 24-bit range proof must verify`);
+    assert.equal(bytesToHex(recCt), bytesToHex(prf.ct64));
+    assert.equal(decryptElGamalU24(auditKey.secretScalar, recCt), rowVals[s]);
+    cSum = heAddCiphertexts(cSum, recCt);
+    rSum += prf.rScalar;
+  }
+  const sumCtx = utf8ToBytes('TEST_SUM_CTX');
+  const sumDleq = proveHeSumEqualsU64(auditKey.pub32Bytes, rSum, sumCtx);
+  assert.equal(verifyHeSumEqualsU64(auditKey.pub32Bytes, cSum, 42500, sumCtx, sumDleq), true);
+  assert.equal(verifyHeSumEqualsU64(auditKey.pub32Bytes, cSum, 42501, sumCtx, sumDleq), false);
+
+  // IAS 24 Stealth Bilateral Co-Sign & Charter Insider Non-Membership Proof
+  const rho = randomEdScalar();
+  const iasCtx = utf8ToBytes('IAS24_CONTRACT_0');
+  const stealth = proveStealthNonInsider(
+    rho,
+    clientKeys.edPub32Bytes,
+    [cfoKeys.edPub32Bytes],
+    iasCtx
+  );
+  assert.equal(
+    verifyStealthNonInsider(
+      stealth.stealthH32,
+      stealth.blindedClientPk32,
+      [cfoKeys.edPub32Bytes],
+      iasCtx,
+      stealth.proofBlob
+    ),
+    true
+  );
+  const cosignSig = proveEd25519Schnorr(clientKeys.edSecretScalar, stealth.stealthH32, utf8ToBytes('COSIGN_0'));
+  assert.equal(verifyEd25519Schnorr(stealth.stealthH32, stealth.blindedClientPk32, utf8ToBytes('COSIGN_0'), cosignSig), true);
+  assert.throws(() =>
+    proveStealthNonInsider(rho, cfoKeys.edPub32Bytes, [cfoKeys.edPub32Bytes], iasCtx)
+  );
+
+  // High-level Confidential Payable Batch builder (auto-pads 1 employee -> 4 slots)
+  const built = buildConfidentialPayableBatchTx({
+    confLedgerAddr: '0x4444444444444444444444444444444444444444',
+    accountingLedgerAddr: '0x5555555555555555555555555555555555555555',
+    treasuryIdentityAddr: '0x6666666666666666666666666666666666666666',
+    batchId: 0,
+    auditPub32Hex: auditKey.pub32Hex,
+    subkey32: subkey,
+    items: [
+      {
+        recipientIdentity: empId,
+        recipientLabel: 'Employee #1',
+        recipientSecpPub64Hex: empKeys.secpPub64Hex,
+        amount: 16500,
+        memo: 'Nov Salary',
+      },
+    ],
+  });
+  assert.equal(built.slotCount, 4);
+  assert.equal(built.totalAmount, 16500);
+  assert.ok(built.calldata.startsWith('0x') && built.calldata.length > 36000);
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (13/13 test groups)!');
 process.exit(0);

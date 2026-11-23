@@ -37,6 +37,7 @@ import {
   decodeAddrWord,
   decodeAbiStringHex,
 } from './abi.js';
+import { deriveIdentityEncryptionKeys } from './confidential.js';
 import {
   getDefaultNodeWsUrl,
   SlxHfsCache,
@@ -449,17 +450,20 @@ export class SlxWalletManager {
       lowerBoundHashHex: ZERO_LB,
     });
 
-    const initCd = encodeAbi('initializeWithNickname(address,string,string)', [
+    const derivedKeys = deriveIdentityEncryptionKeys(myPriv, newIdAddr);
+    const initCd = encodeAbi('initializeWithKeys(address,string,string,bytes,bytes32)', [
       ['address', myEoa],
       ['string', handle],
       ['string', nickname],
+      ['bytes', derivedKeys.secpPub64Bytes],
+      ['bytes32', derivedKeys.edPub32Hex],
     ]);
     const initSigned = signOrderedLexiconTx({
       privateKey: myPriv,
       nonce: myNonce0 + 1n,
       to: newIdAddr,
       data: initCd,
-      gasLimit: 4_500_000n,
+      gasLimit: 5_000_000n,
       extraTargets: [newIdAddr],
       lowerBoundHashHex: idInstSigned.txHash,
     });
@@ -1073,6 +1077,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy Self-Contained IFRS AccountingLedger + Virgin Treasury Custody',
     placeholder: 'e.g. Bostun Dynamix Pte. Ltd.',
   },
+  CONF_LEDGER: {
+    typeName: 'CONF_LEDGER',
+    icon: '🔒',
+    shortLabel: 'Confidential Ledger',
+    deployBtnText: null,
+    modalTitle: 'Select Confidential Category Roll-Up Ledger HFS',
+    placeholder: '',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {
@@ -1599,6 +1611,15 @@ function normalizeHfsTypeIdHex(typeIdOrName) {
 export const IdentityHfsWhitelistAbi = {
   identityVersion() {
     return encodeAbi('identityVersion()');
+  },
+  encryptionKeys() {
+    return encodeAbi('encryptionKeys()');
+  },
+  setEncryptionKeys(secpPub64Bytes, edPub32Hex) {
+    return encodeAbi('setEncryptionKeys(bytes,bytes32)', [
+      ['bytes', secpPub64Bytes],
+      ['bytes32', edPub32Hex],
+    ]);
   },
   setHfsAssociation(hfsAddr, typeIdOrName, status, label = '') {
     return encodeAbi('setHfsAssociation(address,bytes32,uint64,string)', [
@@ -2145,4 +2166,27 @@ export async function classifyHfsInstancesForIdentity(
     spamItems,
     validItems: [...whitelistedItems, ...publicItems],
   };
+}
+
+export async function readOnChainIdentityEncryptionKeys(rpcUrl, identityAddr) {
+  if (!identityAddr || identityAddr === ZERO_ADDR) return null;
+  try {
+    const raw = await slxNodeRpc(rpcUrl, 'eth_call', [
+      { to: identityAddr, data: IdentityHfsWhitelistAbi.encryptionKeys() },
+      'latest',
+    ]);
+    const b = hexToBytes(raw);
+    if (b.length !== 96) return null;
+    const secp = b.slice(0, 64);
+    const ed = b.slice(64, 96);
+    if (secp.every((x) => x === 0) || ed.every((x) => x === 0)) return null;
+    return {
+      secpPub64Bytes: secp,
+      secpPub64Hex: bytesToHex(secp, true),
+      edPub32Bytes: ed,
+      edPub32Hex: bytesToHex(ed, true),
+    };
+  } catch (_) {
+    return null;
+  }
 }

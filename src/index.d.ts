@@ -286,6 +286,15 @@ export function slxWatchChainApp(opts?: {
 // identity & registry
 export function readOnChainIdentityNickname(rpcUrl: string, identityAddr: string): Promise<string>;
 export function readOnChainIdentityOwner(rpcUrl: string, identityAddr: string): Promise<string>;
+export function readOnChainIdentityEncryptionKeys(
+  rpcUrl: string,
+  identityAddr: string
+): Promise<{
+  secpPub64Bytes: Uint8Array;
+  secpPub64Hex: string;
+  edPub32Bytes: Uint8Array;
+  edPub32Hex: string;
+} | null>;
 export function checkIdentityDeployedOnChain(
   rpcUrl: string,
   identityAddr: string
@@ -474,3 +483,270 @@ export class SlxSocialClient {
   ): Promise<boolean>;
   reactWallPost(wallet: SlxWalletManager, postId: number, opts?: { appName?: string }): Promise<boolean>;
 }
+
+// confidential accounting & shielded settlement
+export interface Ed25519Point {
+  X: bigint;
+  Y: bigint;
+  Z: bigint;
+  T: bigint;
+}
+
+export interface Ed25519Keypair {
+  secretScalar: bigint;
+  secretLeBytes32: Uint8Array;
+  secretHex32: string;
+  pub32Bytes: Uint8Array;
+  pub32Hex: string;
+}
+
+export interface IdentityEncryptionKeys {
+  secpPrivHex: string;
+  secpPub64Bytes: Uint8Array;
+  secpPub64Hex: string;
+  edSecretScalar: bigint;
+  edSecretHex32: string;
+  edPub32Bytes: Uint8Array;
+  edPub32Hex: string;
+}
+
+export function sha512Bytes(input: string | Uint8Array | ArrayBuffer): Uint8Array;
+export const ED25519_P: bigint;
+export const ED25519_L: bigint;
+export const CONF_RANGE_BITS: number;
+export const CONF_BIT_PROOF_STRIDE: number;
+export const CONF_RANGE_PROOF_BYTES: number;
+export const CONF_MIN_PADDED_SLOTS: number;
+export const CONF_CAT_KIND: Readonly<{
+  PAYROLL: 1;
+  DEFENSE_B2B: 2;
+  TRADE_AR: 3;
+  VENDOR_OPEX: 4;
+}>;
+export const CONF_ROLLUP_MODE: Readonly<{
+  BATCH_OR_EPOCH: 1;
+  LIVE_COUNTERPARTY_SHIELDED: 2;
+}>;
+export const CONF_CAT_IDS: Readonly<{
+  PAYROLL: string;
+  DEFENSE_B2B: string;
+  DEFENSE_LIVE: string;
+  TRADE_AR: string;
+  VENDOR_OPEX: string;
+}>;
+export const ED_IDENTITY_PT: Readonly<Ed25519Point>;
+export const ED_BASE_PT: Readonly<Ed25519Point>;
+export const ED25519_BASEPOINT_BYTES: Uint8Array;
+export const IDENTITY_POINT_BYTES: Uint8Array;
+export const IDENTITY_CIPHERTEXT_64: Uint8Array;
+
+export function edAdd(P: Ed25519Point, Q: Ed25519Point): Ed25519Point;
+export function edNeg(P: Ed25519Point): Ed25519Point;
+export function edMul(scalar: bigint | number, P: Ed25519Point): Ed25519Point;
+export function edEncode(P: Ed25519Point): Uint8Array;
+export function edDecode(bytesOrHex: string | Uint8Array): Ed25519Point | null;
+export function edIsIdentity(P: Ed25519Point): boolean;
+export function leBytesToBigInt(bytes: Uint8Array): bigint;
+export function scalarToLeBytes32(s: bigint | number): Uint8Array;
+export function randomEdScalar(): bigint;
+export function encodePeriodTagBytes32(labelStr: string): Uint8Array;
+export function decodePeriodTagBytes32(bytesOrHex: string | Uint8Array): string;
+
+export function deriveEd25519Keypair(
+  seed32Input: string | Uint8Array,
+  ctxInput: string | Uint8Array
+): Ed25519Keypair;
+export function deriveIdentityEncryptionKeys(
+  privateKeyHex: string,
+  identityAddrHex: string
+): IdentityEncryptionKeys;
+export function deriveCompanyAuditKeypair(
+  seedBytesOrHex: string | Uint8Array | null | undefined,
+  charterAddrHex: string,
+  epoch?: number
+): Ed25519Keypair;
+export function deriveCategoryPeriodSubkey(
+  auditSecretInput: string | Uint8Array,
+  categoryIdHex: string,
+  periodTagInput: string | Uint8Array
+): Uint8Array;
+export function wrapSecretForRecipientSecp(
+  secretBytes: string | Uint8Array,
+  recipientSecpPub64: string | Uint8Array,
+  contextTag?: string
+): Uint8Array;
+export function unwrapSecretWithPrivKey(
+  envelopeInput: string | Uint8Array,
+  recipientPrivateKeyHex: string,
+  contextTag?: string
+): Uint8Array | null;
+export function encryptJsonForRecipientSecp(
+  obj: any,
+  recipientSecpPub64: string | Uint8Array,
+  contextTag?: string
+): Uint8Array;
+export function decryptJsonWithPrivKey<T = any>(
+  envelopeInput: string | Uint8Array,
+  recipientPrivateKeyHex: string,
+  contextTag?: string
+): T | null;
+export function encryptJsonWithSubkey(
+  subkey32Input: string | Uint8Array,
+  obj: any,
+  contextTag?: string
+): Uint8Array;
+export function decryptJsonWithSubkey<T = any>(
+  subkey32Input: string | Uint8Array,
+  cipherInput: string | Uint8Array,
+  contextTag?: string
+): T | null;
+
+export function heEncryptU64(
+  pkInput: string | Uint8Array,
+  value: number | bigint,
+  rScalar?: bigint
+): { ct64: Uint8Array; rScalar: bigint };
+export function heAddCiphertexts(
+  caInput: string | Uint8Array,
+  cbInput: string | Uint8Array
+): Uint8Array | null;
+export function heSubCiphertexts(
+  caInput: string | Uint8Array,
+  cbInput: string | Uint8Array
+): Uint8Array | null;
+export function heScaleCiphertext(
+  ctInput: string | Uint8Array,
+  weight: number | bigint
+): Uint8Array | null;
+export function decryptElGamalU24(
+  auditSecretScalarOrLeBytes: bigint | string | Uint8Array,
+  ctInput: string | Uint8Array,
+  maxBound?: number
+): number | null;
+export function proveDleq(
+  secretScalar: bigint,
+  G1: Ed25519Point,
+  Y1: Ed25519Point,
+  G2: Ed25519Point,
+  Y2: Ed25519Point,
+  auxCtx: Uint8Array
+): Uint8Array;
+export function verifyDleq(
+  G1: Ed25519Point,
+  Y1: Ed25519Point,
+  G2: Ed25519Point,
+  Y2: Ed25519Point,
+  auxCtx: Uint8Array,
+  proof64Input: string | Uint8Array
+): boolean;
+export function proveHeZeroOrOne(
+  pkInput: string | Uint8Array,
+  bit: 0 | 1 | number,
+  rScalar: bigint,
+  auxCtx: Uint8Array
+): { ct64: Uint8Array; proof128: Uint8Array };
+export function verifyHeZeroOrOne(
+  pkInput: string | Uint8Array,
+  ct64Input: string | Uint8Array,
+  auxCtx: Uint8Array,
+  proof128Input: string | Uint8Array
+): boolean;
+export function proveHeRangeU24(
+  pkInput: string | Uint8Array,
+  value: number,
+  ctxPrefixBytes: Uint8Array,
+  slotIdx: number
+): { ct64: Uint8Array; rScalar: bigint; proof4608: Uint8Array };
+export function verifyHeRangeU24(
+  pkInput: string | Uint8Array,
+  ctxPrefixBytes: Uint8Array,
+  slotIdx: number,
+  proof4608Input: string | Uint8Array
+): Uint8Array | null;
+export function proveHeSumEqualsU64(
+  pkInput: string | Uint8Array,
+  rSumScalar: bigint,
+  sumCtxBytes: Uint8Array
+): Uint8Array;
+export function verifyHeSumEqualsU64(
+  pkInput: string | Uint8Array,
+  cSum64Input: string | Uint8Array,
+  publicAmount: number | bigint,
+  sumCtxBytes: Uint8Array,
+  dleq64Input: string | Uint8Array
+): boolean;
+export function proveEd25519Schnorr(
+  secretScalar: bigint,
+  base32Input: string | Uint8Array,
+  msgCtxBytes: Uint8Array
+): Uint8Array;
+export function verifyEd25519Schnorr(
+  base32Input: string | Uint8Array,
+  pub32Input: string | Uint8Array,
+  msgCtxBytes: Uint8Array,
+  sig64Input: string | Uint8Array
+): boolean;
+export function proveStealthNonInsider(
+  rhoScalar: bigint,
+  clientEdPubInput: string | Uint8Array,
+  insiderEdPubs: Array<string | Uint8Array>,
+  ctxPrefixBytes: Uint8Array
+): {
+  stealthH32: Uint8Array;
+  stealthH32Hex: string;
+  blindedClientPk32: Uint8Array;
+  blindedClientPk32Hex: string;
+  proofBlob: Uint8Array;
+};
+export function verifyStealthNonInsider(
+  h32Input: string | Uint8Array,
+  pBlind32Input: string | Uint8Array,
+  insiderEdPubs: Array<string | Uint8Array>,
+  ctxPrefixBytes: Uint8Array,
+  proofBlobInput: string | Uint8Array
+): boolean;
+export function computeConfidentialBatchTag(confLedgerAddrHex: string, batchId: number): Uint8Array;
+export function buildConfidentialPayableBatchTx(params: Record<string, any>): {
+  calldata: string;
+  totalAmount: number;
+  slotCount: number;
+  periodHex: string;
+  sumDleq64: Uint8Array;
+};
+export function buildConfidentialReceivableProposal(params: Record<string, any>): {
+  calldata: string;
+  buildCalldata: (finalAuthObj?: string) => string;
+  actionHashCalldata: string;
+  stealthH32Hex: string;
+  blindedClientPk32Hex: string;
+  claimLockHex: string;
+  claimSecretHex: string;
+  rhoScalar: bigint;
+  rMonthlyScalar: bigint;
+  rBacklogScalar: bigint;
+  ias24ProofBlob: Uint8Array;
+  cMonthly64: Uint8Array;
+  periodHex: string;
+};
+export function buildStealthCosignTx(params: Record<string, any>): string;
+export function buildConfidentialEpochRollupTx(params: Record<string, any>): {
+  calldata: string;
+  publicTotal: number;
+  slotCount: number;
+};
+export function buildSpendOrRedeemShieldedNoteTx(params: Record<string, any>): {
+  calldata: string;
+  nullifierHex: string;
+  changeAmount: number;
+  changeClaimSecretHex: string | null;
+};
+export function decodeConfidentialCategoriesHex(rawHex: string): any[];
+export function decodeConfidentialBatchesSliceHex(rawHex: string): { total: number; items: any[] };
+export function decodeConfidentialReceivablesSliceHex(rawHex: string): { total: number; items: any[] };
+export function decodeShieldedNotesSliceHex(rawHex: string): { total: number; items: any[] };
+export function decodeAuditorGrantsSliceHex(rawHex: string): { total: number; items: any[] };
+export function decodeIas24InsidersHex(rawHex: string): Array<{
+  identity: string;
+  edPub32Bytes: Uint8Array;
+  edPub32Hex: string;
+}>;
