@@ -12,11 +12,11 @@
  */
 
 export const PUBLIC_PUBSUB_WS_NODES = [
-  'wss://node4.superlexicon.com',
   'wss://node1.superlexicon.com',
-  'wss://node5.superlexicon.com',
-  'wss://node2.superlexicon.com',
   'wss://node3.superlexicon.com',
+  'wss://node4.superlexicon.com',
+  'wss://node2.superlexicon.com',
+  'wss://node5.superlexicon.com',
 ];
 
 let _preferredPublicPubSubNode = PUBLIC_PUBSUB_WS_NODES[0];

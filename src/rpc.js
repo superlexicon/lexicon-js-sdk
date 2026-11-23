@@ -15,11 +15,11 @@ import { encodeAbi } from './abi.js';
 import { slxWaitForReceipt, slxWatchChainApp } from './events.js';
 
 export const PUBLIC_SUBNET1_WSS_RPC_NODES = [
-  'wss://node4.superlexicon.com/rpc',
   'wss://node1.superlexicon.com/rpc',
-  'wss://node5.superlexicon.com/rpc',
-  'wss://node2.superlexicon.com/rpc',
   'wss://node3.superlexicon.com/rpc',
+  'wss://node4.superlexicon.com/rpc',
+  'wss://node2.superlexicon.com/rpc',
+  'wss://node5.superlexicon.com/rpc',
 ];
 export const PUBLIC_SUBNET1_WSS_RPC = PUBLIC_SUBNET1_WSS_RPC_NODES[0];
 let _preferredPublicWssRpc = PUBLIC_SUBNET1_WSS_RPC;
@@ -187,7 +187,10 @@ function createWsPoolEntry(wsUrl, pool, connectTimeoutMs = 12000) {
         pending.delete(msg.id);
         clearTimeout(p.timer);
         if (msg.error) {
-          p.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+          const rpcErr = new Error(msg.error.message || JSON.stringify(msg.error));
+          rpcErr.isJsonRpcError = true;
+          rpcErr.code = msg.error.code;
+          p.reject(rpcErr);
         } else {
           p.resolve(msg.result);
         }
@@ -243,6 +246,9 @@ async function sendSingleWsRpc(wsUrl, method, params, timeoutMs) {
   }
 }
 
+const _deadWsCooldownUntil = new Map();
+const DEAD_WS_COOLDOWN_MS = 45_000;
+
 export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 15000, opts = {}) {
   const allowFailover = opts?.allowFailover !== false;
   let wsUrl = toWsEndpoint(endpointUrl);
@@ -259,24 +265,42 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
 
   try {
     const res = await sendSingleWsRpc(wsUrl, method, params, timeoutMs);
+    _deadWsCooldownUntil.delete(wsUrl);
     if (PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl)) {
       _preferredPublicWssRpc = wsUrl;
     }
     return res;
   } catch (primaryErr) {
+    // IMPORTANT: A JSON-RPC application error (e.g. VM revert `Call failed` on an optional HFS view probe)
+    // proves the validator WebSocket IS healthy and answered — NEVER fail over across other validators!
+    if (primaryErr?.isJsonRpcError) {
+      throw primaryErr;
+    }
+    _deadWsCooldownUntil.set(wsUrl, Date.now() + DEAD_WS_COOLDOWN_MS);
+
     if (allowFailover) {
       const isHttpsPage =
         typeof window !== 'undefined' && window.location?.protocol === 'https:';
-      const fallbackNodes = PUBLIC_SUBNET1_WSS_RPC_NODES.filter((u) => u !== wsUrl);
+      const now = Date.now();
+      const fallbackNodes = PUBLIC_SUBNET1_WSS_RPC_NODES.filter(
+        (u) => u !== wsUrl && (_deadWsCooldownUntil.get(u) || 0) <= now
+      );
       // Only fall back to public WSS nodes if we're on HTTPS or already targeting a public WSS node
       if (isHttpsPage || wsUrl.startsWith('wss://')) {
         for (const cand of fallbackNodes) {
           try {
-            const res = await sendSingleWsRpc(cand, method, params, Math.min(timeoutMs, 8000));
+            const res = await sendSingleWsRpc(cand, method, params, Math.min(timeoutMs, 4500));
+            _deadWsCooldownUntil.delete(cand);
             _preferredPublicWssRpc = cand;
             SlxHfsCache.save({ rpcUrl: cand });
             return res;
-          } catch (_) {}
+          } catch (candErr) {
+            if (candErr?.isJsonRpcError) {
+              _preferredPublicWssRpc = cand;
+              throw candErr;
+            }
+            _deadWsCooldownUntil.set(cand, Date.now() + DEAD_WS_COOLDOWN_MS);
+          }
         }
       }
     }
