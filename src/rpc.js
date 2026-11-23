@@ -115,7 +115,8 @@ export const SlxHfsCache = {
   },
 };
 
-const _wsConnections = new Map();
+const _wsPools = new Map();
+const MAX_WS_POOL_SIZE = 4;
 
 export function toWsEndpoint(urlStr) {
   const s = String(urlStr || '').trim() || getDefaultNodeWsUrl();
@@ -125,11 +126,7 @@ export function toWsEndpoint(urlStr) {
   return 'ws://' + s;
 }
 
-function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
-  const existing = _wsConnections.get(wsUrl);
-  if (existing && existing.ws && (existing.ws.readyState === 0 || existing.ws.readyState === 1)) {
-    return existing;
-  }
+function createWsPoolEntry(wsUrl, pool, connectTimeoutMs = 12000) {
   if (typeof WebSocket === 'undefined') return null;
 
   const pending = new Map();
@@ -143,8 +140,14 @@ function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
   const entry = {
     ws,
     reqSeq: 1,
+    inflight: 0,
     pending,
     openPromise: null,
+  };
+
+  const removeSelf = () => {
+    const idx = pool.indexOf(entry);
+    if (idx !== -1) pool.splice(idx, 1);
   };
 
   entry.openPromise = new Promise((resolve, reject) => {
@@ -152,7 +155,7 @@ function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
       try {
         ws.close();
       } catch (_) {}
-      _wsConnections.delete(wsUrl);
+      removeSelf();
       reject(new Error(`WebSocket connect timeout (${wsUrl})`));
     }, connectTimeoutMs);
 
@@ -162,11 +165,11 @@ function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
     };
     ws.onerror = () => {
       clearTimeout(t);
-      _wsConnections.delete(wsUrl);
+      removeSelf();
       reject(new Error(`WebSocket unreachable (${wsUrl})`));
     };
     ws.onclose = () => {
-      _wsConnections.delete(wsUrl);
+      removeSelf();
       for (const [, p] of pending.entries()) {
         p.reject(new Error('WebSocket closed'));
       }
@@ -192,23 +195,52 @@ function getOrOpenWsEntry(wsUrl, connectTimeoutMs = 12000) {
     };
   });
 
-  _wsConnections.set(wsUrl, entry);
+  pool.push(entry);
   return entry;
 }
 
+function acquireWsEntry(wsUrl, connectTimeoutMs = 12000) {
+  let pool = _wsPools.get(wsUrl);
+  if (!pool) {
+    pool = [];
+    _wsPools.set(wsUrl, pool);
+  }
+  for (let i = pool.length - 1; i >= 0; i--) {
+    const st = pool[i].ws?.readyState;
+    if (st !== 0 && st !== 1) pool.splice(i, 1);
+  }
+  const idle = pool.find((e) => e.ws.readyState === 1 && e.inflight === 0 && e.pending.size === 0);
+  if (idle) return idle;
+  if (pool.length < MAX_WS_POOL_SIZE) {
+    const created = createWsPoolEntry(wsUrl, pool, connectTimeoutMs);
+    if (created) return created;
+  }
+  if (pool.length === 0) return null;
+  let best = pool[0];
+  for (let i = 1; i < pool.length; i++) {
+    if (pool[i].inflight < best.inflight) best = pool[i];
+  }
+  return best;
+}
+
 async function sendSingleWsRpc(wsUrl, method, params, timeoutMs) {
-  const entry = getOrOpenWsEntry(wsUrl, Math.min(timeoutMs, 6500));
+  const entry = acquireWsEntry(wsUrl, Math.min(timeoutMs, 6500));
   if (!entry) throw new Error(`WebSocket unavailable (${wsUrl})`);
-  const ws = await entry.openPromise;
-  const id = entry.reqSeq++;
-  return await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      entry.pending.delete(id);
-      reject(new Error(`RPC timeout on ${method}`));
-    }, timeoutMs);
-    entry.pending.set(id, { resolve, reject, timer });
-    ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
-  });
+  entry.inflight++;
+  try {
+    const ws = await entry.openPromise;
+    const id = entry.reqSeq++;
+    return await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        entry.pending.delete(id);
+        reject(new Error(`RPC timeout on ${method}`));
+      }, timeoutMs);
+      entry.pending.set(id, { resolve, reject, timer });
+      ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+    });
+  } finally {
+    entry.inflight = Math.max(0, entry.inflight - 1);
+  }
 }
 
 export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 15000, opts = {}) {
