@@ -27,6 +27,13 @@ import {
   toPubSubWsUrl,
   derivePubSubWsCandidates,
   SlxWalletManager,
+  SlxCallCache,
+  SlxIdentityDirectory,
+  createSingleFlightRefresh,
+  fetchRegisteredHolders,
+  isTerminalAuthStatus,
+  wordU64,
+  wordAddress,
   SUBNET1_FLEET_SOCIAL_DEFAULT,
   deterministicEncounterNonce,
   computeEncounterCommit,
@@ -152,5 +159,114 @@ assert.notEqual(
 assert.equal(appChannelHash('DEX'), appChannelHash('dex'));
 assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorHex('sendDirectMessage(address,bytes)')));
 
-console.log('✅ @superlexicon/sdk unit test suite passed (7/7 test groups)!');
+// 8. Single-Flight Refresh Coalescing (`createSingleFlightRefresh`)
+{
+  const seenBlocks = [];
+  let activeCount = 0;
+  let maxConcurrent = 0;
+  const sf = createSingleFlightRefresh(async (meta) => {
+    activeCount++;
+    maxConcurrent = Math.max(maxConcurrent, activeCount);
+    seenBlocks.push(meta?.blockNumber || 0);
+    await new Promise((r) => setTimeout(r, 15));
+    activeCount--;
+  });
+  await Promise.all([
+    sf({ blockNumber: 100 }),
+    sf({ blockNumber: 101 }),
+    sf({ blockNumber: 105 }),
+    sf({ blockNumber: 103 }),
+  ]);
+  assert.equal(maxConcurrent, 1, 'Single-flight refresh must never overlap');
+  assert.deepEqual(seenBlocks, [100, 105], 'Coalesced follow-up must keep highest blockNumber');
+}
+
+// 9. `SlxCallCache` In-Flight Deduplication, Block Memoization & Conditional Terminal Freeze
+{
+  let rpcCalls = 0;
+  const cache = new SlxCallCache({
+    callFn: async (_to, dataHex) => {
+      rpcCalls++;
+      await new Promise((r) => setTimeout(r, 8));
+      return '0x' + dataHex.slice(2, 10).padStart(64, '0');
+    },
+  });
+  const [r1, r2, r3] = await Promise.all([
+    cache.call(cA, '0x95d89b41', { immutable: true }),
+    cache.call(cA, '0x95d89b41', { immutable: true }),
+    cache.call(cA, '0x95d89b41', { immutable: true }),
+  ]);
+  assert.equal(r1, r2);
+  assert.equal(r2, r3);
+  assert.equal(rpcCalls, 1, 'Concurrent identical calls must deduplicate into 1 RPC');
+  await cache.callImmutable(cA, '0x95d89b41');
+  assert.equal(rpcCalls, 1, 'Immutable call must remain permanently cached');
+
+  let authQueries = 0;
+  let simStatus = 1;
+  const queryRes = () =>
+    cache.getOrComputeImmutable(
+      'auth:0xabc',
+      async () => {
+        authQueries++;
+        return { status: simStatus };
+      },
+      (v) => isTerminalAuthStatus(v.status)
+    );
+  assert.equal((await queryRes()).status, 1);
+  assert.equal(authQueries, 1);
+  simStatus = 4; // Enacted!
+  assert.equal((await queryRes()).status, 4);
+  assert.equal(authQueries, 2);
+  simStatus = 99; // Should never be read again once frozen at status=4!
+  assert.equal((await queryRes()).status, 4);
+  assert.equal(authQueries, 2, 'Terminal Authorization must be frozen at 0 repeat RPCs');
+  assert.equal(isTerminalAuthStatus(4, { pendingClaims: 2 }), false);
+  assert.equal(isTerminalAuthStatus(4, { pendingClaims: 0 }), true);
+  assert.equal(isTerminalAuthStatus(1, { failedBidsStage: true }), true);
+}
+
+// 10. `SlxIdentityDirectory` Debounced Batch Repaint + `fetchRegisteredHolders`
+{
+  let notifyCount = 0;
+  let lookupCount = 0;
+  const dir = new SlxIdentityDirectory({
+    wallet: w,
+    debounceMs: 25,
+    persistToStorage: false,
+    onLabelsUpdated: () => {
+      notifyCount++;
+    },
+    resolverFn: async (addrLow) => {
+      lookupCount++;
+      await new Promise((r) => setTimeout(r, 5));
+      return { nick: `Handle_${addrLow.slice(2, 6)}`, owner: kp1.address };
+    },
+  });
+  dir.setMyIdentity(idA, 'Founder');
+  assert.ok(dir.labelFor(idA).includes('(You)'));
+
+  const idC = '0x' + '56'.repeat(20);
+  // Trigger 6 synchronous renders for 2 uncached identities
+  for (let i = 0; i < 3; i++) {
+    dir.labelFor(idB);
+    dir.labelFor(idC);
+  }
+  assert.equal(lookupCount, 2, 'Directory must deduplicate per-address RPC lookups');
+  await new Promise((r) => setTimeout(r, 55));
+  assert.equal(notifyCount, 1, 'Debounced directory must batch multiple resolved handles into 1 repaint');
+  assert.ok(dir.labelFor(idB).startsWith('Handle_3434'));
+
+  const cntSel = selectorHex('registeredHolderCount()');
+  const holders = await fetchRegisteredHolders('ws://127.0.0.1:8545', cA, {
+    callFn: async (_to, data) => {
+      if (data.startsWith(cntSel)) return bytesToHex(wordU64(2));
+      const idx = decodeUintWord('0x' + data.slice(10), 0);
+      return bytesToHex(wordAddress(idx === 0 ? idA : idB));
+    },
+  });
+  assert.deepEqual(holders, [idA, idB]);
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (10/10 test groups)!');
 process.exit(0);

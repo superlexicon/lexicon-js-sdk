@@ -23,11 +23,13 @@ import {
 import {
   ZERO_ADDR,
   shortHex,
+  shortAddr,
   truncAddr4,
   readU16BE,
   readU32BE,
   readU64BE,
   encodeAbi,
+  decodeUintWord,
   decodeAddrWord,
   decodeAbiStringHex,
 } from './abi.js';
@@ -176,6 +178,9 @@ export class SlxWalletManager {
       registryAddr: record.registryAddr || '',
     };
     this._saveIdentityMap(map);
+    if (record.identityAddr && record.nickname) {
+      _writeSharedIdentityLabel(record.identityAddr, `${record.nickname} · ${truncAddr4(k)}`);
+    }
     this._emit();
     return map[k];
   }
@@ -849,4 +854,241 @@ export function clearUrlHfsParam(push = false) {
       window.history.replaceState({}, '', u.toString());
     }
   } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Cross-App Cached & Debounced Identity Label Directory + Standard HFS Helpers
+// ---------------------------------------------------------------------------
+
+const STORAGE_KEY_IDENTITY_DIRECTORY = 'slx_identity_directory_v1';
+const _sharedMemIdentityLabels = new Map();
+let _sharedLabelsHydrated = false;
+
+function _hydrateSharedIdentityLabels() {
+  if (_sharedLabelsHydrated) return;
+  _sharedLabelsHydrated = true;
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_IDENTITY_DIRECTORY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (k && typeof v === 'string' && v) {
+        _sharedMemIdentityLabels.set(k.toLowerCase(), v);
+      }
+    }
+  } catch (_) {}
+}
+
+function _writeSharedIdentityLabel(addrHex, labelStr, persist = true) {
+  if (!addrHex || !labelStr) return;
+  _hydrateSharedIdentityLabels();
+  const low = String(addrHex).toLowerCase();
+  _sharedMemIdentityLabels.set(low, labelStr);
+  while (_sharedMemIdentityLabels.size > 300) {
+    const oldest = _sharedMemIdentityLabels.keys().next().value;
+    if (oldest === undefined) break;
+    _sharedMemIdentityLabels.delete(oldest);
+  }
+  if (persist && typeof localStorage !== 'undefined') {
+    try {
+      const out = {};
+      for (const [k, v] of _sharedMemIdentityLabels.entries()) {
+        out[k] = v;
+      }
+      localStorage.setItem(STORAGE_KEY_IDENTITY_DIRECTORY, JSON.stringify(out));
+    } catch (_) {}
+  }
+}
+
+/**
+ * Shared cross-app Identity handle directory (`SlxIdentityDirectory`).
+ * - Shares resolved `identityAddr -> "Handle · eoa4"` labels across all SuperLexicon apps via `localStorage` + memory.
+ * - Deduplicates concurrent on-chain `nickname()` + `owner()` lookups per address.
+ * - Batches resolved label notifications with a `debounceMs` timer (default `150ms`) so UIs repaint cleanly
+ *   with zero RPC refresh storms.
+ */
+export class SlxIdentityDirectory {
+  constructor({
+    rpcUrlFn = () => getDefaultNodeWsUrl(),
+    wallet = null,
+    debounceMs = 150,
+    onLabelsUpdated = null,
+    persistToStorage = true,
+    onlineFn = () => true,
+    resolverFn = null,
+  } = {}) {
+    _hydrateSharedIdentityLabels();
+    this.rpcUrlFn = typeof rpcUrlFn === 'function' ? rpcUrlFn : () => String(rpcUrlFn || getDefaultNodeWsUrl());
+    this.wallet = wallet || null;
+    this.debounceMs = Math.max(0, Number(debounceMs ?? 150));
+    this.onLabelsUpdated = onLabelsUpdated || null;
+    this.persistToStorage = persistToStorage !== false;
+    this.onlineFn = typeof onlineFn === 'function' ? onlineFn : () => true;
+    this.resolverFn = resolverFn || null;
+
+    this.labels = new Map(_sharedMemIdentityLabels);
+    this.myIdentityAddr = '';
+    this.myIdentityHandle = '';
+    this._resolving = new Set();
+    this._listeners = new Set();
+    this._notifyTimer = null;
+  }
+
+  onChange(fn) {
+    if (typeof fn !== 'function') return () => {};
+    this._listeners.add(fn);
+    return () => this._listeners.delete(fn);
+  }
+
+  setMyIdentity(identityAddr, handle = '') {
+    this.myIdentityAddr = String(identityAddr || '').toLowerCase();
+    this.myIdentityHandle = String(handle || '');
+    if (this.myIdentityAddr && this.myIdentityHandle) {
+      const eoa = this.wallet?.keypair?.address;
+      const tag = eoa ? `${this.myIdentityHandle} · ${truncAddr4(eoa)}` : this.myIdentityHandle;
+      this.seed(this.myIdentityAddr, tag, { persist: this.persistToStorage });
+    }
+  }
+
+  seed(addrHex, labelStr, { persist = false } = {}) {
+    if (!addrHex || !labelStr) return;
+    const low = String(addrHex).toLowerCase();
+    this.labels.set(low, labelStr);
+    _writeSharedIdentityLabel(low, labelStr, persist && this.persistToStorage);
+  }
+
+  seedMany(entries = [], opts = {}) {
+    for (const item of entries) {
+      if (Array.isArray(item)) {
+        this.seed(item[0], item[1], opts);
+      } else if (item && item.addr && item.label) {
+        this.seed(item.addr, item.label, opts);
+      }
+    }
+  }
+
+  invalidate(addrHex) {
+    if (!addrHex) return;
+    const low = String(addrHex).toLowerCase();
+    this.labels.delete(low);
+    _sharedMemIdentityLabels.delete(low);
+    this._resolving.delete(low);
+  }
+
+  _scheduleNotify() {
+    if (this._notifyTimer) return;
+    const fire = () => {
+      this._notifyTimer = null;
+      if (typeof this.onLabelsUpdated === 'function') {
+        try {
+          this.onLabelsUpdated(this.labels);
+        } catch (_) {}
+      }
+      for (const fn of this._listeners) {
+        try {
+          fn(this.labels);
+        } catch (_) {}
+      }
+    };
+    if (this.debounceMs === 0) {
+      fire();
+    } else {
+      this._notifyTimer = setTimeout(fire, this.debounceMs);
+    }
+  }
+
+  labelFor(addrHex, { resolveIfMissing = true } = {}) {
+    if (!addrHex) return '—';
+    const low = String(addrHex).toLowerCase();
+    if (this.myIdentityAddr && low === this.myIdentityAddr) {
+      const eoa = this.wallet?.keypair?.address;
+      const base = this.myIdentityHandle || shortAddr(low);
+      return eoa ? `${base} · ${truncAddr4(eoa)} (You)` : `${base} (You)`;
+    }
+    if (this.labels.has(low)) {
+      return this.labels.get(low);
+    }
+    if (_sharedMemIdentityLabels.has(low)) {
+      const shared = _sharedMemIdentityLabels.get(low);
+      this.labels.set(low, shared);
+      return shared;
+    }
+
+    if (resolveIfMissing && this.onlineFn() && !this._resolving.has(low) && low !== ZERO_ADDR) {
+      this._resolving.add(low);
+      const rpcUrl = this.rpcUrlFn();
+      const lookupPromise =
+        typeof this.resolverFn === 'function'
+          ? Promise.resolve(this.resolverFn(low, rpcUrl))
+          : Promise.all([
+              readOnChainIdentityNickname(rpcUrl, low),
+              readOnChainIdentityOwner(rpcUrl, low),
+            ]).then(([nick, owner]) => ({ nick, owner }));
+
+      lookupPromise
+        .then((res) => {
+          const nick = res?.nick || '';
+          const owner = res?.owner || '';
+          if (nick) {
+            const tag = owner && owner !== ZERO_ADDR ? `${nick} · ${truncAddr4(owner)}` : nick;
+            this.labels.set(low, tag);
+            _writeSharedIdentityLabel(low, tag, this.persistToStorage);
+            this._scheduleNotify();
+          }
+        })
+        .catch(() => {
+          this._resolving.delete(low);
+        });
+    }
+    return shortAddr(low);
+  }
+}
+
+/**
+ * Enumerate non-zero holder addresses from any HFS `AssetLedger` / `ShareLedger`
+ * implementing `registeredHolderCount()` + `registeredHolderAt(uint64)`.
+ */
+export async function fetchRegisteredHolders(
+  rpcUrl,
+  ledgerAddr,
+  { limit = 64, callFn = null } = {}
+) {
+  if (!ledgerAddr || ledgerAddr.toLowerCase() === ZERO_ADDR) return [];
+  const execCall =
+    typeof callFn === 'function'
+      ? (to, data) => callFn(to, data)
+      : (to, data) => slxNodeRpc(rpcUrl, 'eth_call', [{ to, data }, 'latest']);
+  try {
+    const cnt = decodeUintWord(
+      await execCall(ledgerAddr, encodeAbi('registeredHolderCount()')).catch(() => '0x0')
+    );
+    if (cnt === 0) return [];
+    const addrs = await Promise.all(
+      Array.from({ length: Math.min(cnt, limit) }, (_, idx) =>
+        execCall(ledgerAddr, encodeAbi('registeredHolderAt(uint64)', [['uint64', idx]]))
+          .then(decodeAddrWord)
+          .catch(() => ZERO_ADDR)
+      )
+    );
+    return addrs.filter((a) => a && a !== ZERO_ADDR);
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Standard predicate indicating whether an HFS `Authorization` contract has reached an
+ * immutable terminal state (`3` = Expired, `4` = Consumed with 0 pending claims, or failed Step-1 bids)
+ * and can be permanently cached via `SlxCallCache.getOrComputeImmutable`.
+ */
+export function isTerminalAuthStatus(
+  statusNum,
+  { failedBidsStage = false, pendingClaims = 0 } = {}
+) {
+  const s = Number(statusNum || 0);
+  if (failedBidsStage) return true;
+  if (s === 3) return true;
+  if (s === 4 && Number(pendingClaims || 0) === 0) return true;
+  return false;
 }

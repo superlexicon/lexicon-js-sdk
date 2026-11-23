@@ -405,6 +405,136 @@ export class SlxNonceQueue {
 }
 
 /**
+ * Deduplicating & Immutable HFS Read Memoizer (`SlxCallCache`).
+ * - Coalesces identical concurrent `(to, dataHex)` `eth_call`s in flight.
+ * - Optionally caches ephemeral reads by `blockNumber` or short `ttlMs`.
+ * - Permanently memoizes immutable contract metadata (`symbol()`, `decimals()`, etc.)
+ *   and terminal state objects (e.g. enacted/expired `Authorization` contracts) via `getOrComputeImmutable`.
+ */
+export class SlxCallCache {
+  constructor({
+    rpcUrlFn = () => getDefaultNodeWsUrl(),
+    callFn = null,
+    maxEntries = 512,
+  } = {}) {
+    this.rpcUrlFn = typeof rpcUrlFn === 'function' ? rpcUrlFn : () => String(rpcUrlFn || getDefaultNodeWsUrl());
+    this.callFn = callFn;
+    this.maxEntries = maxEntries;
+    this._immutable = new Map();
+    this._ephemeral = new Map();
+    this._inFlight = new Map();
+    this._frozenObjects = new Map();
+  }
+
+  _trimMap(map) {
+    while (map.size > this.maxEntries) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+    }
+  }
+
+  _rawCall(to, dataHex) {
+    if (typeof this.callFn === 'function') {
+      return this.callFn(to, dataHex);
+    }
+    return slxNodeRpc(this.rpcUrlFn(), 'eth_call', [{ to, data: dataHex }, 'latest']);
+  }
+
+  async call(to, dataHex, { blockNumber = 0, ttlMs = 900, immutable = false } = {}) {
+    const addr = String(to || '').toLowerCase();
+    const data = String(dataHex || '0x').toLowerCase();
+    const key = `${addr}:${data}`;
+
+    if (this._immutable.has(key)) {
+      return this._immutable.get(key);
+    }
+
+    if (!immutable) {
+      const hit = this._ephemeral.get(key);
+      if (hit) {
+        const blockMatch = blockNumber > 0 && hit.blockNumber === blockNumber;
+        const ttlMatch = blockNumber === 0 && ttlMs > 0 && Date.now() < hit.expiresAt;
+        if (blockMatch || ttlMatch) return hit.value;
+      }
+    }
+
+    if (this._inFlight.has(key)) {
+      return this._inFlight.get(key);
+    }
+
+    const p = Promise.resolve()
+      .then(() => this._rawCall(addr, dataHex))
+      .then((res) => {
+        if (immutable && res && res !== '0x') {
+          this._immutable.set(key, res);
+          this._trimMap(this._immutable);
+        } else if (blockNumber > 0 || ttlMs > 0) {
+          this._ephemeral.set(key, {
+            value: res,
+            blockNumber,
+            expiresAt: Date.now() + Math.max(0, ttlMs),
+          });
+          this._trimMap(this._ephemeral);
+        }
+        return res;
+      })
+      .finally(() => {
+        this._inFlight.delete(key);
+      });
+
+    this._inFlight.set(key, p);
+    return p;
+  }
+
+  callImmutable(to, dataHex) {
+    return this.call(to, dataHex, { immutable: true });
+  }
+
+  callAbiImmutable(to, sig, typedArgs = []) {
+    return this.callImmutable(to, encodeAbi(sig, typedArgs));
+  }
+
+  async getOrComputeImmutable(cacheKey, computeFn, shouldFreezeFn = (v) => Boolean(v)) {
+    const key = String(cacheKey || '');
+    if (this._frozenObjects.has(key)) {
+      return this._frozenObjects.get(key);
+    }
+    const val = await computeFn();
+    if (shouldFreezeFn(val)) {
+      this._frozenObjects.set(key, val);
+      this._trimMap(this._frozenObjects);
+    }
+    return val;
+  }
+
+  hasFrozen(cacheKey) {
+    return this._frozenObjects.has(String(cacheKey || ''));
+  }
+
+  getFrozen(cacheKey) {
+    return this._frozenObjects.get(String(cacheKey || ''));
+  }
+
+  invalidateContract(addrHex) {
+    const prefix = `${String(addrHex || '').toLowerCase()}:`;
+    for (const k of this._ephemeral.keys()) {
+      if (k.startsWith(prefix)) this._ephemeral.delete(k);
+    }
+  }
+
+  clearEphemeral() {
+    this._ephemeral.clear();
+  }
+
+  clearAll() {
+    this._immutable.clear();
+    this._ephemeral.clear();
+    this._frozenObjects.clear();
+  }
+}
+
+/**
  * High-level ergonomic SuperLexicon Client for building web apps, bots, and scripts in a few lines!
  *
  * Example:
@@ -419,6 +549,7 @@ export class SlxClient {
     this.rpcUrl = rpcUrl;
     this.chainId = BigInt(chainId);
     this.nonceQueue = new SlxNonceQueue({ rpcUrlFn: () => this.rpcUrl });
+    this.cache = new SlxCallCache({ rpcUrlFn: () => this.rpcUrl });
   }
 
   rpc(method, params = [], timeoutMs = 15000) {
@@ -441,6 +572,14 @@ export class SlxClient {
 
   callAbi(to, sig, typedArgs = [], blockTag = 'latest') {
     return this.callRaw(to, encodeAbi(sig, typedArgs), blockTag);
+  }
+
+  callCached(to, sig, typedArgs = [], opts = {}) {
+    return this.cache.call(to, encodeAbi(sig, typedArgs), opts);
+  }
+
+  callImmutable(to, sig, typedArgs = []) {
+    return this.cache.callAbiImmutable(to, sig, typedArgs);
   }
 
   waitForReceipt(txHash, opts = {}) {

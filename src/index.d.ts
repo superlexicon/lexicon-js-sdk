@@ -152,16 +152,50 @@ export class SlxNonceQueue {
   }>;
 }
 
+export class SlxCallCache {
+  maxEntries: number;
+  constructor(opts?: {
+    rpcUrlFn?: string | (() => string);
+    callFn?: ((to: string, dataHex: string) => Promise<string>) | null;
+    maxEntries?: number;
+  });
+  call(
+    to: string,
+    dataHex: string,
+    opts?: { blockNumber?: number; ttlMs?: number; immutable?: boolean }
+  ): Promise<string>;
+  callImmutable(to: string, dataHex: string): Promise<string>;
+  callAbiImmutable(to: string, sig: string, typedArgs?: AbiTypedArg[]): Promise<string>;
+  getOrComputeImmutable<T>(
+    cacheKey: string,
+    computeFn: () => Promise<T>,
+    shouldFreezeFn?: (val: T) => boolean
+  ): Promise<T>;
+  hasFrozen(cacheKey: string): boolean;
+  getFrozen<T = any>(cacheKey: string): T | undefined;
+  invalidateContract(addrHex: string): void;
+  clearEphemeral(): void;
+  clearAll(): void;
+}
+
 export class SlxClient {
   rpcUrl: string;
   chainId: bigint;
   nonceQueue: SlxNonceQueue;
+  cache: SlxCallCache;
   constructor(opts?: { rpcUrl?: string; chainId?: bigint | number });
   rpc(method: string, params?: unknown[], timeoutMs?: number): Promise<any>;
   getBlockNumber(): Promise<number>;
   getNonce(address: string): Promise<bigint>;
   callRaw(to: string, dataHex: string, blockTag?: string): Promise<string>;
   callAbi(to: string, sig: string, typedArgs?: AbiTypedArg[], blockTag?: string): Promise<string>;
+  callCached(
+    to: string,
+    sig: string,
+    typedArgs?: AbiTypedArg[],
+    opts?: { blockNumber?: number; ttlMs?: number; immutable?: boolean }
+  ): Promise<string>;
+  callImmutable(to: string, sig: string, typedArgs?: AbiTypedArg[]): Promise<string>;
   waitForReceipt(txHash: string, opts?: { timeoutMs?: number; fallbackPollMs?: number }): Promise<any>;
   sendAndConfirm(params: {
     privateKey: string;
@@ -220,6 +254,17 @@ export function slxWaitForReceipt(
   txHash: string,
   opts?: { timeoutMs?: number; fallbackPollMs?: number }
 ): Promise<any>;
+export type SingleFlightRefresh<TMeta = any> = ((meta?: TMeta) => Promise<void>) & {
+  _isSlxSingleFlight: true;
+  isRunning: () => boolean;
+  cancelQueued: () => void;
+};
+
+export function createSingleFlightRefresh<TMeta = any>(
+  fn: (meta: TMeta) => Promise<void> | void,
+  opts?: { onError?: ((err: unknown) => void) | null }
+): SingleFlightRefresh<TMeta>;
+
 export function slxWatchChainApp(opts?: {
   rpcUrl?: string | (() => string);
   filter?: LogsFilter | (() => LogsFilter) | null;
@@ -229,6 +274,7 @@ export function slxWatchChainApp(opts?: {
   offlineFallbackMs?: number;
   sortBackfill?: boolean;
 }): {
+  refresh: (meta?: { source?: string; blockNumber?: number }) => Promise<void>;
   triggerRefresh: (meta?: { source?: string; blockNumber?: number }) => Promise<void>;
   isConnected: () => boolean;
   refreshFilter: () => Promise<void> | undefined;
@@ -296,6 +342,41 @@ export function registerHfsInstanceOnChain(opts: {
 export function getUrlHfsParam(): string;
 export function setUrlHfsParam(primaryAddr: string, push?: boolean): void;
 export function clearUrlHfsParam(push?: boolean): void;
+
+export class SlxIdentityDirectory {
+  labels: Map<string, string>;
+  myIdentityAddr: string;
+  myIdentityHandle: string;
+  constructor(opts?: {
+    rpcUrlFn?: string | (() => string);
+    wallet?: SlxWalletManager | null;
+    debounceMs?: number;
+    onLabelsUpdated?: ((labels: Map<string, string>) => void) | null;
+    persistToStorage?: boolean;
+    onlineFn?: () => boolean;
+    resolverFn?: ((addrLow: string, rpcUrl: string) => Promise<{ nick: string; owner?: string }>) | null;
+  });
+  onChange(fn: (labels: Map<string, string>) => void): () => void;
+  setMyIdentity(identityAddr: string, handle?: string): void;
+  seed(addrHex: string, labelStr: string, opts?: { persist?: boolean }): void;
+  seedMany(
+    entries: Array<[string, string] | { addr: string; label: string }>,
+    opts?: { persist?: boolean }
+  ): void;
+  invalidate(addrHex: string): void;
+  labelFor(addrHex: string, opts?: { resolveIfMissing?: boolean }): string;
+}
+
+export function fetchRegisteredHolders(
+  rpcUrl: string,
+  ledgerAddr: string,
+  opts?: { limit?: number; callFn?: ((to: string, data: string) => Promise<string>) | null }
+): Promise<string[]>;
+
+export function isTerminalAuthStatus(
+  statusNum: number,
+  opts?: { failedBidsStage?: boolean; pendingClaims?: number }
+): boolean;
 
 // social & messaging
 export const SUBNET1_FLEET_SOCIAL_DEFAULT: {

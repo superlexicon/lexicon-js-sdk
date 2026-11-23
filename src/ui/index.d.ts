@@ -110,3 +110,22 @@ export function mountSlxUnifiedHeader(opts?: {
   refresh: () => void;
   destroy: () => void;
 } | null;
+
+export interface SlxBootLoaderHandle {
+  el: HTMLElement;
+  setStage: (pct: number, title?: string, sub?: string) => void;
+  reset: (pct?: number, title?: string, sub?: string) => void;
+  complete: (doneTitle?: string, doneSub?: string) => void;
+  hide: () => void;
+  isComplete: () => boolean;
+}
+
+export function mountSlxBootLoader(opts?: {
+  existingElement?: HTMLElement | null;
+  mountContainer?: HTMLElement | null;
+  insertAfterElement?: HTMLElement | null;
+  initialPct?: number;
+  initialTitle?: string;
+  initialSub?: string;
+  autoHideDelayMs?: number;
+}): SlxBootLoaderHandle | null;

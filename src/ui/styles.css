@@ -1003,3 +1003,163 @@
   gap: 0.34rem;
   flex-wrap: wrap;
 }
+
+/* ==========================================================================
+   Shared Multi-Stage Boot Loader & Shimmer Skeletons (`mountSlxBootLoader`)
+   ========================================================================== */
+
+.slx-boot-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 18px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(10, 24, 48, 0.96), rgba(8, 17, 34, 0.96));
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  box-shadow: 0 8px 26px rgba(2, 6, 23, 0.48), inset 0 0 24px rgba(56, 189, 248, 0.06);
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  transition: opacity 0.28s ease, transform 0.28s ease, border-color 0.25s ease;
+}
+
+.slx-boot-loader.complete {
+  border-color: rgba(16, 185, 129, 0.55);
+}
+
+.slx-boot-loader.fading {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+
+.slx-boot-loader[hidden] {
+  display: none !important;
+}
+
+.slx-boot-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.slx-boot-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slx-boot-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(56, 189, 248, 0.22);
+  border-top-color: #38bdf8;
+  border-right-color: #10b981;
+  animation: slxBootSpin 0.78s linear infinite;
+  flex-shrink: 0;
+}
+
+.slx-boot-loader.complete .slx-boot-spinner {
+  border-color: #10b981;
+  animation: none;
+  background: rgba(16, 185, 129, 0.2);
+}
+
+@keyframes slxBootSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.slx-boot-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #f0f9ff;
+  letter-spacing: -0.01em;
+}
+
+.slx-boot-sub {
+  font-size: 11.5px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.slx-boot-pct {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #7dd3fc;
+}
+
+.slx-boot-loader.complete .slx-boot-pct {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #6ee7b7;
+}
+
+.slx-boot-track {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(51, 65, 85, 0.65);
+  overflow: hidden;
+}
+
+.slx-boot-fill {
+  height: 100%;
+  width: 16%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0ea5e9, #38bdf8, #10b981);
+  background-size: 200% 100%;
+  animation: slxSkelShimmer 1.6s linear infinite;
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes slxSkelShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.slx-skel-bar {
+  display: inline-block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(30, 41, 59, 0.72) 20%,
+    rgba(56, 189, 248, 0.22) 50%,
+    rgba(30, 41, 59, 0.72) 80%
+  );
+  background-size: 200% 100%;
+  animation: slxSkelShimmer 1.45s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+.slx-skel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+.slx-skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(11, 20, 38, 0.78);
+  border: 1px solid rgba(51, 65, 85, 0.55);
+}

@@ -776,6 +776,72 @@ export async function slxWaitForReceipt(
   return null;
 }
 
+/**
+ * Wrap any async refresh function so overlapping invocations coalesce into at most
+ * one active execution + at most one queued follow-up pass (keeping the highest `blockNumber`).
+ * All callers awaiting a coalesced cycle share the active cycle's Promise.
+ */
+export function createSingleFlightRefresh(fn, { onError = null } = {}) {
+  if (typeof fn !== 'function') {
+    const noop = async () => {};
+    noop._isSlxSingleFlight = true;
+    noop.isRunning = () => false;
+    noop.cancelQueued = () => {};
+    return noop;
+  }
+  if (fn._isSlxSingleFlight) return fn;
+
+  let inFlightPromise = null;
+  let queuedMeta = undefined;
+  let disposed = false;
+
+  const wrapped = (meta = null) => {
+    if (disposed) return Promise.resolve();
+    if (inFlightPromise) {
+      if (
+        queuedMeta === undefined ||
+        (meta?.blockNumber || 0) >= (queuedMeta?.blockNumber || 0)
+      ) {
+        queuedMeta = meta;
+      }
+      return inFlightPromise;
+    }
+
+    inFlightPromise = (async () => {
+      let curMeta = meta;
+      try {
+        while (!disposed) {
+          queuedMeta = undefined;
+          await fn(curMeta);
+          if (queuedMeta === undefined) break;
+          curMeta = queuedMeta;
+        }
+      } catch (err) {
+        if (typeof onError === 'function') {
+          onError(err);
+        } else {
+          console.warn('[@superlexicon/sdk] refresh warning:', err);
+        }
+      } finally {
+        inFlightPromise = null;
+      }
+    })();
+
+    return inFlightPromise;
+  };
+
+  wrapped._isSlxSingleFlight = true;
+  wrapped.isRunning = () => Boolean(inFlightPromise);
+  wrapped.cancelQueued = () => {
+    queuedMeta = undefined;
+  };
+  wrapped._dispose = () => {
+    disposed = true;
+    queuedMeta = undefined;
+  };
+  return wrapped;
+}
+
 export function slxWatchChainApp({
   rpcUrl,
   filter = null,
@@ -786,31 +852,14 @@ export function slxWatchChainApp({
   sortBackfill = true,
 } = {}) {
   let disposed = false;
-  let refreshInFlight = false;
-  let queuedMeta = null;
   let lastHeadAt = 0;
 
+  const coalescedRefresh =
+    typeof onRefresh === 'function' ? createSingleFlightRefresh(onRefresh) : null;
+
   const triggerRefresh = async (meta = { source: 'manual', blockNumber: 0 }) => {
-    if (disposed || typeof onRefresh !== 'function') return;
-    if (refreshInFlight) {
-      if (!queuedMeta || (meta?.blockNumber || 0) >= (queuedMeta?.blockNumber || 0)) {
-        queuedMeta = meta;
-      }
-      return;
-    }
-    refreshInFlight = true;
-    let curMeta = meta;
-    try {
-      while (curMeta && !disposed) {
-        queuedMeta = null;
-        await onRefresh(curMeta);
-        curMeta = queuedMeta;
-      }
-    } catch (err) {
-      console.warn('[@superlexicon/sdk] onRefresh warning:', err);
-    } finally {
-      refreshInFlight = false;
-    }
+    if (disposed || !coalescedRefresh) return;
+    await coalescedRefresh(meta);
   };
 
   const headsSub = slxSubscribeNewHeads(rpcUrl, (head) => {
@@ -821,7 +870,7 @@ export function slxWatchChainApp({
         onHead(head);
       } catch (_) {}
     }
-    if (typeof onRefresh === 'function') {
+    if (coalescedRefresh) {
       triggerRefresh({
         source: 'newHeads',
         blockNumber: head.blockNumberNum,
@@ -844,7 +893,7 @@ export function slxWatchChainApp({
       : null;
 
   const fallbackTimer =
-    offlineFallbackMs > 0 && typeof onRefresh === 'function'
+    offlineFallbackMs > 0 && coalescedRefresh
       ? setInterval(() => {
           if (disposed) return;
           const wsHealthy =
@@ -857,6 +906,7 @@ export function slxWatchChainApp({
       : null;
 
   return {
+    refresh: triggerRefresh,
     triggerRefresh,
     isConnected: () => headsSub.isConnected(),
     refreshFilter: () => logsSub?.refreshFilter?.(),

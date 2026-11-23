@@ -135,6 +135,25 @@ const FALLBACK_CSS = `
 .slx-uh-app-item:hover{background:rgba(30,41,59,.85);border-color:rgba(56,189,248,.35);color:#fff}
 .slx-uh-app-item.active{background:rgba(14,165,233,.18);border-color:rgba(56,189,248,.65);color:#7dd3fc}
 .slx-uh-suite-pills{display:inline-flex;align-items:center;gap:.4rem;flex-wrap:wrap}
+.slx-boot-loader{display:flex;flex-direction:column;gap:10px;padding:13px 18px;margin-bottom:12px;border-radius:14px;background:linear-gradient(135deg,rgba(10,24,48,.96),rgba(8,17,34,.96));border:1px solid rgba(56,189,248,.45);box-shadow:0 8px 26px rgba(2,6,23,.48),inset 0 0 24px rgba(56,189,248,.06);font-family:Inter,system-ui,-apple-system,sans-serif;transition:opacity .28s ease,transform .28s ease,border-color .25s ease}
+.slx-boot-loader.complete{border-color:rgba(16,185,129,.55)}
+.slx-boot-loader.fading{opacity:0;transform:translateY(-4px);pointer-events:none}
+.slx-boot-loader[hidden]{display:none!important}
+.slx-boot-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.slx-boot-left{display:flex;align-items:center;gap:12px}
+.slx-boot-spinner{width:22px;height:22px;border-radius:50%;border:2.5px solid rgba(56,189,248,.22);border-top-color:#38bdf8;border-right-color:#10b981;animation:slxBootSpin .78s linear infinite;flex-shrink:0}
+.slx-boot-loader.complete .slx-boot-spinner{border-color:#10b981;animation:none;background:rgba(16,185,129,.2)}
+@keyframes slxBootSpin{to{transform:rotate(360deg)}}
+.slx-boot-title{font-size:13px;font-weight:800;color:#f0f9ff;letter-spacing:-.01em}
+.slx-boot-sub{font-size:11.5px;font-family:'JetBrains Mono',ui-monospace,monospace;color:#94a3b8;margin-top:2px}
+.slx-boot-pct{padding:3px 9px;border-radius:999px;background:rgba(14,165,233,.16);border:1px solid rgba(56,189,248,.4);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11.5px;font-weight:800;color:#7dd3fc}
+.slx-boot-loader.complete .slx-boot-pct{background:rgba(16,185,129,.2);border-color:rgba(16,185,129,.5);color:#6ee7b7}
+.slx-boot-track{width:100%;height:6px;border-radius:999px;background:rgba(15,23,42,.9);border:1px solid rgba(51,65,85,.65);overflow:hidden}
+.slx-boot-fill{height:100%;width:16%;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#38bdf8,#10b981);background-size:200% 100%;animation:slxSkelShimmer 1.6s linear infinite;transition:width .32s cubic-bezier(.22,1,.36,1)}
+@keyframes slxSkelShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.slx-skel-bar{display:inline-block;height:12px;border-radius:6px;background:linear-gradient(90deg,rgba(30,41,59,.72) 20%,rgba(56,189,248,.22) 50%,rgba(30,41,59,.72) 80%);background-size:200% 100%;animation:slxSkelShimmer 1.45s ease-in-out infinite;vertical-align:middle}
+.slx-skel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;width:100%}
+.slx-skel-card{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:12px;background:rgba(11,20,38,.78);border:1px solid rgba(51,65,85,.55)}
 `;
 
 export function injectSlxUiStyles() {
@@ -2294,5 +2313,115 @@ export function mountSlxUnifiedHeader({
       socialUi?.destroy?.();
       hdr.remove();
     },
+  };
+}
+
+/**
+ * Mount or adopt a multi-stage Subnet 1 HFS hydration progress banner (`mountSlxBootLoader`).
+ * Works both with pre-rendered static 0ms HTML (`existingElement`) and zero-markup auto-mounting
+ * (`mountContainer` / `insertAfterElement`).
+ */
+export function mountSlxBootLoader({
+  existingElement = null,
+  mountContainer = null,
+  insertAfterElement = null,
+  initialPct = 16,
+  initialTitle = 'Connecting to Subnet 1 & reading HFS smart contracts…',
+  initialSub = 'Opening parallel WebSocket stream…',
+  autoHideDelayMs = 340,
+} = {}) {
+  if (typeof document === 'undefined') return null;
+  injectSlxUiStyles();
+
+  let root = existingElement;
+  if (!root) {
+    root = document.createElement('section');
+    root.className = 'slx-boot-loader';
+    root.setAttribute('aria-live', 'polite');
+    const clampedInit = Math.max(8, Math.min(99, Math.round(initialPct)));
+    root.innerHTML = `
+      <div class="slx-boot-top">
+        <div class="slx-boot-left">
+          <div class="slx-boot-spinner" aria-hidden="true"></div>
+          <div>
+            <div class="slx-boot-title" data-slx-boot="title">${escapeHtmlText(initialTitle)}</div>
+            <div class="slx-boot-sub" data-slx-boot="sub">${escapeHtmlText(initialSub)}</div>
+          </div>
+        </div>
+        <span class="slx-boot-pct" data-slx-boot="pct">${clampedInit}%</span>
+      </div>
+      <div class="slx-boot-track">
+        <div class="slx-boot-fill" data-slx-boot="fill" style="width:${clampedInit}%;"></div>
+      </div>
+    `;
+    if (insertAfterElement && insertAfterElement.parentNode) {
+      insertAfterElement.parentNode.insertBefore(root, insertAfterElement.nextSibling);
+    } else {
+      const host = mountContainer || document.querySelector('main') || document.body;
+      host?.prepend?.(root);
+    }
+  }
+
+  const titleEl =
+    root.querySelector('[data-slx-boot="title"]') ||
+    root.querySelector('.slx-boot-title, .chr-boot-title');
+  const subEl =
+    root.querySelector('[data-slx-boot="sub"]') ||
+    root.querySelector('.slx-boot-sub, .chr-boot-sub');
+  const pctEl =
+    root.querySelector('[data-slx-boot="pct"]') ||
+    root.querySelector('.slx-boot-pct, .chr-boot-pct');
+  const fillEl =
+    root.querySelector('[data-slx-boot="fill"]') ||
+    root.querySelector('.slx-boot-fill, .chr-boot-fill');
+
+  let hideTimer = 0;
+  let completed = false;
+
+  const setStage = (pct, title, sub = undefined) => {
+    clearTimeout(hideTimer);
+    completed = false;
+    root.hidden = false;
+    root.classList.remove('fading', 'complete');
+    const clamped = Math.max(8, Math.min(99, Math.round(Number(pct) || 16)));
+    if (titleEl && title) titleEl.textContent = title;
+    if (subEl && sub !== undefined && sub !== null) subEl.textContent = sub;
+    if (pctEl) pctEl.textContent = `${clamped}%`;
+    if (fillEl) fillEl.style.width = `${clamped}%`;
+  };
+
+  const complete = (
+    doneTitle = '✓ Synchronized with Subnet 1',
+    doneSub = undefined
+  ) => {
+    if (completed && root.hidden) return;
+    clearTimeout(hideTimer);
+    completed = true;
+    root.classList.add('complete');
+    if (titleEl && doneTitle) titleEl.textContent = doneTitle;
+    if (subEl && doneSub !== undefined && doneSub !== null) subEl.textContent = doneSub;
+    if (pctEl) pctEl.textContent = '100%';
+    if (fillEl) fillEl.style.width = '100%';
+    hideTimer = setTimeout(() => {
+      root.classList.add('fading');
+      hideTimer = setTimeout(() => {
+        root.hidden = true;
+      }, 290);
+    }, Math.max(0, autoHideDelayMs));
+  };
+
+  const hide = () => {
+    clearTimeout(hideTimer);
+    completed = true;
+    root.hidden = true;
+  };
+
+  return {
+    el: root,
+    setStage,
+    reset: (pct = 24, title = 'Switching HFS instance…', sub = '') => setStage(pct, title, sub),
+    complete,
+    hide,
+    isComplete: () => completed,
   };
 }
