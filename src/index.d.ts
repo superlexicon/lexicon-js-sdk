@@ -750,3 +750,97 @@ export function decodeIas24InsidersHex(rawHex: string): Array<{
   edPub32Bytes: Uint8Array;
   edPub32Hex: string;
 }>;
+
+// Bulletproofs & Zero-Knowledge Cipher Noir (`./bulletproofs.js`)
+export const BP_WIRE_A_L: number;
+export const BP_WIRE_A_R: number;
+export const BP_WIRE_A_O: number;
+export const BP_WIRE_VAR: number;
+export const BP_H_BLIND_HEX: string;
+export const NOIR_PHASES: Record<string, number>;
+
+export function edHashToCurve(alphaInput: string | Uint8Array): Ed25519Point;
+export function bpGenerators(minVecLen?: number): {
+  bVal: Ed25519Point;
+  hBlind: Ed25519Point;
+  uIpa: Ed25519Point;
+  gVec: Ed25519Point[];
+  hVec: Ed25519Point[];
+};
+export function bpPedersenCommit(valScalar: bigint, blindScalar: bigint): Uint8Array;
+export function bpPedersenCommitU64(valU64: number | bigint, blindScalar: bigint): Uint8Array;
+export function bpProveRangeU64Batch(
+  values: Array<number | bigint>,
+  blindings: bigint[],
+  bitWidth?: number,
+  ctx?: string | Uint8Array,
+  entropy32?: string | Uint8Array | null
+): { commits: Uint8Array[]; proof: Uint8Array };
+export function bpVerifyRangeU64Batch(
+  commits: Array<string | Uint8Array>,
+  bitWidth: number,
+  ctx: string | Uint8Array,
+  proofInput: string | Uint8Array
+): boolean;
+
+export class BpCsBuilder {
+  numGates: number;
+  numVars: number;
+  constructor(numGates: number, numVars: number);
+  addConstraint(constantScalar: bigint, terms: Array<[number, number, bigint]>): this;
+  encode(): Uint8Array;
+}
+
+export function bpProveR1cs(
+  csInput: BpCsBuilder | Uint8Array | string,
+  varValues: bigint[],
+  varBlindings: bigint[],
+  aLIn: bigint[],
+  aRIn: bigint[],
+  aOIn: bigint[],
+  ctx?: string | Uint8Array,
+  entropy32?: string | Uint8Array | null
+): { commits: Uint8Array[]; proof: Uint8Array };
+export function bpVerifyR1cs(
+  csInput: BpCsBuilder | Uint8Array | string,
+  commits: Array<string | Uint8Array>,
+  ctx: string | Uint8Array,
+  proofInput: string | Uint8Array
+): boolean;
+
+export function canonicalNoirInitialDeck(): Uint8Array;
+export function deriveNoirSeatSecrets(
+  walletPrivateKeyHex: string,
+  caseIdHex: string,
+  seatEoaHex: string,
+  epochPkInput: string | Uint8Array
+): {
+  edSk: bigint;
+  edPkBytes: Uint8Array;
+  uSk: bigint[];
+  wSk: bigint[];
+  seatKeyBlob: Uint8Array;
+};
+export function decryptNoirHandCards(
+  blindedDecrypts3: Array<string | Uint8Array>,
+  uSk3: bigint[],
+  epochPkInput: string | Uint8Array
+): Array<{ slot: number; dossierId: number }>;
+export function proveNoirShuffleStep(params: Record<string, any>): Uint8Array;
+export function proveNoirInitialShuffle(
+  caseIdHex: string,
+  epochPkInput: string | Uint8Array
+): Uint8Array;
+export function proveNoirPassAlibi(params: Record<string, any>): Uint8Array;
+export function proveNoirWhisperOr3(params: Record<string, any>): Uint8Array;
+export function decryptNoirWhisper(
+  whisperCt64Input: string | Uint8Array,
+  myEdSk: bigint
+): number | null;
+export function computeNoirIndictmentDelta0(
+  caseIdHex: string,
+  vaultCiphertexts192Input: string | Uint8Array,
+  guesses3: number[]
+): Uint8Array;
+export function proveNoirIndictmentBlind(params: Record<string, any>): Uint8Array;
+export function decodeNoirCaseState(rawHexOrBytes: string | Uint8Array): any;

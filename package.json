@@ -26,6 +26,7 @@
     "./identity": "./src/identity.js",
     "./social": "./src/social.js",
     "./confidential": "./src/confidential.js",
+    "./bulletproofs": "./src/bulletproofs.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"

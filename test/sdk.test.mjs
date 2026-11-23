@@ -513,5 +513,114 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   assert.ok(built.calldata.startsWith('0x') && built.calldata.length > 36000);
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (13/13 test groups)!');
+// 14. Zero-Trusted-Setup Bulletproofs Range + Sparse R1CS + Cipher Noir ZK Suite
+{
+  const {
+    BP_H_BLIND_HEX,
+    bpGenerators,
+    bpProveRangeU64Batch,
+    bpVerifyRangeU64Batch,
+    BpCsBuilder,
+    BP_WIRE_A_L,
+    BP_WIRE_A_R,
+    BP_WIRE_A_O,
+    BP_WIRE_VAR,
+    bpProveR1cs,
+    bpVerifyR1cs,
+    edEncode,
+    edMul,
+    ED_BASE_PT,
+    deriveNoirSeatSecrets,
+    proveNoirInitialShuffle,
+    proveNoirPassAlibi,
+    proveNoirWhisperOr3,
+    decryptNoirWhisper,
+  } = await import('../src/index.js');
+
+  // Verify H_bp generator matches Rust `BP_H_BLIND_BYTES` byte-for-byte!
+  assert.equal(bytesToHex(edEncode(bpGenerators(0).hBlind)), BP_H_BLIND_HEX);
+
+  // Batch u64 range proof roundtrip & tamper rejection
+  const { commits: rComms, proof: rPrf } = bpProveRangeU64Batch(
+    [0n, 42n, 999999n, 18446744073709551615n],
+    [11n, 22n, 33n, 44n],
+    64,
+    'js-range-ctx'
+  );
+  assert.equal(bpVerifyRangeU64Batch(rComms, 64, 'js-range-ctx', rPrf), true);
+  assert.equal(bpVerifyRangeU64Batch(rComms, 64, 'wrong-ctx', rPrf), false);
+
+  // Sparse R1CS `x * y = 42`
+  const cs = new BpCsBuilder(2, 2)
+    .addConstraint(0n, [
+      [BP_WIRE_A_L, 0, 1n],
+      [BP_WIRE_VAR, 0, -1n],
+    ])
+    .addConstraint(0n, [
+      [BP_WIRE_A_R, 0, 1n],
+      [BP_WIRE_VAR, 1, -1n],
+    ])
+    .addConstraint(42n, [[BP_WIRE_A_O, 0, 1n]]);
+  const { commits: cComms, proof: cPrf } = bpProveR1cs(
+    cs,
+    [6n, 7n],
+    [101n, 202n],
+    [6n, 0n],
+    [7n, 0n],
+    [42n, 0n],
+    'js-r1cs'
+  );
+  assert.equal(bpVerifyR1cs(cs, cComms, 'js-r1cs', cPrf), true);
+
+  // Cipher Noir deterministic seat keys, initial 18-card ZK shuffle, passAlibi R1CS & 1-of-3 whisper
+  const fakeEpochPk = edEncode(edMul(123456789n, ED_BASE_PT));
+  const cid = '0x' + '42'.repeat(32);
+  const s0 = deriveNoirSeatSecrets(freshPriv, cid, kp1.address, fakeEpochPk);
+  const s1 = deriveNoirSeatSecrets(
+    '0x0000000000000000000000000000000000000000000000000000000000000002',
+    cid,
+    kp1.address,
+    fakeEpochPk
+  );
+  assert.equal(s0.seatKeyBlob.length, 512);
+
+  const shuf1 = proveNoirInitialShuffle(cid, fakeEpochPk);
+  assert.equal(shuf1.length, 3616);
+
+  const passPrf = proveNoirPassAlibi({
+    caseId: cid,
+    probeIdx: 0,
+    responderSeat: 0,
+    cards3: [1, 6, 12],
+    wSk3: s0.wSk,
+    probes3: [2, 7, 14],
+  });
+  assert.equal(passPrf.length, 672);
+  assert.throws(() =>
+    proveNoirPassAlibi({
+      caseId: cid,
+      probeIdx: 0,
+      responderSeat: 0,
+      cards3: [1, 7, 12],
+      wSk3: s0.wSk,
+      probes3: [2, 7, 14],
+    })
+  );
+
+  const whisperPrf = proveNoirWhisperOr3({
+    caseId: cid,
+    probeIdx: 0,
+    responderSeat: 0,
+    proberSeat: 1,
+    slotIdx: 1,
+    card: 6,
+    wBlind: s0.wSk[1],
+    proberEdPk: s1.edPkBytes,
+    probes3: [2, 6, 14],
+  });
+  assert.equal(whisperPrf.length, 352);
+  assert.equal(decryptNoirWhisper(whisperPrf.slice(0, 64), s1.edSk), 6);
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (14/14 test groups)!');
 process.exit(0);
