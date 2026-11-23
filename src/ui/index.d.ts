@@ -129,3 +129,19 @@ export function mountSlxBootLoader(opts?: {
   initialSub?: string;
   autoHideDelayMs?: number;
 }): SlxBootLoaderHandle | null;
+
+export const USECASE_DESCRIPTIONS: Record<string, any>;
+export const USECASE_INSTRUCTIONS: Record<string, any>;
+
+export function openSlxUseCaseDescription(
+  appId: string,
+  tabKey?: string,
+  opts?: { currentPageAppId?: string }
+): boolean;
+
+export function openSlxUseCaseInstructions(appId: string, tabKey?: string): boolean;
+
+export function mountSlxUseCaseHeaderDocs(opts: {
+  activeAppId: string;
+  extraContainer: HTMLElement | null;
+}): { descBtn: HTMLButtonElement; instBtn: HTMLButtonElement | null } | null;

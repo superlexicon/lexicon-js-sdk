@@ -25,6 +25,21 @@ import {
   registerIdentityPromptHandler,
 } from '../identity.js';
 import { SlxSocialClient } from '../social.js';
+import {
+  USECASE_DESCRIPTIONS,
+  USECASE_INSTRUCTIONS,
+  openSlxUseCaseDescription,
+  openSlxUseCaseInstructions,
+  mountSlxUseCaseHeaderDocs,
+} from './usecase-docs.js';
+
+export {
+  USECASE_DESCRIPTIONS,
+  USECASE_INSTRUCTIONS,
+  openSlxUseCaseDescription,
+  openSlxUseCaseInstructions,
+  mountSlxUseCaseHeaderDocs,
+};
 
 function escapeHtmlText(s) {
   return String(s ?? '')
@@ -2919,7 +2934,7 @@ export const SLX_PLATFORM_APPS = [
     icon: '🔐',
     label: 'Cipher Noir',
     shortLabel: 'Cipher Noir',
-    sub: 'ECDH Sabotage Deduction',
+    sub: 'Bulletproofs & Threshold ZK Deduction',
     href: '/cipher-noir.html',
     group: 'Multiplayer On-Chain Games',
   },
@@ -3121,6 +3136,18 @@ export function mountSlxUnifiedHeader({
       refs.extra.appendChild(el);
     }
   }
+
+  // Standardized Use-Case Description (`🏛️ Description`) + Instructions (`📖 Instructions`) modals & header pills
+  if (typeof window !== 'undefined' && !window.openSlxUseCaseDescription) {
+    window.openSlxUseCaseDescription = (targetId, tab = 'codification') =>
+      openSlxUseCaseDescription(targetId, tab, { currentPageAppId: canonicalActiveId });
+    window.openSlxUseCaseInstructions = (targetId, tab = 'quickstart') =>
+      openSlxUseCaseInstructions(targetId, tab);
+  }
+  mountSlxUseCaseHeaderDocs({
+    activeAppId: canonicalActiveId,
+    extraContainer: refs.extra,
+  });
 
   const syncAppBarVisibility = () => {
     if (!refs.appBar) return;
