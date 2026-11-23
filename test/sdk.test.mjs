@@ -163,7 +163,7 @@ assert.equal(w.getIdentityRecord().nickname, 'Valkyrie');
 // 7. Unified Social Graph & Handshake Vectors
 assert.equal(
   SUBNET1_FLEET_SOCIAL_DEFAULT.charter,
-  '0xdc68f6666864931d83a85f14189489679d5ef0ee',
+  '0x56205f6cade15085906ff1def11fb03ab40a8eb8',
   'Default SocialCharter must point to Unified Fleet/Subnet Guild'
 );
 const idA = '0x' + '12'.repeat(20);

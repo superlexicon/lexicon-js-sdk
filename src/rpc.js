@@ -62,13 +62,36 @@ export const SlxHfsCache = {
         localStorage.removeItem('slx_inst_wasm_snapshot_v1');
       } catch (_) {}
     }
-    const cached = this.load();
+    let cached = this.load();
     let manifest = null;
     if (typeof fetch !== 'undefined') {
       try {
         const res = await fetch(manifestUrl, { cache: 'no-store' });
         if (res.ok) manifest = await res.json();
       } catch (_) {}
+    }
+    const manifestReg = String(manifest?.hfsRegistry || '').toLowerCase();
+    const cachedReg = String(cached.hfsRegistry || '').toLowerCase();
+    if (manifestReg && cachedReg !== manifestReg) {
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const keysToRemove = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (
+              k &&
+              k.startsWith('slx_') &&
+              k !== 'slx_wallet_keypair_v1' &&
+              k !== 'slx_legal_consent_v1' &&
+              !k.startsWith('slx_game_guide_seen_')
+            ) {
+              keysToRemove.push(k);
+            }
+          }
+          for (const k of keysToRemove) localStorage.removeItem(k);
+        } catch (_) {}
+      }
+      cached = {};
     }
     const defaultWs = getDefaultNodeWsUrl();
     const isHttpsPage =
@@ -88,6 +111,8 @@ export const SlxHfsCache = {
         : '';
     const merged = {
       rpcUrl: useRpc,
+      hfsRegistry: manifest?.hfsRegistry || cached.hfsRegistry || '',
+      deployedAt: manifest?.deployedAt || cached.deployedAt || '',
       battleshipAddr: manifest?.battleship?.contractAddr || cached.battleshipAddr || '',
       battleId: manifest?.battleship?.battleId || cached.battleId || '',
       socialCharterAddr:

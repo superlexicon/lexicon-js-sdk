@@ -1002,7 +1002,7 @@ export function decodeHfsInstancesSliceHex(hex) {
 
 const _creatorNickCache = new Map();
 
-export const SUBNET1_HFS_REGISTRY_ADDRESS = '0xc9ab95e06851805a34d07c7bc1a9937dcde9328b';
+export const SUBNET1_HFS_REGISTRY_ADDRESS = '0xe1dc7648205c3704eba81797325e6163a9404d64';
 
 export async function fetchRegisteredHfsByType(
   typeName,
@@ -1149,7 +1149,7 @@ export function clearUrlHfsParam(push = false) {
 // Cross-App Cached & Debounced Identity Label Directory + Standard HFS Helpers
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY_IDENTITY_DIRECTORY = 'slx_identity_directory_v1';
+const STORAGE_KEY_IDENTITY_DIRECTORY = 'slx_identity_directory_v2';
 const _sharedMemIdentityLabels = new Map();
 let _sharedLabelsHydrated = false;
 
@@ -1423,14 +1423,21 @@ export function packHfsAssociationBatch(entries = []) {
   return concatBytes(...chunks);
 }
 
+function normalizeHfsTypeIdHex(typeIdOrName) {
+  if (!typeIdOrName) return ZERO_BYTES32;
+  const s = String(typeIdOrName).trim();
+  if (/^0x[0-9a-fA-F]{64}$/.test(s)) return s.toLowerCase();
+  return encodeHfsTypeId(s);
+}
+
 export const IdentityHfsWhitelistAbi = {
   identityVersion() {
     return encodeAbi('identityVersion()');
   },
-  setHfsAssociation(hfsAddr, typeIdHex, status, label = '') {
+  setHfsAssociation(hfsAddr, typeIdOrName, status, label = '') {
     return encodeAbi('setHfsAssociation(address,bytes32,uint64,string)', [
       ['address', hfsAddr],
-      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['bytes32', normalizeHfsTypeIdHex(typeIdOrName)],
       ['uint64', status],
       ['string', String(label || '').slice(0, 64)],
     ]);
@@ -1438,10 +1445,10 @@ export const IdentityHfsWhitelistAbi = {
   setHfsAssociationBatch(packedBytes) {
     return encodeAbi('setHfsAssociationBatch(bytes)', [['bytes', packedBytes]]);
   },
-  notifyHfsAssociation(hfsAddr, typeIdHex, label = '') {
+  notifyHfsAssociation(hfsAddr, typeIdOrName, label = '') {
     return encodeAbi('notifyHfsAssociation(address,bytes32,string)', [
       ['address', hfsAddr],
-      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['bytes32', normalizeHfsTypeIdHex(typeIdOrName)],
       ['string', String(label || '').slice(0, 64)],
     ]);
   },
@@ -1457,10 +1464,10 @@ export const IdentityHfsWhitelistAbi = {
       ['uint64', limit],
     ]);
   },
-  setDelegatedHfsAssociation(hfsAddr, typeIdHex, status, label = '') {
+  setDelegatedHfsAssociation(hfsAddr, typeIdOrName, status, label = '') {
     return encodeAbi('setDelegatedHfsAssociation(address,bytes32,uint64,string)', [
       ['address', hfsAddr],
-      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['bytes32', normalizeHfsTypeIdHex(typeIdOrName)],
       ['uint64', status],
       ['string', String(label || '').slice(0, 64)],
     ]);
@@ -1468,11 +1475,11 @@ export const IdentityHfsWhitelistAbi = {
   setDelegatedHfsAssociationBatch(packedBytes) {
     return encodeAbi('setDelegatedHfsAssociationBatch(bytes)', [['bytes', packedBytes]]);
   },
-  notifyDelegatedHfsAssociation(subjectIdentity, hfsAddr, typeIdHex, label = '') {
+  notifyDelegatedHfsAssociation(subjectIdentity, hfsAddr, typeIdOrName, label = '') {
     return encodeAbi('notifyDelegatedHfsAssociation(address,address,bytes32,string)', [
       ['address', subjectIdentity],
       ['address', hfsAddr],
-      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['bytes32', normalizeHfsTypeIdHex(typeIdOrName)],
       ['string', String(label || '').slice(0, 64)],
     ]);
   },
@@ -1550,7 +1557,7 @@ function _invalidateIdentityAssocCache(identityAddr) {
 }
 
 export const SUBNET1_IDENTITY_HFS_EXTENSION_ADDRESS =
-  '0x8295c9fbf3ae208ecf54cc21ced52ecaee81f235';
+  '0x78b12a31dfdf38f98cea39c79c420de6f0674139';
 
 export async function resolveIdentityWhitelistTarget(rpcUrl, identityAddr, { manifest = null } = {}) {
   const low = String(identityAddr || '').toLowerCase();

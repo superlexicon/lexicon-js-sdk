@@ -41,12 +41,12 @@ import {
 } from './identity.js';
 
 export const SUBNET1_FLEET_SOCIAL_DEFAULT = {
-  identityRegistry: '0x114322a44284eb92bc8ab3f175504c0482901a62',
-  messaging: '0xce1d210b5c7c2ab165fcc2e5a60556e90496d0fe',
-  charter: '0xdc68f6666864931d83a85f14189489679d5ef0ee',
-  relationships: '0xbdc5778b1959352cbbb660091051bdc028eaef0f',
-  feed: '0x11f6255cd9b1213820cd0e5c1731b6156d21ac5a',
-  events: '0xd11c4dc4dab4f0e20066c6e387292de5ec9fa5ec',
+  identityRegistry: '0x35779fc846c1f35fe209032ec7c31830bc8b4ef9',
+  messaging: '0xa6f1c6069dab07f854fd707cf68fcc413874e944',
+  charter: '0x56205f6cade15085906ff1def11fb03ab40a8eb8',
+  relationships: '0xfbb429b290b54e46ee65399769e10f785196a0da',
+  feed: '0xf6c3cfe1fb6f9fa18f22b3bdaa3593abc141bde0',
+  events: '0x22c4c488184c9ff39c7df305f0ac1a5100524d71',
 };
 
 function tailBytes(input) {
