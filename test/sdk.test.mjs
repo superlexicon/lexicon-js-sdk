@@ -376,5 +376,22 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   );
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (11/11 test groups)!');
+// 12. Stale / Post-Reset Identity Cache Eviction & Preferred Nickname Preservation
+{
+  const wReset = new SlxWalletManager({ privateKey: kp2.privateKey });
+  wReset.saveIdentityRecord({
+    identityAddr: '0x2222222222222222222222222222222222222222',
+    nickname: 'CaptainSable',
+  });
+  assert.equal(wReset.getPreferredNickname(), 'CaptainSable');
+  wReset.clearIdentityRecord();
+  assert.equal(wReset.getIdentityRecord(), null, 'Cleared identity record must return null');
+  assert.equal(
+    wReset.getPreferredNickname(),
+    'CaptainSable',
+    'Preferred nickname must survive identity cache eviction for 1-click redeploy'
+  );
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (12/12 test groups)!');
 process.exit(0);

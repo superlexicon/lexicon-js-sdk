@@ -46,6 +46,8 @@ import { slxWaitForReceipt } from './events.js';
 
 const STORAGE_KEY_WALLET = 'slx_wallet_keypair_v1';
 const STORAGE_KEY_UNIFIED_IDENTITIES = 'slx_unified_identities_v1';
+const STORAGE_KEY_PREFERRED_NICKNAMES = 'slx_preferred_nicknames_v1';
+const IDENTITY_VERIFY_TTL_MS = 15_000;
 
 let _uiIdentityPromptHandler = null;
 
@@ -88,6 +90,33 @@ export async function readOnChainIdentityOwner(rpcUrl, identityAddr) {
   }
 }
 
+/**
+ * Checks on-chain whether an `Identity` HFS contract is actually deployed & initialized at `identityAddr`
+ * via a single `owner()` `eth_call`. Distinguishes `reachable: false` (transient network failure) from
+ * `reachable: true, deployed: false` (`no account at 0x...` / chain reset / undeployed).
+ */
+export async function checkIdentityDeployedOnChain(rpcUrl, identityAddr) {
+  if (!identityAddr || /^0x0{40}$/i.test(identityAddr)) {
+    return { reachable: true, deployed: false, owner: '' };
+  }
+  try {
+    const hex = await slxNodeRpc(rpcUrl, 'eth_call', [
+      { to: identityAddr, data: bytesToHex(selectorBytes('owner()')) },
+      'latest',
+    ]);
+    const owner = decodeAddrWord(hex);
+    if (!owner || owner === ZERO_ADDR) {
+      return { reachable: true, deployed: false, owner: '' };
+    }
+    return { reachable: true, deployed: true, owner };
+  } catch (err) {
+    if (!err?.isJsonRpcError) {
+      return { reachable: false, deployed: false, owner: '' };
+    }
+    return { reachable: true, deployed: false, owner: '' };
+  }
+}
+
 async function waitReceiptsChecked(rpcUrl, hashes, { timeoutMs = 56_000, fallbackPollMs = 240 } = {}) {
   const rcpts = await Promise.all(
     hashes.map((h) =>
@@ -113,6 +142,9 @@ export class SlxWalletManager {
     this.txHistory = [];
     this.listeners = new Set();
     this._pendingRegistrySeals = new Map();
+    this._verifyInFlight = new Map();
+    this._verifiedCache = new Map();
+    this.lastClearedIdentityNotice = null;
     this.keypair = privateKey
       ? { ...deriveKeypairInfo(privateKey), source: 'imported' }
       : this._loadOrCreate();
@@ -179,6 +211,44 @@ export class SlxWalletManager {
     }
   }
 
+  _loadPreferredNicknameMap() {
+    if (typeof localStorage === 'undefined') {
+      return this._memPreferredNicks || {};
+    }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_PREFERRED_NICKNAMES);
+      return raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  _savePreferredNicknameMap(map) {
+    this._memPreferredNicks = map;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_PREFERRED_NICKNAMES, JSON.stringify(map));
+      } catch (_) {}
+    }
+  }
+
+  getPreferredNickname(eoaAddr = this.keypair.address) {
+    const k = String(eoaAddr || '').toLowerCase();
+    const rec = this.getIdentityRecord(k);
+    if (rec?.nickname) return rec.nickname;
+    const map = this._loadPreferredNicknameMap();
+    return map[k] || '';
+  }
+
+  setPreferredNickname(nickname, eoaAddr = this.keypair.address) {
+    const clean = String(nickname || '').trim().slice(0, 24);
+    if (!clean) return;
+    const k = String(eoaAddr || '').toLowerCase();
+    const map = this._loadPreferredNicknameMap();
+    map[k] = clean;
+    this._savePreferredNicknameMap(map);
+  }
+
   getIdentityRecord(eoaAddr = this.keypair.address) {
     const map = this._loadIdentityMap();
     return map[String(eoaAddr || '').toLowerCase()] || null;
@@ -194,6 +264,11 @@ export class SlxWalletManager {
       registryAddr: record.registryAddr || '',
     };
     this._saveIdentityMap(map);
+    if (record.nickname) {
+      this.setPreferredNickname(record.nickname, k);
+    }
+    this._verifiedCache.clear();
+    this.lastClearedIdentityNotice = null;
     if (record.identityAddr && record.nickname) {
       _writeSharedIdentityLabel(record.identityAddr, `${record.nickname} · ${truncAddr4(k)}`);
     }
@@ -203,27 +278,101 @@ export class SlxWalletManager {
 
   clearIdentityRecord(eoaAddr = this.keypair.address) {
     const map = this._loadIdentityMap();
-    delete map[String(eoaAddr || '').toLowerCase()];
+    const k = String(eoaAddr || '').toLowerCase();
+    const prev = map[k];
+    if (prev?.nickname) {
+      this.setPreferredNickname(prev.nickname, k);
+    }
+    delete map[k];
     this._saveIdentityMap(map);
+    this._verifiedCache.clear();
     this._emit();
   }
 
-  async resolveVerifiedIdentity(rpcUrl = getDefaultNodeWsUrl()) {
+  async resolveVerifiedIdentity(rpcUrl = getDefaultNodeWsUrl(), { force = false } = {}) {
     const eoa = this.keypair.address.toLowerCase();
-    const rec = this.getIdentityRecord(eoa);
-    if (!rec || !rec.identityAddr) return null;
+    const cacheKey = `${eoa}:${String(rpcUrl || '').toLowerCase()}`;
 
-    const ownerOnChain = await readOnChainIdentityOwner(rpcUrl, rec.identityAddr);
-    if (!ownerOnChain || ownerOnChain.toLowerCase() !== eoa) {
-      this.clearIdentityRecord(eoa);
+    if (!force) {
+      const memo = this._verifiedCache.get(cacheKey);
+      if (memo && Date.now() - memo.at < IDENTITY_VERIFY_TTL_MS) {
+        return memo.record;
+      }
+    }
+
+    if (this._verifyInFlight.has(cacheKey)) {
+      return this._verifyInFlight.get(cacheKey);
+    }
+
+    const task = (async () => {
+      const rec = this.getIdentityRecord(eoa);
+      if (rec && rec.identityAddr) {
+        const chk = await checkIdentityDeployedOnChain(rpcUrl, rec.identityAddr);
+        if (!chk.reachable) {
+          // Transient RPC disconnect: do not wipe localStorage blindly while offline
+          return rec;
+        }
+        if (chk.deployed && chk.owner.toLowerCase() === eoa) {
+          this.lastClearedIdentityNotice = null;
+          const liveNick = await readOnChainIdentityNickname(rpcUrl, rec.identityAddr);
+          const verifiedRec =
+            liveNick && liveNick !== rec.nickname
+              ? this.saveIdentityRecord({ ...rec, nickname: liveNick }, eoa)
+              : rec;
+          this._verifiedCache.set(cacheKey, { at: Date.now(), record: verifiedRec });
+          return verifiedRec;
+        }
+
+        // Cached Identity HFS is NOT deployed on this blockchain (e.g. after chain reset) or owner mismatched:
+        this.lastClearedIdentityNotice = {
+          identityAddr: rec.identityAddr,
+          nickname: rec.nickname || '',
+        };
+        this.clearIdentityRecord(eoa);
+      }
+
+      // Probe deterministic CREATE slots (`nonce = 0..3`) if this EOA already transacted on the current chain
+      // (recovers an already-deployed Identity HFS across tabs/browsers or after a cache reset!)
+      try {
+        const txCountHex = await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [eoa, 'latest']);
+        const txCount = Number(BigInt(txCountHex || '0x0'));
+        if (txCount > 0) {
+          const maxProbe = Math.min(txCount, 4);
+          const candidates = Array.from({ length: maxProbe }, (_, n) =>
+            computeCreateAddress(eoa, BigInt(n)).toLowerCase()
+          );
+          const checks = await Promise.all(
+            candidates.map((cand) => checkIdentityDeployedOnChain(rpcUrl, cand))
+          );
+          const hitIdx = checks.findIndex((c) => c.deployed && c.owner.toLowerCase() === eoa);
+          if (hitIdx >= 0) {
+            const foundAddr = candidates[hitIdx];
+            const foundNick =
+              (await readOnChainIdentityNickname(rpcUrl, foundAddr)) ||
+              this.getPreferredNickname(eoa) ||
+              `Capt_${truncAddr4(eoa)}`;
+            const recovered = this.saveIdentityRecord(
+              {
+                identityAddr: foundAddr,
+                nickname: foundNick,
+                handle: foundNick,
+              },
+              eoa
+            );
+            this._verifiedCache.set(cacheKey, { at: Date.now(), record: recovered });
+            return recovered;
+          }
+        }
+      } catch (_) {}
+
+      this._verifiedCache.set(cacheKey, { at: Date.now(), record: null });
       return null;
-    }
+    })().finally(() => {
+      this._verifyInFlight.delete(cacheKey);
+    });
 
-    const liveNick = await readOnChainIdentityNickname(rpcUrl, rec.identityAddr);
-    if (liveNick && liveNick !== rec.nickname) {
-      return this.saveIdentityRecord({ ...rec, nickname: liveNick }, eoa);
-    }
-    return rec;
+    this._verifyInFlight.set(cacheKey, task);
+    return task;
   }
 
   async deployUnifiedIdentityWithNickname(
@@ -516,7 +665,8 @@ export class SlxWalletManager {
     if (typeof document !== 'undefined' && typeof _uiIdentityPromptHandler === 'function') {
       return _uiIdentityPromptHandler(this, { rpcUrl, appName });
     }
-    const fallbackNick = defaultNickname || `Capt_${truncAddr4(this.keypair.address)}`;
+    const fallbackNick =
+      defaultNickname || this.getPreferredNickname() || `Capt_${truncAddr4(this.keypair.address)}`;
     return this.deployUnifiedIdentityWithNickname(fallbackNick, { rpcUrl });
   }
 
@@ -536,6 +686,8 @@ export class SlxWalletManager {
   generateNewKeypair() {
     const freshPriv = generatePrivateKeyHex();
     this.keypair = { ...deriveKeypairInfo(freshPriv), source: 'generated' };
+    this._verifiedCache.clear();
+    this.lastClearedIdentityNotice = null;
     this._save(this.keypair);
     this._emit();
     return this.keypair;
@@ -543,12 +695,26 @@ export class SlxWalletManager {
 
   importPrivateKey(inputStr) {
     let rawPriv = String(inputStr || '').trim();
+    let importedIdentity = null;
     if (rawPriv.startsWith('{')) {
       const parsed = JSON.parse(rawPriv);
       rawPriv = parsed.privateKey || parsed.privKey || parsed.secretKey || '';
+      importedIdentity = parsed.identity || null;
     }
     const derived = deriveKeypairInfo(rawPriv);
     this.keypair = { ...derived, source: 'imported' };
+    this._verifiedCache.clear();
+    this.lastClearedIdentityNotice = null;
+    if (importedIdentity?.nickname) {
+      this.setPreferredNickname(importedIdentity.nickname, derived.address);
+    }
+    if (importedIdentity?.identityAddr) {
+      this.saveIdentityRecord(importedIdentity, derived.address);
+    } else {
+      this._save(this.keypair);
+      this._emit();
+      return this.keypair;
+    }
     this._save(this.keypair);
     this._emit();
     return this.keypair;

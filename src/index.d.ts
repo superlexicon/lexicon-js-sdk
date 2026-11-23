@@ -286,17 +286,27 @@ export function slxWatchChainApp(opts?: {
 // identity & registry
 export function readOnChainIdentityNickname(rpcUrl: string, identityAddr: string): Promise<string>;
 export function readOnChainIdentityOwner(rpcUrl: string, identityAddr: string): Promise<string>;
+export function checkIdentityDeployedOnChain(
+  rpcUrl: string,
+  identityAddr: string
+): Promise<{ reachable: boolean; deployed: boolean; owner: string }>;
 export function lookupCachedSignedTx(txHash: string): Record<string, any> | null;
 
 export class SlxWalletManager {
   keypair: KeypairInfo;
   txHistory: any[];
+  lastClearedIdentityNotice: { identityAddr: string; nickname: string } | null;
   constructor(opts?: { privateKey?: string | null });
   getIdentityRecord(eoaAddr?: string): IdentityRecord | null;
+  getPreferredNickname(eoaAddr?: string): string;
+  setPreferredNickname(nickname: string, eoaAddr?: string): void;
   saveIdentityRecord(record: Partial<IdentityRecord>, eoaAddr?: string): IdentityRecord;
   clearIdentityRecord(eoaAddr?: string): void;
   awaitRegistrySeal(identityAddr?: string): Promise<void>;
-  resolveVerifiedIdentity(rpcUrl?: string): Promise<IdentityRecord | null>;
+  resolveVerifiedIdentity(
+    rpcUrl?: string,
+    opts?: { force?: boolean }
+  ): Promise<IdentityRecord | null>;
   deployUnifiedIdentityWithNickname(
     rawNickname: string,
     opts?: {

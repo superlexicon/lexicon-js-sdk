@@ -334,7 +334,9 @@ export function openIdentityCreateModal(
       document.body.appendChild(backdrop);
     }
 
-    const defaultSuggestion = `Capt_${truncAddr4(wallet.keypair.address)}`;
+    const preferredNick = wallet.getPreferredNickname?.() || '';
+    const clearedNotice = wallet.lastClearedIdentityNotice || null;
+    const defaultSuggestion = preferredNick || `Capt_${truncAddr4(wallet.keypair.address)}`;
     backdrop.classList.add('is-open');
     backdrop.innerHTML = `
       <div class="slx-modal-card" style="max-width:520px;" onclick="event.stopPropagation()">
@@ -350,6 +352,13 @@ export function openIdentityCreateModal(
           </div>
         </div>
         <form id="slxIdentityCreateForm" class="slx-modal-body">
+          ${
+            clearedNotice
+              ? `<div style="padding:0.45rem 0.65rem;border-radius:0.5rem;background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.45);color:#fde68a;font-size:0.71rem;">
+                   Previous cached Identity HFS (<code>${shortHex(clearedNotice.identityAddr)}</code>) is not deployed on the current Subnet 1 chain — confirm your nickname below to deploy a fresh Identity smart contract in 1 block.
+                 </div>`
+              : ''
+          }
           <div class="slx-panel-box">
             <div style="font-size:0.73rem;color:#cbd5e1;display:flex;justify-content:space-between;gap:0.5rem;flex-wrap:wrap;">
               <span>Active Browser Keypair:</span>
@@ -577,11 +586,18 @@ export function mountSlxWalletHeader({
                     </div>
                   `
                   : `
+                    ${
+                      wallet.lastClearedIdentityNotice
+                        ? `<div style="padding:0.42rem 0.6rem;border-radius:0.45rem;background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.42);color:#fde68a;font-size:0.71rem;margin-bottom:0.35rem;">
+                             Cached Identity HFS <code>${shortHex(wallet.lastClearedIdentityNotice.identityAddr)}</code> is no longer deployed on this blockchain (chain reset). Your keypair is intact — deploy a fresh Identity HFS below.
+                           </div>`
+                        : ''
+                    }
                     <div style="color:#cbd5e1;font-size:0.74rem;">
-                      No Identity HFS deployed yet for keypair <code>${shortHex(kp.address)}</code>.
+                      No Identity HFS deployed on-chain yet for keypair <code>${shortHex(kp.address)}</code>.
                     </div>
                     <div>
-                      <button type="button" class="slx-mini-btn emerald" id="slxBtnCreateIdModal">🚀 Create Identity &amp; Nickname on Subnet 1</button>
+                      <button type="button" class="slx-mini-btn emerald" id="slxBtnCreateIdModal">🚀 Create Identity${wallet.getPreferredNickname?.() ? ` ("${escapeHtmlText(wallet.getPreferredNickname())}")` : ''} on Subnet 1</button>
                     </div>
                   `
               }
@@ -922,7 +938,10 @@ export function mountSlxWalletHeader({
       const inp = modal.querySelector('#slxImportPrivInput');
       try {
         const imported = wallet.importPrivateKey(inp?.value || '');
-        statusBanner = `Connected imported keypair: ${imported.address}`;
+        const verified = await wallet.resolveVerifiedIdentity?.(cachedRpc, { force: true }).catch(() => null);
+        statusBanner = verified
+          ? `Connected imported keypair ${shortHex(imported.address)} (Identity HFS ${shortHex(verified.identityAddr)} verified on-chain)`
+          : `Connected imported keypair ${shortHex(imported.address)} — no Identity HFS deployed on this chain yet`;
         if (onWalletSwitch) await onWalletSwitch(imported);
         renderModal();
       } catch (err) {
@@ -940,7 +959,12 @@ export function mountSlxWalletHeader({
         if (parsedJson?.identity?.identityAddr) {
           wallet.saveIdentityRecord(parsedJson.identity, imported.address);
         }
-        statusBanner = `Loaded keyfile: ${imported.address}`;
+        const verified = await wallet.resolveVerifiedIdentity?.(cachedRpc, { force: true }).catch(() => null);
+        statusBanner = verified
+          ? `Loaded keyfile ${shortHex(imported.address)} (Identity HFS ${shortHex(verified.identityAddr)} verified on-chain)`
+          : parsedJson?.identity?.identityAddr
+            ? `Loaded keyfile ${shortHex(imported.address)} — previous Identity HFS (${shortHex(parsedJson.identity.identityAddr)}) is not deployed on this chain`
+            : `Loaded keyfile: ${imported.address}`;
         if (onWalletSwitch) await onWalletSwitch(imported);
         renderModal();
       } catch (err) {
@@ -957,6 +981,8 @@ export function mountSlxWalletHeader({
     statusBanner = '';
     modal.classList.add('is-open');
     renderModal();
+    const cachedRpc = SlxHfsCache.load().rpcUrl || getDefaultNodeWsUrl();
+    wallet.resolveVerifiedIdentity?.(cachedRpc, { force: true }).then(() => renderModal()).catch(() => {});
   });
 
   wrap.querySelector('#slxWasmOpenBtn')?.addEventListener('click', () => {
@@ -974,6 +1000,15 @@ export function mountSlxWalletHeader({
     }
     renderModal();
   });
+
+  // Proactively verify cached Identity HFS against live blockchain on mount (clears stale pre-reset identities immediately!)
+  Promise.resolve()
+    .then(() => SlxHfsCache.hydrateWithManifest())
+    .then(({ cache }) => {
+      const rpcUrl = cache?.rpcUrl || getDefaultNodeWsUrl();
+      return wallet.resolveVerifiedIdentity?.(rpcUrl);
+    })
+    .catch(() => {});
 
   return { refresh: renderModal };
 }

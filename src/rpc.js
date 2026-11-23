@@ -75,6 +75,19 @@ export const SlxHfsCache = {
     if (manifestReg && cachedReg !== manifestReg) {
       if (typeof localStorage !== 'undefined') {
         try {
+          // Preserve returning users' chosen nicknames before purging stale pre-reset chain caches
+          const prevIdsRaw = localStorage.getItem('slx_unified_identities_v1');
+          if (prevIdsRaw) {
+            const prevIds = JSON.parse(prevIdsRaw);
+            const prefRaw = localStorage.getItem('slx_preferred_nicknames_v1');
+            const prefMap = prefRaw ? JSON.parse(prefRaw) : {};
+            for (const [eoaKey, rec] of Object.entries(prevIds || {})) {
+              if (rec?.nickname && !prefMap[eoaKey.toLowerCase()]) {
+                prefMap[eoaKey.toLowerCase()] = String(rec.nickname).trim().slice(0, 24);
+              }
+            }
+            localStorage.setItem('slx_preferred_nicknames_v1', JSON.stringify(prefMap));
+          }
           const keysToRemove = [];
           for (let i = 0; i < localStorage.length; i++) {
             const k = localStorage.key(i);
@@ -82,6 +95,7 @@ export const SlxHfsCache = {
               k &&
               k.startsWith('slx_') &&
               k !== 'slx_wallet_keypair_v1' &&
+              k !== 'slx_preferred_nicknames_v1' &&
               k !== 'slx_legal_consent_v1' &&
               !k.startsWith('slx_game_guide_seen_')
             ) {
