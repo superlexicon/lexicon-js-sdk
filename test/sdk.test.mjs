@@ -33,6 +33,17 @@ import {
   createSingleFlightRefresh,
   fetchRegisteredHolders,
   isTerminalAuthStatus,
+  HFS_ASSOC_STATUS,
+  encodeHfsTypeId,
+  decodeHfsTypeIdHex,
+  packHfsAssociationBatch,
+  decodeIdentityHfsSliceHex,
+  IdentityHfsWhitelistAbi,
+  classifyHfsInstancesForIdentity,
+  u64BEBytes,
+  u16BEBytes,
+  concatBytes,
+  utf8ToBytes,
   wordU64,
   wordAddress,
   SUBNET1_FLEET_SOCIAL_DEFAULT,
@@ -278,5 +289,92 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   assert.deepEqual(holders, [idA, idB]);
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (10/10 test groups)!');
+// 11. Identity HFS Subroutine Whitelist Binary Slice & Spam Classification
+{
+  const chrTypeHex = encodeHfsTypeId('CORPORATE_CHARTER');
+  assert.equal(decodeHfsTypeIdHex(chrTypeHex), 'CORPORATE_CHARTER');
+
+  const hfsValid = '0x' + 'c1'.repeat(20);
+  const hfsPending = '0x' + 'c2'.repeat(20);
+  const hfsSpam = '0x' + 'c3'.repeat(20);
+  const hfsPublic = '0x' + 'c4'.repeat(20);
+  const hfsSpoof = '0x' + 'c5'.repeat(20);
+
+  const batchPacked = packHfsAssociationBatch([
+    { hfsAddr: hfsValid, typeName: 'CORPORATE_CHARTER', status: HFS_ASSOC_STATUS.WHITELISTED, label: 'Aegis Corp' },
+    { hfsAddr: hfsSpam, typeName: 'CORPORATE_CHARTER', status: HFS_ASSOC_STATUS.SPAM, label: 'Phishing Corp' },
+  ]);
+  assert.ok(batchPacked.length > 100);
+  assert.ok(
+    IdentityHfsWhitelistAbi.setHfsAssociation(hfsValid, chrTypeHex, 2, 'Aegis').startsWith(
+      selectorHex('setHfsAssociation(address,bytes32,uint64,string)')
+    )
+  );
+
+  // Build binary slice matching `identity.wasm` v2 `getHfsAssociationsSlice`
+  const buildRec = (idx, status, addr, typeHex, blk, actor, lblStr) => {
+    const lblB = utf8ToBytes(lblStr);
+    return concatBytes(
+      u64BEBytes(idx),
+      new Uint8Array([status]),
+      hexToBytes(addr),
+      hexToBytes(typeHex),
+      u64BEBytes(blk),
+      hexToBytes(actor),
+      u16BEBytes(lblB.length),
+      lblB
+    );
+  };
+  const sliceBytes = concatBytes(
+    u64BEBytes(3),
+    u64BEBytes(3),
+    buildRec(0, HFS_ASSOC_STATUS.WHITELISTED, hfsValid, chrTypeHex, 91001, kp1.address, 'Aegis Corp'),
+    buildRec(1, HFS_ASSOC_STATUS.PENDING, hfsPending, chrTypeHex, 91002, kp2.address, 'Invited Venture'),
+    buildRec(2, HFS_ASSOC_STATUS.SPAM, hfsSpam, chrTypeHex, 91003, kp2.address, 'Phishing Corp')
+  );
+  const decoded = decodeIdentityHfsSliceHex(bytesToHex(sliceBytes));
+  assert.equal(decoded.totalCount, 3);
+  assert.equal(decoded.items.length, 3);
+  assert.equal(decoded.items[0].status, HFS_ASSOC_STATUS.WHITELISTED);
+  assert.equal(decoded.items[0].typeName, 'CORPORATE_CHARTER');
+  assert.equal(decoded.items[0].label, 'Aegis Corp');
+  assert.equal(decoded.items[1].status, HFS_ASSOC_STATUS.PENDING);
+  assert.equal(decoded.items[2].status, HFS_ASSOC_STATUS.SPAM);
+
+  const byAddr = new Map(decoded.items.map((x) => [x.hfsAddr, x]));
+  const classified = await classifyHfsInstancesForIdentity(
+    [
+      { primaryAddr: hfsValid, selectionKey: hfsValid, label: 'Aegis Corp', creatorEoa: kp1.address, creatorIdentity: idA, meta: {} },
+      { primaryAddr: hfsPending, selectionKey: hfsPending, label: 'Invited Venture', creatorEoa: kp2.address, creatorIdentity: idB, meta: {} },
+      { primaryAddr: hfsSpam, selectionKey: hfsSpam, label: 'Phishing Corp', creatorEoa: kp2.address, creatorIdentity: idB, meta: {} },
+      { primaryAddr: hfsSpoof, selectionKey: hfsSpoof, label: 'Spoofed Creator Corp', creatorEoa: kp2.address, creatorIdentity: idA, meta: {} },
+      { primaryAddr: hfsPublic, selectionKey: hfsPublic, label: 'Public Showcase Corp', creatorEoa: kp2.address, creatorIdentity: idB, meta: {} },
+    ],
+    {
+      typeName: 'CORPORATE_CHARTER',
+      identityAddr: idA,
+      myEoa: kp1.address,
+      assocByAddr: byAddr,
+      manifest: {},
+      callFn: async () => '0x0',
+    }
+  );
+  assert.deepEqual(
+    classified.whitelistedItems.map((x) => x.primaryAddr),
+    [hfsValid],
+    'Whitelisted subroutine must appear in whitelistedItems'
+  );
+  assert.deepEqual(
+    classified.publicItems.map((x) => x.primaryAddr),
+    [hfsPublic],
+    'Unassociated public subroutine must appear in publicItems'
+  );
+  assert.deepEqual(
+    classified.spamItems.map((x) => x.primaryAddr),
+    [hfsPending, hfsSpam, hfsSpoof],
+    'Pending, Blocked Spam, and Spoofed-Creator subroutines must be quarantined in spamItems'
+  );
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (11/11 test groups)!');
 process.exit(0);

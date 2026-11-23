@@ -14,7 +14,12 @@ import { getDefaultNodeWsUrl, SlxHfsCache } from '../rpc.js';
 import { slxSubscribeStats, slxSubscribeNewHeads } from '../events.js';
 import {
   HFS_TYPES,
+  HFS_ASSOC_STATUS,
+  HFS_ASSOC_STATUS_LABELS,
   fetchRegisteredHfsByType,
+  fetchIdentityHfsAssociations,
+  classifyHfsInstancesForIdentity,
+  onIdentityHfsAssociationsChanged,
   getUrlHfsParam,
   setUrlHfsParam,
   registerIdentityPromptHandler,
@@ -58,9 +63,24 @@ const FALLBACK_CSS = `
 .slx-wasm-proof-pill{display:inline-flex;align-items:center;gap:.38rem;padding:.42rem .72rem;border-radius:.65rem;background:rgba(15,23,42,.92);border:1px solid rgba(56,189,248,.52);color:#bae6fd;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;font-weight:700;cursor:pointer}
 .slx-wasm-proof-pill.tx-pulse{border-color:#34d399;background:rgba(6,78,59,.65);color:#a7f3d0}
 .slx-hfs-selector-bar{display:inline-flex;align-items:center;gap:.38rem;padding:.32rem .6rem;border-radius:999px;background:rgba(15,23,42,.92);border:1px solid rgba(56,189,248,.45);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.77rem;color:#e2e8f0}
-.slx-hfs-select{background:transparent;border:none;color:#f8fafc;font-family:inherit;font-size:.77rem;font-weight:700;max-width:280px;cursor:pointer;outline:none}
-.slx-hfs-select option{background:#0f172a;color:#f8fafc}
+.slx-hfs-select{background:transparent;border:none;color:#f8fafc;font-family:inherit;font-size:.77rem;font-weight:700;max-width:270px;cursor:pointer;outline:none}
+.slx-hfs-select option,.slx-hfs-select optgroup{background:#0f172a;color:#f8fafc}
+.slx-hfs-select optgroup{color:#7dd3fc;font-weight:800}
 .slx-hfs-deploy-btn{padding:.28rem .62rem;border-radius:999px;border:1px solid rgba(52,211,153,.55);background:rgba(16,185,129,.2);color:#6ee7b7;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.73rem;font-weight:700;cursor:pointer;white-space:nowrap}
+.slx-hfs-wl-btn{display:inline-flex;align-items:center;gap:.3rem;padding:.24rem .56rem;border-radius:999px;border:1px solid rgba(56,189,248,.45);background:rgba(14,165,233,.14);color:#bae6fd;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.71rem;font-weight:700;cursor:pointer;white-space:nowrap;transition:all .15s ease}
+.slx-hfs-wl-btn:hover{border-color:#38bdf8;background:rgba(14,165,233,.25);color:#fff}
+.slx-hfs-wl-btn.has-spam{border-color:rgba(245,158,11,.75);background:rgba(245,158,11,.18);color:#fde68a;box-shadow:0 0 10px rgba(245,158,11,.24)}
+.slx-hfs-wl-pill{display:inline-flex;align-items:center;gap:.24rem;padding:.2rem .5rem;border-radius:999px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.69rem;font-weight:700;cursor:pointer;white-space:nowrap;border:1px solid rgba(100,116,139,.5);background:rgba(15,23,42,.85);color:#cbd5e1}
+.slx-hfs-wl-pill.valid{border-color:rgba(52,211,153,.55);background:rgba(6,78,59,.45);color:#6ee7b7}
+.slx-hfs-wl-pill.spam{border-color:rgba(244,63,94,.65);background:rgba(136,19,55,.45);color:#fda4af}
+.slx-quarantine-banner{display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;padding:.58rem 1.15rem;background:linear-gradient(90deg,rgba(120,53,15,.88),rgba(69,10,26,.88));border-bottom:1.5px solid rgba(251,191,36,.65);color:#fef3c7;font-family:Inter,system-ui,-apple-system,sans-serif;font-size:.78rem;z-index:44}
+.slx-quarantine-banner.blocked{background:linear-gradient(90deg,rgba(127,29,29,.92),rgba(76,5,25,.92));border-bottom-color:rgba(248,113,113,.8);color:#ffe4e6}
+.slx-hfs-row{display:flex;align-items:center;justify-content:space-between;gap:.65rem;flex-wrap:wrap;padding:.58rem .72rem;border-radius:.58rem;background:#060c18;border:1px solid rgba(71,85,105,.55)}
+.slx-hfs-row.valid{border-color:rgba(52,211,153,.4)}
+.slx-hfs-row.spam{border-color:rgba(245,158,11,.5);background:rgba(40,22,8,.36)}
+.slx-hfs-row.blocked{border-color:rgba(244,63,94,.55);background:rgba(56,10,24,.38)}
+.slx-mini-btn.rose{background:rgba(225,29,72,.22);border-color:rgba(251,113,133,.65);color:#fecdd3}
+.slx-mini-btn.amber{background:rgba(245,158,11,.22);border-color:rgba(251,191,36,.65);color:#fde68a}
 .slx-modal-backdrop{position:fixed;inset:0;z-index:9999;background:rgba(2,6,23,.84);backdrop-filter:blur(6px);display:none;align-items:center;justify-content:center;padding:1rem}
 .slx-modal-backdrop.is-open{display:flex}
 .slx-modal-card{width:100%;max-width:840px;max-height:88vh;overflow-y:auto;background:#0b1222;border:2px solid rgba(56,189,248,.5);border-radius:1rem;box-shadow:0 24px 64px rgba(0,0,0,.78);color:#f1f5f9;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;flex-direction:column}
@@ -455,6 +475,29 @@ export function mountSlxWalletHeader({
   let activeTab = 'wallet';
   let privRevealed = false;
   let statusBanner = '';
+  let walletAssocItems = [];
+  let walletAssocVer = 2;
+  let walletAssocLoading = false;
+
+  async function refreshWalletAssocList() {
+    const idRec = wallet.getIdentityRecord();
+    if (!idRec?.identityAddr) {
+      walletAssocItems = [];
+      return;
+    }
+    walletAssocLoading = true;
+    renderModal();
+    try {
+      const cachedRpc = SlxHfsCache.load().rpcUrl || getDefaultNodeWsUrl();
+      const res = await fetchIdentityHfsAssociations(cachedRpc, idRec.identityAddr, {
+        forceRefresh: true,
+      });
+      walletAssocVer = res.version || 2;
+      walletAssocItems = res.items || [];
+    } catch (_) {}
+    walletAssocLoading = false;
+    renderModal();
+  }
 
   function renderModal() {
     const kp = wallet.keypair;
@@ -470,6 +513,11 @@ export function mountSlxWalletHeader({
     }
 
     if (!modal.classList.contains('is-open')) return;
+
+    const wlValid = walletAssocItems.filter((x) => x.status === HFS_ASSOC_STATUS.WHITELISTED);
+    const wlSpam = walletAssocItems.filter(
+      (x) => x.status === HFS_ASSOC_STATUS.PENDING || x.status === HFS_ASSOC_STATUS.SPAM
+    );
 
     modal.innerHTML = `
       <div class="slx-modal-card" onclick="event.stopPropagation()">
@@ -489,6 +537,9 @@ export function mountSlxWalletHeader({
         <div class="slx-modal-tabs">
           <button type="button" class="slx-tab-btn ${activeTab === 'wallet' ? 'active' : ''}" data-slx-tab="wallet">
             🪪 Identity &amp; Keypair
+          </button>
+          <button type="button" class="slx-tab-btn ${activeTab === 'whitelist' ? 'active' : ''}" data-slx-tab="whitelist">
+            🛡️ HFS Whitelist &amp; Spam${wlSpam.length ? ` (${wlSpam.length}⚠️)` : wlValid.length ? ` (${wlValid.length})` : ''}
           </button>
           <button type="button" class="slx-tab-btn ${activeTab === 'txs' ? 'active' : ''}" data-slx-tab="txs">
             📡 Live On-Chain Signed Txs (${wallet.txHistory.length})
@@ -577,7 +628,113 @@ export function mountSlxWalletHeader({
               </div>
             </div>
           `
-              : `
+              : activeTab === 'whitelist'
+                ? `
+            <div class="slx-panel-box">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+                <div>
+                  <strong style="color:#7dd3fc;font-size:0.83rem;">🛡️ On-Chain Identity HFS Subroutine Whitelist Register</strong>
+                  <div style="font-size:0.71rem;color:#94a3b8;margin-top:2px;">
+                    Manages validity states of associated HFS subroutines on your Identity smart contract (<code>1 = Pending</code>, <code>2 = Whitelisted</code>, <code>3 = Spam / Firewall-Blocked</code> • ABI v${walletAssocVer}).
+                  </div>
+                </div>
+                <button type="button" class="slx-mini-btn" id="slxBtnRefreshWlModal">${walletAssocLoading ? '⏳ Syncing…' : '↻ Sync On-Chain'}</button>
+              </div>
+
+              ${
+                !idRec
+                  ? `<div style="color:#fde68a;font-size:0.74rem;">Create your Identity HFS first to manage your on-chain subroutine whitelist.</div>`
+                  : `
+                <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.2rem;">
+                  <input id="slxWlAddAddr" type="text" class="slx-input-field" placeholder="0x… HFS Subroutine Address" style="min-width:190px;" />
+                  <select id="slxWlAddType" class="slx-input-field" style="max-width:165px;min-width:130px;">
+                    ${Object.keys(HFS_TYPES)
+                      .map((k) => `<option value="${k}">${escapeHtmlText(HFS_TYPES[k].shortLabel)} (${k})</option>`)
+                      .join('')}
+                  </select>
+                  <input id="slxWlAddLabel" type="text" maxlength="48" class="slx-input-field" placeholder="Optional label" style="max-width:165px;min-width:120px;" />
+                  <button type="button" class="slx-mini-btn emerald" id="slxBtnAddWhitelist">✓ Whitelist</button>
+                  <button type="button" class="slx-mini-btn rose" id="slxBtnAddSpam">🚫 Block Spam</button>
+                </div>
+              `
+              }
+            </div>
+
+            <div class="slx-panel-box">
+              <strong style="color:#6ee7b7;font-size:0.81rem;">✅ Valid Whitelisted Subroutines (${wlValid.length})</strong>
+              <div style="display:flex;flex-direction:column;gap:0.4rem;max-height:200px;overflow-y:auto;">
+                ${
+                  wlValid.length
+                    ? wlValid
+                        .map((item) => {
+                          const tSpec = HFS_TYPES[item.typeName] || { icon: '🗂️', shortLabel: item.typeName || 'HFS' };
+                          return `
+                            <div class="slx-hfs-row valid">
+                              <div style="display:flex;flex-direction:column;gap:2px;">
+                                <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                                  <strong>${tSpec.icon} ${escapeHtmlText(item.label || tSpec.shortLabel)}</strong>
+                                  <span style="font-family:monospace;font-size:0.66rem;color:#6ee7b7;">State 2 • WHITELISTED</span>
+                                </div>
+                                <div style="font-family:monospace;font-size:0.69rem;color:#94a3b8;">
+                                  ${escapeHtmlText(item.typeName || 'HFS')} • <code>${item.hfsAddr}</code> • Blk #${item.updatedBlock}
+                                </div>
+                              </div>
+                              <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                                <button type="button" class="slx-mini-btn" data-copy="${item.hfsAddr}">Copy</button>
+                                <button type="button" class="slx-mini-btn rose" data-wl-set-status="3" data-wl-addr="${item.hfsAddr}" data-wl-type="${escapeHtmlText(item.typeName)}" data-wl-label="${escapeHtmlText(item.label)}">🚫 Mark Spam</button>
+                              </div>
+                            </div>
+                          `;
+                        })
+                        .join('')
+                    : `<div style="color:#94a3b8;font-size:0.73rem;">No subroutines explicitly recorded yet. Deploying any HFS or clicking <strong>+ Whitelist</strong> in any app records it here on-chain.</div>`
+                }
+              </div>
+            </div>
+
+            <div class="slx-panel-box" style="border-color:rgba(245,158,11,0.45);">
+              <strong style="color:#fcd34d;font-size:0.81rem;">⚠️ Spam &amp; Unverified Subroutines (${wlSpam.length})</strong>
+              <div style="font-size:0.7rem;color:#cbd5e1;">
+                Subroutines that attempted to associate with your Identity (<code>State = 1 Pending</code>) or were blocked as Spam (<code>State = 3 Firewall-Blocked</code>).
+              </div>
+              <div style="display:flex;flex-direction:column;gap:0.4rem;max-height:200px;overflow-y:auto;">
+                ${
+                  wlSpam.length
+                    ? wlSpam
+                        .map((item) => {
+                          const tSpec = HFS_TYPES[item.typeName] || { icon: '⚠️', shortLabel: item.typeName || 'HFS' };
+                          const isBlocked = item.status === HFS_ASSOC_STATUS.SPAM;
+                          return `
+                            <div class="slx-hfs-row ${isBlocked ? 'blocked' : 'spam'}">
+                              <div style="display:flex;flex-direction:column;gap:2px;">
+                                <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                                  <strong>${tSpec.icon} ${escapeHtmlText(item.label || tSpec.shortLabel)}</strong>
+                                  <span style="font-family:monospace;font-size:0.66rem;color:${isBlocked ? '#fda4af' : '#fde68a'};">
+                                    State ${item.status} • ${escapeHtmlText(HFS_ASSOC_STATUS_LABELS[item.status])}
+                                  </span>
+                                </div>
+                                <div style="font-family:monospace;font-size:0.69rem;color:#cbd5e1;">
+                                  ${escapeHtmlText(item.typeName || 'HFS')} • <code>${item.hfsAddr}</code> • From ${shortHex(item.actor)}
+                                </div>
+                              </div>
+                              <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                                <button type="button" class="slx-mini-btn emerald" data-wl-set-status="2" data-wl-addr="${item.hfsAddr}" data-wl-type="${escapeHtmlText(item.typeName)}" data-wl-label="${escapeHtmlText(item.label)}">✓ Whitelist</button>
+                                ${
+                                  !isBlocked
+                                    ? `<button type="button" class="slx-mini-btn rose" data-wl-set-status="3" data-wl-addr="${item.hfsAddr}" data-wl-type="${escapeHtmlText(item.typeName)}" data-wl-label="${escapeHtmlText(item.label)}">🚫 Block Spam</button>`
+                                    : ''
+                                }
+                              </div>
+                            </div>
+                          `;
+                        })
+                        .join('')
+                    : `<div style="color:#94a3b8;font-size:0.73rem;">✓ Zero pending or blocked spam subroutines in your Identity register.</div>`
+                }
+              </div>
+            </div>
+          `
+                : `
             <div class="slx-panel-box">
               <strong style="color:#6ee7b7;font-size:0.82rem;">📜 Live Signed EIP-155 Transactions on Subnet 1 (<code>${cachedRpc}</code>)</strong>
               <div style="display:flex;flex-direction:column;gap:0.45rem;max-height:320px;overflow-y:auto;">
@@ -619,6 +776,72 @@ export function mountSlxWalletHeader({
         activeTab = btn.getAttribute('data-slx-tab');
         statusBanner = '';
         renderModal();
+        if (activeTab === 'whitelist') {
+          refreshWalletAssocList();
+        }
+      });
+    });
+    modal.querySelector('#slxBtnRefreshWlModal')?.addEventListener('click', () => {
+      refreshWalletAssocList();
+    });
+    const submitWlModalAdd = async (targetStatus) => {
+      const addrInp = modal.querySelector('#slxWlAddAddr');
+      const typeSel = modal.querySelector('#slxWlAddType');
+      const lblInp = modal.querySelector('#slxWlAddLabel');
+      const hfsAddr = String(addrInp?.value || '').trim();
+      const tName = String(typeSel?.value || '');
+      const lbl = String(lblInp?.value || '').trim();
+      try {
+        statusBanner = `⏳ Recording on-chain HFS state=${targetStatus}…`;
+        renderModal();
+        await wallet.setHfsAssociation({
+          hfsAddr,
+          typeName: tName,
+          status: targetStatus,
+          label: lbl,
+          rpcUrl: cachedRpc,
+        });
+        statusBanner =
+          targetStatus === HFS_ASSOC_STATUS.WHITELISTED
+            ? `✓ Whitelisted ${shortHex(hfsAddr)} on your Identity HFS!`
+            : `🛑 Blocked ${shortHex(hfsAddr)} as Spam (State = 3) on your Identity HFS!`;
+        await refreshWalletAssocList();
+      } catch (err) {
+        statusBanner = `⚠ ${err.message || err}`;
+        renderModal();
+      }
+    };
+    modal.querySelector('#slxBtnAddWhitelist')?.addEventListener('click', () => {
+      submitWlModalAdd(HFS_ASSOC_STATUS.WHITELISTED);
+    });
+    modal.querySelector('#slxBtnAddSpam')?.addEventListener('click', () => {
+      submitWlModalAdd(HFS_ASSOC_STATUS.SPAM);
+    });
+    modal.querySelectorAll('[data-wl-set-status]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const nextSt = Number(btn.getAttribute('data-wl-set-status'));
+        const hfsAddr = btn.getAttribute('data-wl-addr');
+        const tName = btn.getAttribute('data-wl-type') || '';
+        const lbl = btn.getAttribute('data-wl-label') || '';
+        btn.disabled = true;
+        btn.textContent = '⏳…';
+        try {
+          await wallet.setHfsAssociation({
+            hfsAddr,
+            typeName: tName,
+            status: nextSt,
+            label: lbl,
+            rpcUrl: cachedRpc,
+          });
+          statusBanner =
+            nextSt === HFS_ASSOC_STATUS.WHITELISTED
+              ? `✓ Promoted ${shortHex(hfsAddr)} to Valid Whitelisted (State = 2)!`
+              : `🛑 Moved ${shortHex(hfsAddr)} to Spam / Blocked (State = 3)!`;
+          await refreshWalletAssocList();
+        } catch (err) {
+          statusBanner = `⚠ ${err.message || err}`;
+          renderModal();
+        }
       });
     });
     modal.querySelectorAll('[data-copy]').forEach((btn) => {
@@ -791,9 +1014,11 @@ export function mountHfsRegistryDropdown({
   bar.className = 'slx-hfs-selector-bar';
   bar.innerHTML = `
     <span title="Global On-Chain HfsRegistry (${escapeHtmlText(spec.typeName)})">${spec.icon}</span>
-    <select class="slx-hfs-select" id="slxHfsSelect_${escapeHtmlText(typeName)}" title="Switch active ${escapeHtmlText(spec.shortLabel)} from Global HfsRegistry">
+    <select class="slx-hfs-select" id="slxHfsSelect_${escapeHtmlText(typeName)}" title="Switch active ${escapeHtmlText(spec.shortLabel)} (Valid Whitelisted &amp; Public Directory)">
       <option value="">Loading ${escapeHtmlText(spec.shortLabel)}s…</option>
     </select>
+    <button type="button" class="slx-hfs-wl-pill" id="slxHfsCurStatus_${escapeHtmlText(typeName)}" title="Whitelist or inspect association status for the active subroutine" style="display:none;"></button>
+    <button type="button" class="slx-hfs-wl-btn" id="slxHfsManageWl_${escapeHtmlText(typeName)}" title="Open Identity HFS Whitelist &amp; Spam Section">🛡️ Whitelist</button>
     <button type="button" class="slx-mini-btn" id="slxHfsRefresh_${escapeHtmlText(typeName)}" title="Refresh deployed ${escapeHtmlText(spec.typeName)} list from HfsRegistry" style="padding:0.12rem 0.36rem;font-size:0.66rem;">↻</button>
     ${
       (defaultDeployer || onCustomDeployClick) && spec.deployBtnText
@@ -804,19 +1029,233 @@ export function mountHfsRegistryDropdown({
   mountContainer.prepend(bar);
 
   const selectEl = bar.querySelector(`#slxHfsSelect_${typeName}`);
+  const curStatusBtn = bar.querySelector(`#slxHfsCurStatus_${typeName}`);
+  const manageWlBtn = bar.querySelector(`#slxHfsManageWl_${typeName}`);
   const refreshBtn = bar.querySelector(`#slxHfsRefresh_${typeName}`);
   const deployBtn = bar.querySelector(`#slxHfsDeploy_${typeName}`);
 
   let instances = [];
+  let whitelistedItems = [];
+  let publicItems = [];
+  let spamItems = [];
   let initialUrlApplied = false;
+  let activeSelection = null;
+  let wlModalTab = 'valid';
+  let wlModalFeedback = '';
+
+  function ensureQuarantineHost() {
+    let qEl = document.getElementById(`slxHfsQuarantineBar_${typeName}`);
+    if (!qEl) {
+      qEl = document.createElement('div');
+      qEl.id = `slxHfsQuarantineBar_${typeName}`;
+      qEl.style.display = 'none';
+      const sticky = document.querySelector('.slx-sticky-top-stack');
+      if (sticky && sticky.parentNode) {
+        sticky.insertAdjacentElement('afterend', qEl);
+      } else {
+        document.body.prepend(qEl);
+      }
+    }
+    return qEl;
+  }
+
+  function findClassifiedByAddrOrKey(val) {
+    if (!val) return null;
+    const low = String(val).toLowerCase();
+    const all = [...whitelistedItems, ...publicItems, ...spamItems];
+    return (
+      all.find((it) => it.selectionKey === low || it.primaryAddr === low) ||
+      instances.find((it) => it.selectionKey === low || it.primaryAddr === low) ||
+      null
+    );
+  }
+
+  function renderStatusControlsAndQuarantine() {
+    const curAddr = String(
+      activeSelection?.primaryAddr || getCurrentPrimaryAddr() || ''
+    ).toLowerCase();
+    const curItem = findClassifiedByAddrOrKey(activeSelection?.selectionKey || curAddr);
+
+    if (manageWlBtn) {
+      if (spamItems.length > 0) {
+        manageWlBtn.classList.add('has-spam');
+        manageWlBtn.innerHTML = `🛡️ Whitelist • ⚠️ ${spamItems.length} Spam`;
+        manageWlBtn.title = `${spamItems.length} unverified/spam ${spec.shortLabel} association(s) quarantined — click to review`;
+      } else {
+        manageWlBtn.classList.remove('has-spam');
+        manageWlBtn.innerHTML = whitelistedItems.length
+          ? `🛡️ Whitelist (${whitelistedItems.length})`
+          : `🛡️ Whitelist`;
+        manageWlBtn.title = `Manage Valid Whitelisted ${spec.shortLabel}s & Spam Quarantine on your Identity HFS`;
+      }
+    }
+
+    if (curStatusBtn) {
+      if (!curItem) {
+        curStatusBtn.style.display = 'none';
+      } else if (curItem.assocCategory === 'whitelisted') {
+        curStatusBtn.style.display = 'inline-flex';
+        curStatusBtn.className = 'slx-hfs-wl-pill valid';
+        curStatusBtn.textContent = curItem.isImplicitOwnEoa ? '✓ Your HFS' : '✓ Whitelisted';
+        curStatusBtn.title = curItem.isImplicitOwnEoa
+          ? 'Deployed by your keypair — click to seal or manage in Identity Whitelist'
+          : 'Validly whitelisted in your Identity HFS Register (State = 2)';
+      } else if (curItem.assocCategory === 'spam') {
+        curStatusBtn.style.display = 'inline-flex';
+        curStatusBtn.className = 'slx-hfs-wl-pill spam';
+        curStatusBtn.textContent =
+          curItem.assocStatus === HFS_ASSOC_STATUS.SPAM ? '🛑 Spam' : '⚠️ Unverified';
+        curStatusBtn.title = curItem.spamReason || 'Unwhitelisted association — click to review';
+      } else {
+        curStatusBtn.style.display = 'inline-flex';
+        curStatusBtn.className = 'slx-hfs-wl-pill';
+        curStatusBtn.textContent = '+ Whitelist';
+        curStatusBtn.title = `Pin & whitelist "${curItem.label}" in your Identity HFS smart contract`;
+      }
+    }
+
+    const qEl = document.getElementById(`slxHfsQuarantineBar_${typeName}`);
+    if (!curItem || curItem.assocCategory !== 'spam') {
+      if (qEl) qEl.style.display = 'none';
+      return;
+    }
+    const host = ensureQuarantineHost();
+    const isBlocked = curItem.assocStatus === HFS_ASSOC_STATUS.SPAM;
+    host.className = `slx-quarantine-banner${isBlocked ? ' blocked' : ''}`;
+    host.style.display = 'flex';
+    host.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:2px;max-width:760px;">
+        <div style="font-weight:800;font-size:0.82rem;">
+          ${
+            isBlocked
+              ? `🛑 Blocked Spam Subroutine (${escapeHtmlText(curItem.label)} • ${shortHex(curItem.primaryAddr)})`
+              : `⚠️ Unverified HFS Association Quarantined (${escapeHtmlText(curItem.label)} • ${shortHex(curItem.primaryAddr)})`
+          }
+        </div>
+        <div style="font-size:0.73rem;opacity:0.92;">
+          ${escapeHtmlText(
+            curItem.spamReason ||
+              'This subroutine attempted to associate with your Identity without being whitelisted.'
+          )}
+          ${
+            isBlocked
+              ? ' Outbound calls through your Identity HFS are blocked by the on-chain WASM firewall (Err -29).'
+              : ' Whitelist it on your Identity smart contract if valid, or Block as Spam to engage the on-chain firewall.'
+          }
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">
+        <button type="button" class="slx-mini-btn emerald" data-qbar-act="whitelist">
+          ✓ Whitelist as Valid (State → 2)
+        </button>
+        ${
+          !isBlocked
+            ? `<button type="button" class="slx-mini-btn rose" data-qbar-act="spam">🚫 Block as Spam (State → 3)</button>`
+            : ''
+        }
+        <button type="button" class="slx-mini-btn" data-qbar-act="open-spam-tab">
+          🛡️ Open Spam List (${spamItems.length})
+        </button>
+      </div>
+    `;
+    host.querySelector('[data-qbar-act="whitelist"]')?.addEventListener('click', async (ev) => {
+      const b = ev.currentTarget;
+      b.disabled = true;
+      b.textContent = '⏳ Whitelisting…';
+      try {
+        await wallet.setHfsAssociation({
+          hfsAddr: curItem.primaryAddr,
+          typeName,
+          status: HFS_ASSOC_STATUS.WHITELISTED,
+          label: curItem.label || '',
+          rpcUrl: rpcUrlFn(),
+        });
+        await refreshList({ selectKey: curItem.selectionKey });
+      } catch (_) {
+        b.disabled = false;
+        b.textContent = '✓ Whitelist as Valid (State → 2)';
+      }
+    });
+    host.querySelector('[data-qbar-act="spam"]')?.addEventListener('click', async (ev) => {
+      const b = ev.currentTarget;
+      b.disabled = true;
+      b.textContent = '⏳ Blocking…';
+      try {
+        await wallet.setHfsAssociation({
+          hfsAddr: curItem.primaryAddr,
+          typeName,
+          status: HFS_ASSOC_STATUS.SPAM,
+          label: curItem.label || '',
+          rpcUrl: rpcUrlFn(),
+        });
+        await refreshList();
+      } catch (_) {
+        b.disabled = false;
+        b.textContent = '🚫 Block as Spam (State → 3)';
+      }
+    });
+    host.querySelector('[data-qbar-act="open-spam-tab"]')?.addEventListener('click', () => {
+      openWhitelistModal('spam');
+    });
+  }
+
+  function renderSelectOptions(chosen) {
+    const renderOpt = (it, prefix = '') => {
+      const sel = chosen && it.selectionKey === chosen.selectionKey ? 'selected' : '';
+      const byStr = it.creatorTag ? ` · by ${it.creatorTag}` : '';
+      return `<option value="${escapeHtmlText(it.selectionKey)}" ${sel}>${prefix}${escapeHtmlText(it.label)} (${shortHex(it.primaryAddr, 6, 4)})${escapeHtmlText(byStr)}</option>`;
+    };
+
+    const groups = [];
+    if (chosen && chosen.assocCategory === 'spam') {
+      groups.push(
+        `<optgroup label="⚠️ Quarantined / Spam (Inspecting)">${renderOpt(chosen, '⚠️ ')}</optgroup>`
+      );
+    }
+    if (whitelistedItems.length > 0) {
+      groups.push(
+        `<optgroup label="✅ Valid Whitelisted for Your Identity (${whitelistedItems.length})">${whitelistedItems
+          .map((it) => renderOpt(it, '✓ '))
+          .join('')}</optgroup>`
+      );
+    }
+    if (publicItems.length > 0) {
+      groups.push(
+        `<optgroup label="🌐 Public Subnet 1 Directory (${publicItems.length})">${publicItems
+          .map((it) => renderOpt(it, ''))
+          .join('')}</optgroup>`
+      );
+    }
+    if (!groups.length) {
+      const cur = getCurrentPrimaryAddr();
+      selectEl.innerHTML = `<option value="">${cur ? `${spec.shortLabel} · ${shortHex(cur)}` : `No valid ${spec.shortLabel}s`}</option>`;
+      return;
+    }
+    selectEl.innerHTML = groups.join('');
+  }
 
   async function refreshList({ selectKey = null, triggerCallbackIfUrlMatched = false } = {}) {
     try {
       const rpcUrl = rpcUrlFn();
-      instances = await fetchRegisteredHfsByType(typeName, { rpcUrl });
-      if (!instances.length) {
+      const rawInstances = await fetchRegisteredHfsByType(typeName, { rpcUrl });
+      instances = rawInstances;
+
+      const idRec = wallet?.getIdentityRecord?.() || null;
+      const classified = await classifyHfsInstancesForIdentity(rawInstances, {
+        typeName,
+        identityAddr: idRec?.identityAddr || '',
+        myEoa: wallet?.keypair?.address || '',
+        rpcUrl,
+      });
+      whitelistedItems = classified.whitelistedItems;
+      publicItems = classified.publicItems;
+      spamItems = classified.spamItems;
+
+      const validPool = [...whitelistedItems, ...publicItems];
+      if (!validPool.length && !spamItems.length) {
         const cur = getCurrentPrimaryAddr();
         selectEl.innerHTML = `<option value="">${cur ? `${spec.shortLabel} · ${shortHex(cur)}` : `No ${spec.shortLabel}s registered`}</option>`;
+        renderStatusControlsAndQuarantine();
         return instances;
       }
 
@@ -825,12 +1264,10 @@ export function mountHfsRegistryDropdown({
 
       let chosen = null;
       if (selectKey) {
-        chosen = instances.find((it) => it.selectionKey === selectKey || it.primaryAddr === selectKey);
+        chosen = findClassifiedByAddrOrKey(selectKey);
       }
       if (!chosen && !initialUrlApplied && urlAddr) {
-        chosen = instances.find(
-          (it) => it.primaryAddr === urlAddr || it.selectionKey.startsWith(urlAddr)
-        );
+        chosen = findClassifiedByAddrOrKey(urlAddr);
         if (chosen) {
           initialUrlApplied = true;
           if (triggerCallbackIfUrlMatched && chosen.primaryAddr !== curAddr && onSelectInstance) {
@@ -839,34 +1276,310 @@ export function mountHfsRegistryDropdown({
         }
       }
       if (!chosen && curAddr) {
-        chosen = instances.find((it) => it.primaryAddr === curAddr);
+        const curMatch = findClassifiedByAddrOrKey(curAddr);
+        // Never auto-default to a quarantined spam item unless explicitly requested via URL/selectKey!
+        if (curMatch && (curMatch.assocCategory !== 'spam' || urlAddr === curAddr)) {
+          chosen = curMatch;
+        }
       }
-      if (!chosen) chosen = instances[0];
+      if (!chosen) {
+        chosen = whitelistedItems[0] || publicItems[0] || spamItems[0] || null;
+      }
 
-      selectEl.innerHTML = instances
-        .map((it) => {
-          const sel = chosen && it.selectionKey === chosen.selectionKey ? 'selected' : '';
-          const byStr = it.creatorTag ? ` · by ${it.creatorTag}` : '';
-          return `<option value="${escapeHtmlText(it.selectionKey)}" ${sel}>${escapeHtmlText(it.label)} (${shortHex(it.primaryAddr, 6, 4)})${escapeHtmlText(byStr)}</option>`;
-        })
-        .join('');
+      activeSelection = chosen;
+      renderSelectOptions(chosen);
+      renderStatusControlsAndQuarantine();
+      if (document.getElementById('slxHfsWhitelistModalBackdrop')?.classList.contains('is-open')) {
+        renderWhitelistModal();
+      }
     } catch (_) {}
     return instances;
   }
 
   selectEl?.addEventListener('change', async () => {
     const key = selectEl.value;
-    const picked = instances.find((it) => it.selectionKey === key);
+    const picked = findClassifiedByAddrOrKey(key);
     if (!picked) return;
+    activeSelection = picked;
     setUrlHfsParam(picked.primaryAddr);
+    renderStatusControlsAndQuarantine();
     if (onSelectInstance) {
       await onSelectInstance(picked);
     }
   });
 
+  curStatusBtn?.addEventListener('click', async () => {
+    const curAddr = String(
+      activeSelection?.primaryAddr || getCurrentPrimaryAddr() || ''
+    ).toLowerCase();
+    const curItem = findClassifiedByAddrOrKey(activeSelection?.selectionKey || curAddr);
+    if (!curItem) return;
+    if (curItem.assocCategory === 'public' || curItem.isImplicitOwnEoa) {
+      const origTxt = curStatusBtn.textContent;
+      curStatusBtn.disabled = true;
+      curStatusBtn.textContent = '⏳ Whitelisting…';
+      try {
+        await wallet.setHfsAssociation({
+          hfsAddr: curItem.primaryAddr,
+          typeName,
+          status: HFS_ASSOC_STATUS.WHITELISTED,
+          label: curItem.label || '',
+          rpcUrl: rpcUrlFn(),
+        });
+        await refreshList({ selectKey: curItem.selectionKey });
+      } catch (_) {
+        curStatusBtn.textContent = origTxt;
+      } finally {
+        curStatusBtn.disabled = false;
+      }
+    } else {
+      openWhitelistModal(curItem.assocCategory === 'spam' ? 'spam' : 'valid');
+    }
+  });
+
+  manageWlBtn?.addEventListener('click', () => {
+    openWhitelistModal(spamItems.length > 0 ? 'spam' : 'valid');
+  });
+
   refreshBtn?.addEventListener('click', () => {
     refreshList();
   });
+
+  function renderWhitelistModal() {
+    const backdrop = document.getElementById('slxHfsWhitelistModalBackdrop');
+    if (!backdrop || !backdrop.classList.contains('is-open')) return;
+    const idRec = wallet?.getIdentityRecord?.() || null;
+
+    backdrop.innerHTML = `
+      <div class="slx-modal-card" style="width:min(680px,96vw);" onclick="event.stopPropagation()">
+        <div class="slx-modal-header">
+          <div>
+            <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">
+              <strong style="font-size:0.96rem;color:#f8fafc;">🛡️ ${spec.icon} ${escapeHtmlText(spec.shortLabel)} — Identity Whitelist &amp; Spam Register</strong>
+              <span style="padding:0.14rem 0.48rem;border-radius:999px;background:rgba(14,165,233,0.18);border:1px solid rgba(56,189,248,0.5);color:#7dd3fc;font-family:monospace;font-size:0.66rem;font-weight:700;">On-Chain Identity HFS</span>
+            </div>
+            <div style="font-size:0.71rem;color:#94a3b8;margin-top:2px;">
+              Subroutines are free to reference any Identity on-chain, while your <code>Identity</code> smart contract governs which associations are <strong>Valid (State = 2)</strong> vs <strong>Spam (State = 1 / 3)</strong>.
+            </div>
+          </div>
+          <button type="button" class="slx-mini-btn" id="slxWlModalClose">✕</button>
+        </div>
+
+        <div class="slx-modal-tabs">
+          <button type="button" class="slx-tab-btn ${wlModalTab === 'valid' ? 'active' : ''}" data-wl-tab="valid">
+            ✅ Valid Subroutines (${whitelistedItems.length})
+          </button>
+          <button type="button" class="slx-tab-btn ${wlModalTab === 'spam' ? 'active' : ''}" data-wl-tab="spam">
+            ⚠️ Spam &amp; Unverified (${spamItems.length})
+          </button>
+        </div>
+
+        <div class="slx-modal-body">
+          ${
+            wlModalFeedback
+              ? `<div style="padding:0.46rem 0.68rem;border-radius:0.5rem;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.45);color:#bae6fd;font-family:monospace;font-size:0.72rem;">${escapeHtmlText(wlModalFeedback)}</div>`
+              : ''
+          }
+
+          ${
+            !idRec
+              ? `<div class="slx-panel-box"><div style="color:#fde68a;font-size:0.75rem;">Deploy your Unified Identity first to persist on-chain whitelist &amp; spam states.</div></div>`
+              : ''
+          }
+
+          ${
+            wlModalTab === 'valid'
+              ? `
+            <div class="slx-panel-box">
+              <strong style="color:#6ee7b7;font-size:0.81rem;">✅ Validly Associated ${escapeHtmlText(spec.shortLabel)}s (${whitelistedItems.length})</strong>
+              <div style="display:flex;flex-direction:column;gap:0.45rem;max-height:280px;overflow-y:auto;">
+                ${
+                  whitelistedItems.length
+                    ? whitelistedItems
+                        .map(
+                          (it) => `
+                        <div class="slx-hfs-row valid">
+                          <div style="display:flex;flex-direction:column;gap:2px;">
+                            <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                              <strong>${spec.icon} ${escapeHtmlText(it.label)}</strong>
+                              <span style="font-family:monospace;font-size:0.66rem;color:#6ee7b7;">
+                                ${escapeHtmlText(it.assocBadge || 'Whitelisted (State 2)')}
+                              </span>
+                            </div>
+                            <div style="font-family:monospace;font-size:0.69rem;color:#94a3b8;">
+                              <code>${it.primaryAddr}</code>${it.creatorTag ? ` • by ${escapeHtmlText(it.creatorTag)}` : ''}
+                            </div>
+                          </div>
+                          <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                            <button type="button" class="slx-mini-btn sky" data-wl-open="${escapeHtmlText(it.selectionKey)}">Open</button>
+                            ${
+                              it.isImplicitOwnEoa
+                                ? `<button type="button" class="slx-mini-btn emerald" data-wl-status="2" data-wl-addr="${it.primaryAddr}" data-wl-lbl="${escapeHtmlText(it.label)}">Seal State 2</button>`
+                                : ''
+                            }
+                            <button type="button" class="slx-mini-btn rose" data-wl-status="3" data-wl-addr="${it.primaryAddr}" data-wl-lbl="${escapeHtmlText(it.label)}">🚫 Move to Spam</button>
+                          </div>
+                        </div>
+                      `
+                        )
+                        .join('')
+                    : `<div style="color:#94a3b8;font-size:0.74rem;">No ${escapeHtmlText(spec.shortLabel)}s whitelisted yet. Deploy a new instance or click <strong>+ Whitelist</strong> on any public subroutine.</div>`
+                }
+              </div>
+            </div>
+
+            <div class="slx-panel-box">
+              <strong style="color:#7dd3fc;font-size:0.79rem;">➕ Whitelist ${escapeHtmlText(spec.shortLabel)} by Contract Address</strong>
+              <div style="display:flex;gap:0.4rem;flex-wrap:wrap;">
+                <input id="slxTypeWlAddr" type="text" class="slx-input-field" placeholder="Paste 0x… ${escapeHtmlText(spec.shortLabel)} address" />
+                <input id="slxTypeWlLabel" type="text" maxlength="48" class="slx-input-field" placeholder="Display label (optional)" style="max-width:190px;" />
+                <button type="button" class="slx-mini-btn emerald" id="slxBtnTypeWlAdd">✓ Whitelist</button>
+              </div>
+            </div>
+          `
+              : `
+            <div class="slx-panel-box" style="border-color:rgba(245,158,11,0.48);">
+              <strong style="color:#fcd34d;font-size:0.81rem;">⚠️ Spam &amp; Unverified ${escapeHtmlText(spec.shortLabel)} Associations (${spamItems.length})</strong>
+              <div style="font-size:0.71rem;color:#cbd5e1;">
+                Lists other HFS subroutines that attempted to associate with your Identity without being whitelisted (unsolicited Board/Cap-Table/Token assignments, <code>State = 1 Pending</code> invites, and <code>State = 3 Blocked Spam</code>).
+              </div>
+              <div style="display:flex;flex-direction:column;gap:0.45rem;max-height:310px;overflow-y:auto;">
+                ${
+                  spamItems.length
+                    ? spamItems
+                        .map((it) => {
+                          const isBlocked = it.assocStatus === HFS_ASSOC_STATUS.SPAM;
+                          return `
+                            <div class="slx-hfs-row ${isBlocked ? 'blocked' : 'spam'}">
+                              <div style="display:flex;flex-direction:column;gap:3px;max-width:410px;">
+                                <div style="display:flex;align-items:center;gap:0.4rem;flex-wrap:wrap;">
+                                  <strong>${isBlocked ? '🛑' : '⚠️'} ${escapeHtmlText(it.label)}</strong>
+                                  <span style="font-family:monospace;font-size:0.66rem;color:${isBlocked ? '#fda4af' : '#fde68a'};">
+                                    ${escapeHtmlText(HFS_ASSOC_STATUS_LABELS[it.assocStatus] || 'Unwhitelisted')}
+                                  </span>
+                                </div>
+                                <div style="font-size:0.71rem;color:#fde68a;">
+                                  ${escapeHtmlText(it.spamReason || 'Attempted association without whitelist')}
+                                </div>
+                                <div style="font-family:monospace;font-size:0.68rem;color:#94a3b8;">
+                                  <code>${it.primaryAddr}</code>${it.creatorTag ? ` • by ${escapeHtmlText(it.creatorTag)}` : ''}
+                                </div>
+                              </div>
+                              <div style="display:flex;gap:0.35rem;flex-wrap:wrap;">
+                                <button type="button" class="slx-mini-btn emerald" data-wl-status="2" data-wl-addr="${it.primaryAddr}" data-wl-lbl="${escapeHtmlText(it.label)}">✓ Whitelist</button>
+                                ${
+                                  !isBlocked
+                                    ? `<button type="button" class="slx-mini-btn rose" data-wl-status="3" data-wl-addr="${it.primaryAddr}" data-wl-lbl="${escapeHtmlText(it.label)}">🚫 Block Spam</button>`
+                                    : ''
+                                }
+                                <button type="button" class="slx-mini-btn" data-wl-open="${escapeHtmlText(it.selectionKey)}">Inspect</button>
+                              </div>
+                            </div>
+                          `;
+                        })
+                        .join('')
+                    : `<div style="color:#94a3b8;font-size:0.74rem;">✓ Zero spam or unverified ${escapeHtmlText(spec.shortLabel)} subroutines have attempted to associate with your Identity.</div>`
+                }
+              </div>
+            </div>
+          `
+          }
+        </div>
+      </div>
+    `;
+
+    backdrop.querySelector('#slxWlModalClose')?.addEventListener('click', () => {
+      backdrop.classList.remove('is-open');
+    });
+    backdrop.querySelectorAll('[data-wl-tab]').forEach((b) => {
+      b.addEventListener('click', () => {
+        wlModalTab = b.getAttribute('data-wl-tab');
+        wlModalFeedback = '';
+        renderWhitelistModal();
+      });
+    });
+    backdrop.querySelectorAll('[data-wl-open]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const key = b.getAttribute('data-wl-open');
+        const picked = findClassifiedByAddrOrKey(key);
+        backdrop.classList.remove('is-open');
+        if (!picked) return;
+        activeSelection = picked;
+        setUrlHfsParam(picked.primaryAddr);
+        renderSelectOptions(picked);
+        renderStatusControlsAndQuarantine();
+        if (onSelectInstance) {
+          await onSelectInstance(picked);
+        }
+      });
+    });
+    backdrop.querySelectorAll('[data-wl-status]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const nextSt = Number(b.getAttribute('data-wl-status'));
+        const addr = b.getAttribute('data-wl-addr');
+        const lbl = b.getAttribute('data-wl-lbl') || '';
+        b.disabled = true;
+        b.textContent = '⏳…';
+        try {
+          await wallet.setHfsAssociation({
+            hfsAddr: addr,
+            typeName,
+            status: nextSt,
+            label: lbl,
+            rpcUrl: rpcUrlFn(),
+          });
+          wlModalFeedback =
+            nextSt === HFS_ASSOC_STATUS.WHITELISTED
+              ? `✓ Whitelisted ${shortHex(addr)} on your Identity HFS (State = 2)!`
+              : `🛑 Blocked ${shortHex(addr)} as Spam on your Identity HFS (State = 3)!`;
+          await refreshList(
+            nextSt === HFS_ASSOC_STATUS.WHITELISTED ? { selectKey: addr } : {}
+          );
+          renderWhitelistModal();
+        } catch (err) {
+          wlModalFeedback = `⚠ ${err.message || err}`;
+          renderWhitelistModal();
+        }
+      });
+    });
+    backdrop.querySelector('#slxBtnTypeWlAdd')?.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      const addr = String(backdrop.querySelector('#slxTypeWlAddr')?.value || '').trim();
+      const lbl = String(backdrop.querySelector('#slxTypeWlLabel')?.value || '').trim();
+      btn.disabled = true;
+      btn.textContent = '⏳…';
+      try {
+        await wallet.setHfsAssociation({
+          hfsAddr: addr,
+          typeName,
+          status: HFS_ASSOC_STATUS.WHITELISTED,
+          label: lbl,
+          rpcUrl: rpcUrlFn(),
+        });
+        wlModalFeedback = `✓ Whitelisted ${shortHex(addr)} on your Identity HFS!`;
+        await refreshList({ selectKey: addr });
+        renderWhitelistModal();
+      } catch (err) {
+        wlModalFeedback = `⚠ ${err.message || err}`;
+        renderWhitelistModal();
+      }
+    });
+  }
+
+  function openWhitelistModal(initialTab = 'valid') {
+    wlModalTab = initialTab;
+    wlModalFeedback = '';
+    let backdrop = document.getElementById('slxHfsWhitelistModalBackdrop');
+    if (!backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'slxHfsWhitelistModalBackdrop';
+      backdrop.className = 'slx-modal-backdrop';
+      backdrop.onclick = () => backdrop.classList.remove('is-open');
+      document.body.appendChild(backdrop);
+    }
+    backdrop.classList.add('is-open');
+    renderWhitelistModal();
+  }
 
   deployBtn?.addEventListener('click', () => {
     if (onCustomDeployClick) {
@@ -976,18 +1689,43 @@ export function mountHfsRegistryDropdown({
     });
   }
 
+  let lastKnownEoa = wallet?.keypair?.address?.toLowerCase() || '';
+  let lastKnownId = wallet?.getIdentityRecord?.()?.identityAddr?.toLowerCase() || '';
+  wallet?.onChange?.(() => {
+    const nextEoa = wallet?.keypair?.address?.toLowerCase() || '';
+    const nextId = wallet?.getIdentityRecord?.()?.identityAddr?.toLowerCase() || '';
+    if (nextEoa !== lastKnownEoa || nextId !== lastKnownId) {
+      lastKnownEoa = nextEoa;
+      lastKnownId = nextId;
+      refreshList();
+    }
+  });
+  onIdentityHfsAssociationsChanged(() => {
+    refreshList();
+  });
+
   refreshList({ triggerCallbackIfUrlMatched: true });
 
   function setSelectedAddr(addrHex) {
     if (!selectEl || !addrHex) return;
     const low = String(addrHex).toLowerCase();
-    const matched = instances.find((it) => it.primaryAddr === low || it.selectionKey === low);
+    const matched = findClassifiedByAddrOrKey(low);
     if (matched) {
-      selectEl.value = matched.selectionKey;
+      activeSelection = matched;
+      renderSelectOptions(matched);
+      renderStatusControlsAndQuarantine();
     }
   }
 
-  return { refreshList, getInstances: () => instances, openDeployModal, setSelectedAddr };
+  return {
+    refreshList,
+    getInstances: () => instances,
+    getWhitelistedInstances: () => whitelistedItems,
+    getSpamInstances: () => spamItems,
+    openDeployModal,
+    openWhitelistModal,
+    setSelectedAddr,
+  };
 }
 
 function fmtInt(n) {

@@ -14,6 +14,7 @@ import {
   bytesToHex,
   utf8ToBytes,
   bytesToUtf8,
+  concatBytes,
   selectorBytes,
   computeAddress,
   computeCreateAddress,
@@ -23,9 +24,11 @@ import {
 } from './crypto.js';
 import {
   ZERO_ADDR,
+  ZERO_BYTES32,
   shortHex,
   shortAddr,
   truncAddr4,
+  u16BEBytes,
   readU16BE,
   readU32BE,
   readU64BE,
@@ -590,6 +593,195 @@ export class SlxWalletManager {
     this._emit();
     return entry;
   }
+
+  async fetchHfsAssociations({ rpcUrl = getDefaultNodeWsUrl(), identityAddr = null } = {}) {
+    const idAddr = (identityAddr || this.getIdentityRecord()?.identityAddr || '').toLowerCase();
+    if (!idAddr) {
+      return { version: 2, items: [], byAddr: new Map() };
+    }
+    return fetchIdentityHfsAssociations(rpcUrl, idAddr);
+  }
+
+  async setHfsAssociation({
+    hfsAddr,
+    typeName = '',
+    status = 2,
+    label = '',
+    rpcUrl = getDefaultNodeWsUrl(),
+  }) {
+    const cleanAddr = String(hfsAddr || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(cleanAddr) || cleanAddr === ZERO_ADDR) {
+      throw new Error('Enter a valid 20-byte HFS contract address (0x…).');
+    }
+    const stNum = Number(status);
+    if (![1, 2, 3].includes(stNum)) {
+      throw new Error('Association status must be 1 (Pending), 2 (Whitelisted), or 3 (Spam).');
+    }
+    const idRec = await this.ensureIdentityWithPrompt({ rpcUrl, appName: 'Identity HFS Whitelist' });
+    const myId = idRec.identityAddr.toLowerCase();
+    const myEoa = this.keypair.address;
+    const myPriv = this.keypair.privateKey;
+    const typeIdHex = typeName ? encodeHfsTypeId(typeName) : ZERO_BYTES32;
+    const safeLabel = String(label || '').slice(0, 64);
+
+    const { version, extAddr } = await resolveIdentityWhitelistTarget(rpcUrl, myId);
+    const nonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+
+    let dataHex;
+    let extraTargets;
+    if (version >= 2) {
+      dataHex = IdentityHfsWhitelistAbi.setHfsAssociation(cleanAddr, typeIdHex, stNum, safeLabel);
+      extraTargets = [myId, cleanAddr];
+    } else {
+      if (!extAddr) {
+        throw new Error('Missing identityHfsExtension in subnet1-deployments.json for v1 Identity');
+      }
+      const inner = IdentityHfsWhitelistAbi.setDelegatedHfsAssociation(
+        cleanAddr,
+        typeIdHex,
+        stNum,
+        safeLabel
+      );
+      dataHex = encodeAbi('execute(address,bytes)', [
+        ['address', extAddr],
+        ['bytes', hexToBytes(inner)],
+      ]);
+      extraTargets = [myId, extAddr, cleanAddr];
+    }
+
+    const signed = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce,
+      to: myId,
+      data: dataHex,
+      gasLimit: 4_800_000n,
+      extraTargets,
+    });
+    const txHash = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+    const [rcpt] = await waitReceiptsChecked(rpcUrl, [txHash]);
+    _invalidateIdentityAssocCache(myId);
+    this.recordExternalRpcTx({
+      txHash,
+      rawTx: signed.raw,
+      from: myEoa,
+      to: myId,
+      contractLabel: 'Identity',
+      fnLabel: `setHfsAssociation(${shortHex(cleanAddr)}, state=${stNum})`,
+      dataHex,
+      blockNumber: Number(BigInt(rcpt.blockNumber || 0)),
+      nonce: Number(nonce),
+    });
+    return rcpt;
+  }
+
+  async setHfsAssociationBatch(entries = [], { rpcUrl = getDefaultNodeWsUrl() } = {}) {
+    const valid = (entries || []).filter(
+      (e) => e && /^0x[0-9a-f]{40}$/i.test(String(e.hfsAddr || '')) && String(e.hfsAddr).toLowerCase() !== ZERO_ADDR
+    );
+    if (!valid.length) return null;
+    const idRec = await this.resolveVerifiedIdentity(rpcUrl);
+    if (!idRec?.identityAddr) return null;
+    const myId = idRec.identityAddr.toLowerCase();
+    const myEoa = this.keypair.address;
+    const myPriv = this.keypair.privateKey;
+
+    const { version, extAddr } = await resolveIdentityWhitelistTarget(rpcUrl, myId);
+    const packed = packHfsAssociationBatch(valid);
+    const nonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+    const hfsTargets = valid.map((e) => e.hfsAddr.toLowerCase());
+
+    let dataHex;
+    let extraTargets;
+    if (version >= 2) {
+      dataHex = IdentityHfsWhitelistAbi.setHfsAssociationBatch(packed);
+      extraTargets = Array.from(new Set([myId, ...hfsTargets]));
+    } else {
+      if (!extAddr) return null;
+      const inner = IdentityHfsWhitelistAbi.setDelegatedHfsAssociationBatch(packed);
+      dataHex = encodeAbi('execute(address,bytes)', [
+        ['address', extAddr],
+        ['bytes', hexToBytes(inner)],
+      ]);
+      extraTargets = Array.from(new Set([myId, extAddr, ...hfsTargets]));
+    }
+
+    const signed = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce,
+      to: myId,
+      data: dataHex,
+      gasLimit: 5_200_000n,
+      extraTargets,
+    });
+    const txHash = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+    const [rcpt] = await waitReceiptsChecked(rpcUrl, [txHash]);
+    _invalidateIdentityAssocCache(myId);
+    this.recordExternalRpcTx({
+      txHash,
+      rawTx: signed.raw,
+      from: myEoa,
+      to: myId,
+      contractLabel: 'Identity',
+      fnLabel: `setHfsAssociationBatch(${valid.length})`,
+      dataHex,
+      blockNumber: Number(BigInt(rcpt.blockNumber || 0)),
+      nonce: Number(nonce),
+    });
+    return rcpt;
+  }
+
+  async notifyExternalHfsAssociation({
+    targetIdentityAddr,
+    hfsAddr,
+    typeName = '',
+    label = '',
+    rpcUrl = getDefaultNodeWsUrl(),
+  }) {
+    const targetId = String(targetIdentityAddr || '').trim().toLowerCase();
+    const cleanHfs = String(hfsAddr || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(targetId) || !/^0x[0-9a-f]{40}$/.test(cleanHfs)) return null;
+
+    const myEoa = this.keypair.address;
+    const myPriv = this.keypair.privateKey;
+    const typeIdHex = typeName ? encodeHfsTypeId(typeName) : ZERO_BYTES32;
+    const safeLabel = String(label || '').slice(0, 64);
+
+    const { version, extAddr } = await resolveIdentityWhitelistTarget(rpcUrl, targetId);
+    const nonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+
+    let toAddr;
+    let dataHex;
+    let extraTargets;
+    if (version >= 2) {
+      toAddr = targetId;
+      dataHex = IdentityHfsWhitelistAbi.notifyHfsAssociation(cleanHfs, typeIdHex, safeLabel);
+      extraTargets = [targetId, cleanHfs];
+    } else if (extAddr) {
+      toAddr = extAddr;
+      dataHex = IdentityHfsWhitelistAbi.notifyDelegatedHfsAssociation(
+        targetId,
+        cleanHfs,
+        typeIdHex,
+        safeLabel
+      );
+      extraTargets = [extAddr, targetId, cleanHfs];
+    } else {
+      return null;
+    }
+
+    const signed = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce,
+      to: toAddr,
+      data: dataHex,
+      gasLimit: 4_200_000n,
+      extraTargets,
+    });
+    const txHash = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+    const [rcpt] = await waitReceiptsChecked(rpcUrl, [txHash]);
+    _invalidateIdentityAssocCache(targetId);
+    return rcpt;
+  }
 }
 
 const STORAGE_KEY_SIGNED_TX_PROOFS = 'slx_signed_tx_proof_cache_v1';
@@ -905,6 +1097,15 @@ export async function registerHfsInstanceOnChain({
     blockNumber: Number(BigInt(rcpt.blockNumber || 0)),
     nonce: Number(nonce),
   });
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: primaryAddr,
+      typeName,
+      status: 2,
+      label,
+      rpcUrl,
+    })
+    .catch(() => {});
   return rcpt;
 }
 
@@ -1179,4 +1380,596 @@ export function isTerminalAuthStatus(
   if (s === 3) return true;
   if (s === 4 && Number(pendingClaims || 0) === 0) return true;
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Identity Smart-Contract HFS Subroutine Whitelist & Spam Register (v2 + v1 Extension)
+// ---------------------------------------------------------------------------
+
+export const HFS_ASSOC_STATUS = {
+  UNLISTED: 0,
+  PENDING: 1,
+  WHITELISTED: 2,
+  SPAM: 3,
+};
+
+export const HFS_ASSOC_STATUS_LABELS = {
+  0: 'Unlisted',
+  1: 'Pending / Unverified',
+  2: 'Whitelisted (Valid)',
+  3: 'Spam / Blocked',
+};
+
+export function decodeHfsTypeIdHex(hex32) {
+  if (!hex32 || hex32 === '0x') return '';
+  const b = hexToBytes(hex32);
+  let end = b.length;
+  while (end > 0 && b[end - 1] === 0) end--;
+  return bytesToUtf8(b.slice(0, end));
+}
+
+export function packHfsAssociationBatch(entries = []) {
+  const safe = entries.slice(0, 32);
+  const chunks = [u16BEBytes(safe.length)];
+  for (const e of safe) {
+    const addrB = hexToBytes(e.hfsAddr).slice(-20);
+    const typeHex = e.typeIdHex || (e.typeName ? encodeHfsTypeId(e.typeName) : ZERO_BYTES32);
+    const typeB = hexToBytes(typeHex).slice(0, 32);
+    const statusB = new Uint8Array([Number(e.status ?? HFS_ASSOC_STATUS.WHITELISTED) & 0xff]);
+    const lblB = utf8ToBytes(String(e.label || '')).slice(0, 64);
+    const lblLenB = new Uint8Array([lblB.length & 0xff]);
+    chunks.push(addrB, typeB, statusB, lblLenB, lblB);
+  }
+  return concatBytes(...chunks);
+}
+
+export const IdentityHfsWhitelistAbi = {
+  identityVersion() {
+    return encodeAbi('identityVersion()');
+  },
+  setHfsAssociation(hfsAddr, typeIdHex, status, label = '') {
+    return encodeAbi('setHfsAssociation(address,bytes32,uint64,string)', [
+      ['address', hfsAddr],
+      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['uint64', status],
+      ['string', String(label || '').slice(0, 64)],
+    ]);
+  },
+  setHfsAssociationBatch(packedBytes) {
+    return encodeAbi('setHfsAssociationBatch(bytes)', [['bytes', packedBytes]]);
+  },
+  notifyHfsAssociation(hfsAddr, typeIdHex, label = '') {
+    return encodeAbi('notifyHfsAssociation(address,bytes32,string)', [
+      ['address', hfsAddr],
+      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['string', String(label || '').slice(0, 64)],
+    ]);
+  },
+  getHfsAssociationStatus(hfsAddr) {
+    return encodeAbi('getHfsAssociationStatus(address)', [['address', hfsAddr]]);
+  },
+  isHfsWhitelisted(hfsAddr) {
+    return encodeAbi('isHfsWhitelisted(address)', [['address', hfsAddr]]);
+  },
+  getHfsAssociationsSlice(offset = 0, limit = 64) {
+    return encodeAbi('getHfsAssociationsSlice(uint64,uint64)', [
+      ['uint64', offset],
+      ['uint64', limit],
+    ]);
+  },
+  setDelegatedHfsAssociation(hfsAddr, typeIdHex, status, label = '') {
+    return encodeAbi('setDelegatedHfsAssociation(address,bytes32,uint64,string)', [
+      ['address', hfsAddr],
+      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['uint64', status],
+      ['string', String(label || '').slice(0, 64)],
+    ]);
+  },
+  setDelegatedHfsAssociationBatch(packedBytes) {
+    return encodeAbi('setDelegatedHfsAssociationBatch(bytes)', [['bytes', packedBytes]]);
+  },
+  notifyDelegatedHfsAssociation(subjectIdentity, hfsAddr, typeIdHex, label = '') {
+    return encodeAbi('notifyDelegatedHfsAssociation(address,address,bytes32,string)', [
+      ['address', subjectIdentity],
+      ['address', hfsAddr],
+      ['bytes32', typeIdHex || ZERO_BYTES32],
+      ['string', String(label || '').slice(0, 64)],
+    ]);
+  },
+  getDelegatedHfsAssociationsSlice(subjectIdentity, offset = 0, limit = 64) {
+    return encodeAbi('getDelegatedHfsAssociationsSlice(address,uint64,uint64)', [
+      ['address', subjectIdentity],
+      ['uint64', offset],
+      ['uint64', limit],
+    ]);
+  },
+};
+
+export function decodeIdentityHfsSliceHex(hex) {
+  if (!hex || hex === '0x') return { totalCount: 0, items: [] };
+  const b = hexToBytes(hex);
+  if (b.length < 16) return { totalCount: 0, items: [] };
+
+  const totalCount = readU64BE(b, 0);
+  const returnedCount = readU64BE(b, 8);
+  let pos = 16;
+  const items = [];
+
+  for (let i = 0; i < returnedCount && pos + 8 + 83 <= b.length; i++) {
+    const entryIdx = readU64BE(b, pos);
+    pos += 8;
+    const status = b[pos];
+    const hfsAddr = bytesToHex(b.slice(pos + 1, pos + 21)).toLowerCase();
+    const typeIdHex = bytesToHex(b.slice(pos + 21, pos + 53)).toLowerCase();
+    const typeName = decodeHfsTypeIdHex(typeIdHex);
+    const updatedBlock = readU64BE(b, pos + 53);
+    const actor = bytesToHex(b.slice(pos + 61, pos + 81)).toLowerCase();
+    const labelLen = readU16BE(b, pos + 81);
+    const recTotal = 83 + labelLen;
+    if (pos + recTotal > b.length) break;
+    const label = bytesToUtf8(b.slice(pos + 83, pos + recTotal));
+    pos += recTotal;
+
+    items.push({
+      entryIdx,
+      status,
+      statusLabel: HFS_ASSOC_STATUS_LABELS[status] || 'Unlisted',
+      hfsAddr,
+      typeIdHex,
+      typeName,
+      updatedBlock,
+      actor,
+      label,
+    });
+  }
+
+  return { totalCount, items };
+}
+
+const _identityAbiVerCache = new Map();
+const _identityAssocMemCache = new Map();
+const _identityAssocListeners = new Set();
+
+export function onIdentityHfsAssociationsChanged(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _identityAssocListeners.add(fn);
+  return () => _identityAssocListeners.delete(fn);
+}
+
+function _invalidateIdentityAssocCache(identityAddr) {
+  if (identityAddr) {
+    _identityAssocMemCache.delete(String(identityAddr).toLowerCase());
+  } else {
+    _identityAssocMemCache.clear();
+  }
+  for (const fn of _identityAssocListeners) {
+    try {
+      fn(identityAddr ? String(identityAddr).toLowerCase() : '');
+    } catch (_) {}
+  }
+}
+
+export const SUBNET1_IDENTITY_HFS_EXTENSION_ADDRESS =
+  '0x8295c9fbf3ae208ecf54cc21ced52ecaee81f235';
+
+export async function resolveIdentityWhitelistTarget(rpcUrl, identityAddr, { manifest = null } = {}) {
+  const low = String(identityAddr || '').toLowerCase();
+  const resolvedManifest = manifest || (await SlxHfsCache.hydrateWithManifest()).manifest;
+  const extAddr = String(
+    resolvedManifest?.identityHfsExtension || SUBNET1_IDENTITY_HFS_EXTENSION_ADDRESS
+  ).toLowerCase();
+  if (!low || low === ZERO_ADDR) {
+    return { version: 2, extAddr };
+  }
+  if (_identityAbiVerCache.has(low)) {
+    return { version: _identityAbiVerCache.get(low), extAddr };
+  }
+  let ver = 1;
+  try {
+    const raw = await slxNodeRpc(rpcUrl, 'eth_call', [
+      { to: low, data: IdentityHfsWhitelistAbi.identityVersion() },
+      'latest',
+    ]);
+    const parsed = decodeUintWord(raw);
+    if (parsed >= 2) ver = parsed;
+  } catch (_) {
+    ver = 1;
+  }
+  _identityAbiVerCache.set(low, ver);
+  return { version: ver, extAddr };
+}
+
+export async function fetchIdentityHfsAssociations(
+  rpcUrl,
+  identityAddr,
+  { manifest = null, forceRefresh = false } = {}
+) {
+  const low = String(identityAddr || '').toLowerCase();
+  if (!low || low === ZERO_ADDR) {
+    return { version: 2, items: [], byAddr: new Map() };
+  }
+  if (!forceRefresh && _identityAssocMemCache.has(low)) {
+    const cached = _identityAssocMemCache.get(low);
+    if (Date.now() - cached.at < 4500) {
+      return cached.value;
+    }
+  }
+
+  const { version, extAddr } = await resolveIdentityWhitelistTarget(rpcUrl, low, { manifest });
+  const items = [];
+  let offset = 0;
+  let totalCount = Infinity;
+
+  while (offset < totalCount && offset < 256) {
+    let rawHex = '0x';
+    try {
+      if (version >= 2) {
+        rawHex = await slxNodeRpc(rpcUrl, 'eth_call', [
+          { to: low, data: IdentityHfsWhitelistAbi.getHfsAssociationsSlice(offset, 64) },
+          'latest',
+        ]);
+      } else if (extAddr) {
+        rawHex = await slxNodeRpc(rpcUrl, 'eth_call', [
+          {
+            to: extAddr,
+            data: IdentityHfsWhitelistAbi.getDelegatedHfsAssociationsSlice(low, offset, 64),
+          },
+          'latest',
+        ]);
+      } else {
+        break;
+      }
+    } catch (_) {
+      break;
+    }
+    const page = decodeIdentityHfsSliceHex(rawHex);
+    totalCount = page.totalCount || 0;
+    if (!page.items.length) break;
+    items.push(...page.items);
+    offset += 64;
+  }
+
+  const byAddr = new Map();
+  for (const it of items) {
+    byAddr.set(it.hfsAddr, it);
+  }
+  const value = { version, items, byAddr };
+  _identityAssocMemCache.set(low, { at: Date.now(), value });
+  return value;
+}
+
+function buildManifestShowcaseAddrSet(manifest) {
+  const set = new Set();
+  if (!manifest) return set;
+  const inst = manifest.institutional || {};
+  const sec = manifest.secondaryDeployments || {};
+  const ifrs = manifest.ifrsAccounting || {};
+  const ifrsSec = ifrs.secondaryCompany || {};
+  const add = (v) => {
+    if (typeof v === 'string' && /^0x[0-9a-f]{40}$/i.test(v)) {
+      set.add(v.toLowerCase());
+    }
+  };
+  [
+    manifest.battleship?.contractAddr,
+    sec.battleship2?.contractAddr,
+    inst.corporateCharter,
+    inst.dexClob,
+    inst.productLedger,
+    inst.accountingLedger,
+    inst.fiatLedger,
+    inst.shareLedger,
+    sec.techDex?.dexClob,
+    ifrs.primaryLedger,
+    ifrs.primaryProductLedger,
+    ifrsSec.corporateCharter,
+    ifrsSec.accountingLedger,
+    manifest.fleetSocial?.charter,
+    manifest.commonsRf?.charter,
+    manifest.commonsRf?.meiProductLedger,
+    manifest.hegemony?.contractAddr,
+    sec.hegemony2?.contractAddr,
+    manifest.cipherNoir?.contractAddr,
+    sec.cipherNoir2?.contractAddr,
+    manifest.quantumLottery?.contractAddr,
+    manifest.quantumLottery?.secondaryPool?.contractAddr,
+    manifest.secretBallot?.contractAddr,
+    manifest.secretBallot?.secondaryHub,
+  ].forEach(add);
+  return set;
+}
+
+const _probeCache = new Map();
+
+async function probeUnwhitelistedHfsAssociation(rpcUrl, typeName, it, identityAddr, baseShareLedger = '') {
+  const key = `${typeName}:${it.primaryAddr}:${identityAddr}`;
+  const hit = _probeCache.get(key);
+  if (hit && Date.now() - hit.at < 15_000) {
+    return hit.reason;
+  }
+
+  let reason = '';
+  const m = it.meta || {};
+  const metaJsonLow = JSON.stringify(m).toLowerCase();
+
+  try {
+    if (typeName === 'CORPORATE_CHARTER') {
+      const shLed = String(m.sh || m.shareLedger || '').toLowerCase();
+      const [isDirHex, isPendHex, shBalHex] = await Promise.all([
+        slxNodeRpc(rpcUrl, 'eth_call', [
+          { to: it.primaryAddr, data: encodeAbi('isDirector(address)', [['address', identityAddr]]) },
+          'latest',
+        ]).catch(() => '0x0'),
+        slxNodeRpc(rpcUrl, 'eth_call', [
+          {
+            to: it.primaryAddr,
+            data: encodeAbi('isPendingDirector(address)', [['address', identityAddr]]),
+          },
+          'latest',
+        ]).catch(() => '0x0'),
+        shLed && /^0x[0-9a-f]{40}$/.test(shLed)
+          ? slxNodeRpc(rpcUrl, 'eth_call', [
+              { to: shLed, data: encodeAbi('balanceOf(address)', [['address', identityAddr]]) },
+              'latest',
+            ]).catch(() => '0x0')
+          : Promise.resolve('0x0'),
+      ]);
+      if (decodeUintWord(isPendHex) === 1) {
+        reason = 'Named your Identity as Pending Director without whitelist';
+      } else if (decodeUintWord(isDirHex) === 1) {
+        reason = 'Named your Identity on Board of Directors without whitelist';
+      } else if (decodeUintWord(shBalHex) > 0) {
+        reason = `Allocated ${decodeUintWord(shBalHex).toLocaleString('en-US')} unsolicited shares without whitelist`;
+      }
+    } else if (typeName === 'IFRS_LEDGER') {
+      const chr = String(m.corporateCharter || '').toLowerCase();
+      if (String(m.treasuryIdentity || '').toLowerCase() === identityAddr) {
+        reason = 'Bound your Identity as Treasury Vault without whitelist';
+      } else if (chr && /^0x[0-9a-f]{40}$/.test(chr)) {
+        const [dHex, pHex] = await Promise.all([
+          slxNodeRpc(rpcUrl, 'eth_call', [
+            { to: chr, data: encodeAbi('isDirector(address)', [['address', identityAddr]]) },
+            'latest',
+          ]).catch(() => '0x0'),
+          slxNodeRpc(rpcUrl, 'eth_call', [
+            { to: chr, data: encodeAbi('isPendingDirector(address)', [['address', identityAddr]]) },
+            'latest',
+          ]).catch(() => '0x0'),
+        ]);
+        if (decodeUintWord(dHex) === 1 || decodeUintWord(pHex) === 1) {
+          reason = 'Associated IFRS Ledger with your Identity without whitelist';
+        }
+      }
+    } else if (typeName === 'DEX_CLOB') {
+      const shLed = String(m.shareLedger || '').toLowerCase();
+      if (shLed && /^0x[0-9a-f]{40}$/.test(shLed) && shLed !== baseShareLedger) {
+        const bal = decodeUintWord(
+          await slxNodeRpc(rpcUrl, 'eth_call', [
+            { to: shLed, data: encodeAbi('balanceOf(address)', [['address', identityAddr]]) },
+            'latest',
+          ]).catch(() => '0x0')
+        );
+        if (bal > 0) {
+          reason = `Allocated ${bal.toLocaleString('en-US')} unsolicited tokens on unwhitelisted DEX`;
+        }
+      }
+    }
+    if (!reason && metaJsonLow.includes(identityAddr)) {
+      reason = 'Referenced your Identity in HFS metadata without whitelist';
+    }
+  } catch (_) {}
+
+  _probeCache.set(key, { at: Date.now(), reason });
+  return reason;
+}
+
+/**
+ * Partition HFS instances of `typeName` into:
+ *  - `whitelistedItems`: Subroutines validly whitelisted in `Identity` (`State = 2`) or deployed by `myEoa`.
+ *  - `spamItems`: Subroutines that attempted to associate with `identityAddr` without being whitelisted
+ *                 (`State = 1` Pending, unsolicited on-chain Board/Cap-Table/Token association, or `State = 3` Blocked Spam).
+ *  - `publicItems`: Public network instances that have not attempted to associate with `identityAddr`.
+ */
+export async function classifyHfsInstancesForIdentity(
+  instances = [],
+  {
+    typeName = '',
+    identityAddr = '',
+    myEoa = '',
+    assocByAddr = null,
+    rpcUrl = getDefaultNodeWsUrl(),
+    manifest = null,
+    callFn = null,
+  } = {}
+) {
+  const idLow = String(identityAddr || '').toLowerCase();
+  const eoaLow = String(myEoa || '').toLowerCase();
+  if (!idLow || idLow === ZERO_ADDR) {
+    return {
+      whitelistedItems: [],
+      publicItems: instances.map((it) => ({ ...it, assocStatus: 0, assocCategory: 'public' })),
+      spamItems: [],
+      validItems: instances.map((it) => ({ ...it, assocStatus: 0, assocCategory: 'public' })),
+    };
+  }
+
+  const resolvedManifest =
+    manifest || (callFn ? null : (await SlxHfsCache.hydrateWithManifest()).manifest);
+  const byAddr =
+    assocByAddr || (await fetchIdentityHfsAssociations(rpcUrl, idLow, { manifest: resolvedManifest })).byAddr;
+  const showcaseSet = buildManifestShowcaseAddrSet(resolvedManifest);
+  const dexDeskSet = new Set(
+    (resolvedManifest?.institutional?.dexDeskIdentities || [])
+      .map((d) => String(d.identityAddr || '').toLowerCase())
+      .filter(Boolean)
+  );
+  const baseShareLedger = String(resolvedManifest?.institutional?.shareLedger || '').toLowerCase();
+
+  const whitelistedItems = [];
+  const publicItems = [];
+  const spamItems = [];
+  const seenPrimary = new Set();
+
+  const classified = await Promise.all(
+    instances.map(async (it) => {
+      const addrLow = String(it.primaryAddr || '').toLowerCase();
+      seenPrimary.add(addrLow);
+      const rec = byAddr.get(addrLow);
+
+      if (rec?.status === HFS_ASSOC_STATUS.WHITELISTED) {
+        return {
+          bucket: 'whitelisted',
+          item: {
+            ...it,
+            assocStatus: HFS_ASSOC_STATUS.WHITELISTED,
+            assocCategory: 'whitelisted',
+            assocBadge: 'Whitelisted (State 2)',
+            assocRecord: rec,
+          },
+        };
+      }
+
+      if (rec?.status === HFS_ASSOC_STATUS.SPAM) {
+        return {
+          bucket: 'spam',
+          item: {
+            ...it,
+            assocStatus: HFS_ASSOC_STATUS.SPAM,
+            assocCategory: 'spam',
+            spamReason: 'Blocked as Spam in your Identity HFS Register (State = 3)',
+            assocRecord: rec,
+          },
+        };
+      }
+
+      if (rec?.status === HFS_ASSOC_STATUS.PENDING) {
+        return {
+          bucket: 'spam',
+          item: {
+            ...it,
+            assocStatus: HFS_ASSOC_STATUS.PENDING,
+            assocCategory: 'spam',
+            spamReason: rec.label
+              ? `Unverified association "${rec.label}" awaiting whitelist (State = 1)`
+              : 'Unverified inbound association awaiting whitelist (State = 1)',
+            assocRecord: rec,
+          },
+        };
+      }
+
+      // Implicitly valid if deployed directly from this wallet's EOA (unless explicitly marked SPAM = 3 above)
+      if (eoaLow && String(it.creatorEoa || '').toLowerCase() === eoaLow) {
+        return {
+          bucket: 'whitelisted',
+          item: {
+            ...it,
+            assocStatus: HFS_ASSOC_STATUS.WHITELISTED,
+            assocCategory: 'whitelisted',
+            isImplicitOwnEoa: true,
+            assocBadge: 'Deployed by Your Keypair',
+          },
+        };
+      }
+
+      // Spoofed creatorIdentity!
+      if (String(it.creatorIdentity || '').toLowerCase() === idLow) {
+        return {
+          bucket: 'spam',
+          item: {
+            ...it,
+            assocStatus: HFS_ASSOC_STATUS.UNLISTED,
+            assocCategory: 'spam',
+            spamReason: 'Claimed your Identity as creator without authorization',
+          },
+        };
+      }
+
+      const isSimShowcase =
+        showcaseSet.has(addrLow) ||
+        (typeName === 'DEX_CLOB' &&
+          it.creatorIdentity &&
+          dexDeskSet.has(String(it.creatorIdentity).toLowerCase()));
+
+      if (!isSimShowcase && !callFn) {
+        const probeReason = await probeUnwhitelistedHfsAssociation(
+          rpcUrl,
+          typeName,
+          it,
+          idLow,
+          baseShareLedger
+        );
+        if (probeReason) {
+          return {
+            bucket: 'spam',
+            item: {
+              ...it,
+              assocStatus: HFS_ASSOC_STATUS.UNLISTED,
+              assocCategory: 'spam',
+              spamReason: probeReason,
+            },
+          };
+        }
+      }
+
+      return {
+        bucket: 'public',
+        item: {
+          ...it,
+          assocStatus: HFS_ASSOC_STATUS.UNLISTED,
+          assocCategory: 'public',
+        },
+      };
+    })
+  );
+
+  for (const entry of classified) {
+    if (entry.bucket === 'whitelisted') whitelistedItems.push(entry.item);
+    else if (entry.bucket === 'spam') spamItems.push(entry.item);
+    else publicItems.push(entry.item);
+  }
+
+  // Also surface off-registry entries recorded directly in Identity's HFS Register for `typeName`!
+  for (const rec of byAddr.values()) {
+    if (seenPrimary.has(rec.hfsAddr)) continue;
+    if (typeName && rec.typeName && rec.typeName !== typeName) continue;
+    const synth = {
+      entryIdx: rec.entryIdx,
+      abiVersion: 2,
+      status: 1,
+      primaryAddr: rec.hfsAddr,
+      codeHash: ZERO_BYTES32,
+      creatorEoa: rec.actor,
+      creatorIdentity: '',
+      createdBlock: rec.updatedBlock,
+      label: rec.label || `${rec.typeName || typeName || 'HFS'} · ${shortHex(rec.hfsAddr)}`,
+      meta: {},
+      selectionKey: makeHfsSelectionKey(rec.hfsAddr, {}),
+      assocStatus: rec.status,
+      assocRecord: rec,
+      isOffRegistry: true,
+    };
+    if (rec.status === HFS_ASSOC_STATUS.WHITELISTED) {
+      whitelistedItems.push({
+        ...synth,
+        assocCategory: 'whitelisted',
+        assocBadge: 'Whitelisted (Off-Registry)',
+      });
+    } else if (rec.status === HFS_ASSOC_STATUS.PENDING || rec.status === HFS_ASSOC_STATUS.SPAM) {
+      spamItems.push({
+        ...synth,
+        assocCategory: 'spam',
+        spamReason:
+          rec.status === HFS_ASSOC_STATUS.SPAM
+            ? 'Blocked as Spam in your Identity HFS Register (State = 3)'
+            : `Unverified inbound notification "${rec.label || shortHex(rec.hfsAddr)}" (State = 1)`,
+      });
+    }
+  }
+
+  return {
+    whitelistedItems,
+    publicItems,
+    spamItems,
+    validItems: [...whitelistedItems, ...publicItems],
+  };
 }

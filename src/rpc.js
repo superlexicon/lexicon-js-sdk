@@ -187,9 +187,13 @@ function createWsPoolEntry(wsUrl, pool, connectTimeoutMs = 12000) {
         pending.delete(msg.id);
         clearTimeout(p.timer);
         if (msg.error) {
-          const rpcErr = new Error(msg.error.message || JSON.stringify(msg.error));
+          const detail = msg.error.data ? ` (${msg.error.data})` : '';
+          const rpcErr = new Error(
+            msg.error.message ? `${msg.error.message}${detail}` : JSON.stringify(msg.error)
+          );
           rpcErr.isJsonRpcError = true;
           rpcErr.code = msg.error.code;
+          rpcErr.data = msg.error.data;
           p.reject(rpcErr);
         } else {
           p.resolve(msg.result);
@@ -315,7 +319,16 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   });
   const j = await r.json();
-  if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+  if (j.error) {
+    const detail = j.error.data ? ` (${j.error.data})` : '';
+    const rpcErr = new Error(
+      j.error.message ? `${j.error.message}${detail}` : JSON.stringify(j.error)
+    );
+    rpcErr.isJsonRpcError = true;
+    rpcErr.code = j.error.code;
+    rpcErr.data = j.error.data;
+    throw rpcErr;
+  }
   return j.result;
 }
 
