@@ -19,7 +19,14 @@ export const PUBLIC_PUBSUB_WS_NODES = [
   'wss://node5.superlexicon.com',
 ];
 
+export const PUBLIC_SUBNET2_PUBSUB_NODES = [
+  'wss://node21.superlexicon.com',
+  'wss://node22.superlexicon.com',
+  'wss://node23.superlexicon.com',
+];
+
 let _preferredPublicPubSubNode = PUBLIC_PUBSUB_WS_NODES[0];
+let _preferredPublicSubnet2PubSubNode = PUBLIC_SUBNET2_PUBSUB_NODES[0];
 
 const HEADS_WATCHDOG_SILENCE_MS = 28_000;
 const MAX_DEDUP_KEYS = 4096;
@@ -83,8 +90,12 @@ export function derivePubSubWsCandidates(rpcUrl) {
   const out = [];
   const pushUnique = (u) => {
     if (!u) return;
-    if (isHttpsPage && u.startsWith('ws://')) return;
-    if (!out.includes(u)) out.push(u);
+    let clean = String(u).trim();
+    if (clean.includes('node6.superlexicon.com')) {
+      clean = PUBLIC_SUBNET2_PUBSUB_NODES[0];
+    }
+    if (isHttpsPage && clean.startsWith('ws://')) return;
+    if (!out.includes(clean)) out.push(clean);
   };
 
   const activeSubnet =
@@ -104,13 +115,27 @@ export function derivePubSubWsCandidates(rpcUrl) {
     }
   } catch (_) {}
 
-  const primary = toPubSubWsUrl(rpcUrl);
-  // If `primary` is a public validator subdomain (`wss://nodeX.superlexicon.com`), prefer the last
-  // verified-healthy TLS validator first so an expired/restarting node never stalls initial subscribe.
+  const rawPrimary = toPubSubWsUrl(rpcUrl);
+  const primary = rawPrimary.includes('node6.superlexicon.com')
+    ? PUBLIC_SUBNET2_PUBSUB_NODES[0]
+    : rawPrimary;
   if (primary && PUBLIC_PUBSUB_WS_NODES.includes(primary) && _preferredPublicPubSubNode) {
     pushUnique(_preferredPublicPubSubNode);
+  } else if (
+    primary &&
+    PUBLIC_SUBNET2_PUBSUB_NODES.includes(primary) &&
+    _preferredPublicSubnet2PubSubNode
+  ) {
+    pushUnique(_preferredPublicSubnet2PubSubNode);
   }
   pushUnique(primary);
+
+  if (PUBLIC_SUBNET2_PUBSUB_NODES.includes(primary) || activeSubnet?.key === 'subnet2') {
+    if (isHttpsPage || primary.startsWith('wss://')) {
+      for (const pub2 of PUBLIC_SUBNET2_PUBSUB_NODES) pushUnique(pub2);
+    }
+    return out;
+  }
 
   if (!activeSubnet || activeSubnet.key === 'subnet1') {
     for (const pub of PUBLIC_PUBSUB_WS_NODES) {

@@ -23,6 +23,28 @@ export const PUBLIC_SUBNET1_WSS_RPC_NODES = [
 ];
 export const PUBLIC_SUBNET1_WSS_RPC = PUBLIC_SUBNET1_WSS_RPC_NODES[0];
 let _preferredPublicWssRpc = PUBLIC_SUBNET1_WSS_RPC;
+
+export const PUBLIC_SUBNET2_WSS_RPC_NODES = [
+  'wss://node21.superlexicon.com/rpc',
+  'wss://node22.superlexicon.com/rpc',
+  'wss://node23.superlexicon.com/rpc',
+];
+export const PUBLIC_SUBNET2_PUBSUB_WS_NODES = [
+  'wss://node21.superlexicon.com',
+  'wss://node22.superlexicon.com',
+  'wss://node23.superlexicon.com',
+];
+export const PUBLIC_SUBNET2_WSS_RPC = PUBLIC_SUBNET2_WSS_RPC_NODES[0];
+let _preferredPublicSubnet2WssRpc = PUBLIC_SUBNET2_WSS_RPC;
+
+function _sanitizeSubnet2PublicUrl(u, isRpc = true) {
+  const clean = _httpToWs(u);
+  if (!clean) return '';
+  if (clean.includes('node6.superlexicon.com')) {
+    return isRpc ? PUBLIC_SUBNET2_WSS_RPC : PUBLIC_SUBNET2_PUBSUB_WS_NODES[0];
+  }
+  return clean;
+}
 export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
 const STORAGE_KEY_HFS_CACHE = 'slx_hfs_address_cache_v1';
 const STORAGE_KEY_ACTIVE_SUBNET = 'slx_active_subnet_v1';
@@ -143,19 +165,39 @@ export const SlxSubnetManager = {
 
       let rpcUrls = [];
       let pubsubUrls = [];
+      let validatorNodesOverride = null;
       if (isHttps) {
-        const pubRpc = rm.public_rpc_url
-          ? _httpToWs(rm.public_rpc_url)
-          : isKnownS2 || isTcp
-            ? 'wss://node6.superlexicon.com/rpc'
-            : '';
-        if (pubRpc) rpcUrls = [pubRpc];
-        const pubWs = rm.public_ws_url
-          ? _httpToWs(rm.public_ws_url)
-          : isKnownS2 || isTcp
-            ? 'wss://node6.superlexicon.com'
-            : '';
-        if (pubWs) pubsubUrls = [pubWs];
+        if (isKnownS2) {
+          const discRpc = _sanitizeSubnet2PublicUrl(rm.public_rpc_url, true);
+          const s2Cands = [
+            _preferredPublicSubnet2WssRpc,
+            ...(discRpc ? [discRpc] : []),
+            ...PUBLIC_SUBNET2_WSS_RPC_NODES,
+          ];
+          rpcUrls = Array.from(new Set(s2Cands.filter(Boolean)));
+          const discWs = _sanitizeSubnet2PublicUrl(rm.public_ws_url, false);
+          pubsubUrls = Array.from(
+            new Set([...(discWs ? [discWs] : []), ...PUBLIC_SUBNET2_PUBSUB_WS_NODES])
+          );
+          validatorNodesOverride = [
+            { name: 'TCP Validator node21', url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
+            { name: 'TCP Validator node22', url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
+            { name: 'TCP Validator node23', url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
+          ];
+        } else {
+          const pubRpc = rm.public_rpc_url
+            ? _sanitizeSubnet2PublicUrl(rm.public_rpc_url, true)
+            : isTcp
+              ? PUBLIC_SUBNET2_WSS_RPC
+              : '';
+          if (pubRpc) rpcUrls = [pubRpc];
+          const pubWs = rm.public_ws_url
+            ? _sanitizeSubnet2PublicUrl(rm.public_ws_url, false)
+            : isTcp
+              ? PUBLIC_SUBNET2_PUBSUB_WS_NODES[0]
+              : '';
+          if (pubWs) pubsubUrls = [pubWs];
+        }
       } else {
         if (rm.lan_rpc_url) rpcUrls.push(_httpToWs(rm.lan_rpc_url));
         if (isKnownS2) {
@@ -167,7 +209,7 @@ export const SlxSubnetManager = {
             if (!rpcUrls.includes(u)) rpcUrls.push(u);
           }
         } else if (!rpcUrls.length && rm.public_rpc_url) {
-          rpcUrls.push(_httpToWs(rm.public_rpc_url));
+          rpcUrls.push(_sanitizeSubnet2PublicUrl(rm.public_rpc_url, true));
         }
 
         if (rm.lan_ws_url) pubsubUrls.push(_httpToWs(rm.lan_ws_url));
@@ -180,7 +222,7 @@ export const SlxSubnetManager = {
             if (!pubsubUrls.includes(u)) pubsubUrls.push(u);
           }
         } else if (!pubsubUrls.length && rm.public_ws_url) {
-          pubsubUrls.push(_httpToWs(rm.public_ws_url));
+          pubsubUrls.push(_sanitizeSubnet2PublicUrl(rm.public_ws_url, false));
         }
       }
 
@@ -208,27 +250,31 @@ export const SlxSubnetManager = {
           rm.manifest_url || (isKnownS2 ? '/contracts/subnet2-deployments.json' : ''),
         rpcUrl: rpcUrls[0] || '',
         pubsubWsUrls: pubsubUrls,
-        validatorNodes: rpcUrls.length
-          ? rpcUrls.map((u, idx) => ({
-              name: `${isTcp ? 'TCP' : 'RF'} Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
-              url: u,
-              pubkeyPrefix: null,
-            }))
-          : [],
+        validatorNodes:
+          validatorNodesOverride ||
+          (rpcUrls.length
+            ? rpcUrls.map((u, idx) => ({
+                name: `${isTcp ? 'TCP' : 'RF'} Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+                url: u,
+                pubkeyPrefix: null,
+              }))
+            : []),
         builtin: true,
         discovered: true,
       });
     }
 
-    // Fallback on LAN before first slx_roamingStatus resolves so Subnet 2 is immediately selectable
+    // Fallback before first slx_roamingStatus resolves so Subnet 2 is immediately selectable at 0ms on both HTTPS & LAN
     const defaultS2Id = String(meta.subnet2?.subnetId || '6eaa3da4').toLowerCase();
-    if (!isHttps && !seenIds.has(defaultS2Id)) {
-      const s2RpcUrls =
-        Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
+    if (!seenIds.has(defaultS2Id)) {
+      const s2RpcUrls = isHttps
+        ? Array.from(new Set([_preferredPublicSubnet2WssRpc, ...PUBLIC_SUBNET2_WSS_RPC_NODES]))
+        : Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
           ? meta.subnet2.rpcUrls.map(_httpToWs)
           : [`ws://${lanPrefix}.91:18545`, `ws://${lanPrefix}.92:18545`, `ws://${lanPrefix}.94:18545`];
-      const s2PubsubUrls =
-        Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
+      const s2PubsubUrls = isHttps
+        ? [...PUBLIC_SUBNET2_PUBSUB_WS_NODES]
+        : Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
           ? meta.subnet2.wsUrls.map(_httpToWs)
           : [`ws://${lanPrefix}.91:18566`, `ws://${lanPrefix}.92:18566`, `ws://${lanPrefix}.94:18566`];
       result.push({
@@ -244,11 +290,17 @@ export const SlxSubnetManager = {
         manifestUrl: '/contracts/subnet2-deployments.json',
         rpcUrl: s2RpcUrls[0],
         pubsubWsUrls: s2PubsubUrls,
-        validatorNodes: s2RpcUrls.map((u, idx) => ({
-          name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
-          url: u,
-          pubkeyPrefix: null,
-        })),
+        validatorNodes: isHttps
+          ? [
+              { name: 'TCP Validator node21', url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
+              { name: 'TCP Validator node22', url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
+              { name: 'TCP Validator node23', url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
+            ]
+          : s2RpcUrls.map((u, idx) => ({
+              name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+              url: u,
+              pubkeyPrefix: null,
+            })),
         builtin: true,
       });
     }
@@ -827,7 +879,11 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
   const allowFailover = opts?.allowFailover !== false;
   let wsUrl = toWsEndpoint(endpointUrl);
 
-  // Automatically route public validator calls to the currently healthy TLS validator first
+  if (wsUrl.includes('node6.superlexicon.com')) {
+    wsUrl = PUBLIC_SUBNET2_WSS_RPC;
+  }
+
+  // Automatically route public validator calls to the currently healthy TLS validator first (strictly per-subnet!)
   if (
     allowFailover &&
     PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl) &&
@@ -835,6 +891,13 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
     wsUrl !== _preferredPublicWssRpc
   ) {
     wsUrl = _preferredPublicWssRpc;
+  } else if (
+    allowFailover &&
+    PUBLIC_SUBNET2_WSS_RPC_NODES.includes(wsUrl) &&
+    _preferredPublicSubnet2WssRpc &&
+    wsUrl !== _preferredPublicSubnet2WssRpc
+  ) {
+    wsUrl = _preferredPublicSubnet2WssRpc;
   }
 
   try {
@@ -842,6 +905,8 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
     _deadWsCooldownUntil.delete(wsUrl);
     if (PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl)) {
       _preferredPublicWssRpc = wsUrl;
+    } else if (PUBLIC_SUBNET2_WSS_RPC_NODES.includes(wsUrl)) {
+      _preferredPublicSubnet2WssRpc = wsUrl;
     }
     return res;
   } catch (primaryErr) {
@@ -855,9 +920,12 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
     if (allowFailover) {
       const now = Date.now();
       const isPublicSubnet1Target = PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl);
+      const isPublicSubnet2Target = PUBLIC_SUBNET2_WSS_RPC_NODES.includes(wsUrl);
       let sameSubnetCandidates = [];
       if (isPublicSubnet1Target) {
         sameSubnetCandidates = PUBLIC_SUBNET1_WSS_RPC_NODES;
+      } else if (isPublicSubnet2Target) {
+        sameSubnetCandidates = PUBLIC_SUBNET2_WSS_RPC_NODES;
       } else {
         const matchingSub = SlxSubnetManager.listSubnets().find(
           (s) =>
@@ -878,12 +946,17 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
           if (isPublicSubnet1Target) {
             _preferredPublicWssRpc = cand;
             SlxHfsCache.save({ rpcUrl: cand });
+          } else if (isPublicSubnet2Target) {
+            _preferredPublicSubnet2WssRpc = cand;
+            SlxHfsCache.save({ rpcUrl: cand });
           }
           return res;
         } catch (candErr) {
           if (candErr?.isJsonRpcError) {
             if (isPublicSubnet1Target) {
               _preferredPublicWssRpc = cand;
+            } else if (isPublicSubnet2Target) {
+              _preferredPublicSubnet2WssRpc = cand;
             }
             throw candErr;
           }
