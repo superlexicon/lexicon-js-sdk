@@ -73,6 +73,23 @@ import {
   verifyEd25519Schnorr,
   randomEdScalar,
   buildConfidentialPayableBatchTx,
+  deriveIdentityMasterSeedBytes32,
+  wrapMasterSeedForDevice,
+  unwrapMasterSeedWithDeviceKey,
+  encryptShareWithPassphrase,
+  decryptShareWithPassphrase,
+  splitSecretPedersenVss,
+  proveBlindedRecoveryShare,
+  unblindAndRecoverMasterSeed,
+  deriveRecoverySessionKeypair,
+  GUARDIAN_SHARE_WRAP_TAG,
+  computeCanonicalRosterHashes,
+  generateChannelAesKey256,
+  wrapChannelKeyForMembers,
+  unwrapChannelKeyForEpoch,
+  buildTopicMessageAad,
+  encryptTopicMessageAesGcm,
+  decryptTopicMessageAesGcm,
 } from '../src/index.js';
 
 // 1. Official Keccak-256 & Solidity Selector Vectors
@@ -622,5 +639,151 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   assert.equal(decryptNoirWhisper(whisperPrf.slice(0, 64), s1.edSk), 6);
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (14/14 test groups)!');
+// 15. Multi-Device Seed Wrapping + 2-of-3 Lossless 256-Bit Pedersen-VSS Blinded Shamir Recovery
+{
+  const aliceId = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const dev1Priv = generatePrivateKeyHex();
+  const dev2Kp = deriveKeypairInfo(generatePrivateKeyHex());
+  const dev2Pub64 = hexToBytes(dev2Kp.uncompressedPubKey).slice(1, 65);
+  const oracleSlotKp = deriveKeypairInfo(generatePrivateKeyHex());
+  const oracleSlotPub64 = hexToBytes(oracleSlotKp.uncompressedPubKey).slice(1, 65);
+
+  // Test full 256-bit secret with high bits >= 0xf8 (> ED25519_L!)
+  const full256Seed = hexToBytes('0xfefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeddccbbaa99887766554433221100ff');
+  const wrappedDev2 = wrapMasterSeedForDevice(full256Seed, dev2Pub64);
+  const unwrappedDev2 = unwrapMasterSeedWithDeviceKey(wrappedDev2, dev2Kp.privateKey);
+  assert.equal(bytesToHex(unwrappedDev2), bytesToHex(full256Seed));
+
+  const mSeed = deriveIdentityMasterSeedBytes32(dev1Priv, aliceId);
+  assert.equal(mSeed.length, 32);
+
+  // Split 2-of-3: Share #0 = Oracle Slot ECIES, Share #1 = Friend, Share #2 = Passphrase AES-256-GCM
+  const vss = splitSecretPedersenVss(full256Seed, 2, 3);
+  assert.equal(vss.vssCommitsPacked.length, 128);
+  assert.equal(vss.shares.length, 3);
+
+  const oracleEnv = wrapSecretForRecipientSecp(
+    vss.shares[0].plainShare128,
+    oracleSlotPub64,
+    GUARDIAN_SHARE_WRAP_TAG
+  );
+  const passEnv = await encryptShareWithPassphrase(
+    vss.shares[2].plainShare128,
+    'Sovereign-Horse-Battery-Staple-2026!',
+    aliceId
+  );
+  const passDecrypted = await decryptShareWithPassphrase(
+    passEnv,
+    'Sovereign-Horse-Battery-Staple-2026!',
+    aliceId
+  );
+  assert.equal(bytesToHex(passDecrypted), bytesToHex(vss.shares[2].plainShare128));
+  await assert.rejects(() =>
+    decryptShareWithPassphrase(passEnv, 'Wrong-Passphrase', aliceId)
+  );
+
+  // Replacement device initiates session #7 and unblinds shares #0 + #2 in local RAM!
+  const newDevPriv = generatePrivateKeyHex();
+  const newSessionKeys = deriveRecoverySessionKeypair(newDevPriv, aliceId);
+  const oracleSharePlain = unwrapSecretWithPrivKey(
+    oracleEnv,
+    oracleSlotKp.privateKey,
+    GUARDIAN_SHARE_WRAP_TAG
+  );
+  const p0 = proveBlindedRecoveryShare({
+    identityAddr: aliceId,
+    sessionId: 7,
+    shareIdx: 0,
+    newOwnerEoa: newSessionKeys.eoa,
+    newDeviceEdPub32: newSessionKeys.edPub32Bytes,
+    p0Bytes: vss.shares[0].p0Bytes,
+    p1Bytes: vss.shares[0].p1Bytes,
+    plainShare128: oracleSharePlain,
+  });
+  const p2 = proveBlindedRecoveryShare({
+    identityAddr: aliceId,
+    sessionId: 7,
+    shareIdx: 2,
+    newOwnerEoa: newSessionKeys.eoa,
+    newDeviceEdPub32: newSessionKeys.edPub32Bytes,
+    p0Bytes: vss.shares[2].p0Bytes,
+    p1Bytes: vss.shares[2].p1Bytes,
+    plainShare128: passDecrypted,
+  });
+  assert.equal(p0.proofBytes.length, 416);
+  assert.equal(p2.proofBytes.length, 416);
+
+  const toStored96 = (prf) => {
+    const out = new Uint8Array(96);
+    out.set(prf.slice(0, 32), 0); // R_i
+    out.set(prf.slice(64, 96), 32); // z_0
+    out.set(prf.slice(160, 192), 64); // z_1
+    return out;
+  };
+
+  const recovered = unblindAndRecoverMasterSeed({
+    identityAddr: aliceId,
+    sessionId: 7,
+    newDeviceEdSecretScalar: newSessionKeys.edSecretScalar,
+    newDeviceEdPub32: newSessionKeys.edPub32Bytes,
+    threshold: 2,
+    submittedShares: [
+      { shareIdx: 0, hasBlinded: true, blinded96Bytes: toStored96(p0.proofBytes) },
+      { shareIdx: 2, hasBlinded: true, blinded96Bytes: toStored96(p2.proofBytes) },
+    ],
+  });
+  assert.equal(bytesToHex(recovered.masterSeedBytes32), bytesToHex(full256Seed));
+}
+
+// 16. ECIES Roster Deduplication + AES-256-GCM Topic Message AEAD & Key-Epoch Wrapping
+{
+  const msgHfs = '0xa6f1c6069dab07f854fd707cf68fcc413874e944';
+  const idA = '0x00000000000000000000000000000000000000a1';
+  const idB = '0x00000000000000000000000000000000000000b2';
+  const idC = '0x00000000000000000000000000000000000000c3';
+
+  const keysA = deriveIdentityEncryptionKeys(generatePrivateKeyHex(), idA);
+  const keysB = deriveIdentityEncryptionKeys(generatePrivateKeyHex(), idB);
+  const keysC = deriveIdentityEncryptionKeys(generatePrivateKeyHex(), idC);
+
+  // Order-independent canonical public-key roster hash ([B, C, A] === [A, B, C])
+  const r1 = computeCanonicalRosterHashes([
+    { identityAddr: idB, secpPub64Bytes: keysB.secpPub64Bytes },
+    { identityAddr: idC, secpPub64Bytes: keysC.secpPub64Bytes },
+    { identityAddr: idA, secpPub64Bytes: keysA.secpPub64Bytes },
+  ]);
+  const r2 = computeCanonicalRosterHashes([
+    { identityAddr: idA, secpPub64Bytes: keysA.secpPub64Bytes },
+    { identityAddr: idB, secpPub64Bytes: keysB.secpPub64Bytes },
+    { identityAddr: idC, secpPub64Bytes: keysC.secpPub64Bytes },
+  ]);
+  assert.equal(r1.pkRosterHash, r2.pkRosterHash);
+  assert.equal(r1.idRosterHash, r2.idRosterHash);
+
+  const aesKey = generateChannelAesKey256();
+  const packedWraps = wrapChannelKeyForMembers(aesKey, [
+    { identityAddr: idA, secpPub64Bytes: keysA.secpPub64Bytes },
+    { identityAddr: idB, secpPub64Bytes: keysB.secpPub64Bytes },
+  ]);
+  // First entry: [count=2(1B)][idA(20B)][wrapLen(2B)][wrapBytes]
+  const wLenA = (packedWraps[21] << 8) | packedWraps[22];
+  const envA = packedWraps.slice(23, 23 + wLenA);
+  const unwrappedByA = unwrapChannelKeyForEpoch(envA, keysA.secpPrivHex);
+  assert.equal(bytesToHex(unwrappedByA), bytesToHex(aesKey));
+  assert.equal(unwrapChannelKeyForEpoch(envA, keysC.secpPrivHex), null);
+
+  const cid = r1.pkRosterHash;
+  const aad = buildTopicMessageAad(msgHfs, cid, 1, 2, idA);
+  const frame = await encryptTopicMessageAesGcm(aesKey, 'Confidential Q4 treasury allocation ready.', aad);
+  const dec = await decryptTopicMessageAesGcm(unwrappedByA, frame, aad);
+  assert.equal(dec.text, 'Confidential Q4 treasury allocation ready.');
+
+  // Author spoofing or cross-topic replay (`topicId = 0` instead of `1`) MUST fail GCM tag check!
+  const spoofedAuthorAad = buildTopicMessageAad(msgHfs, cid, 1, 2, idB);
+  assert.equal(await decryptTopicMessageAesGcm(unwrappedByA, frame, spoofedAuthorAad), null);
+  const wrongTopicAad = buildTopicMessageAad(msgHfs, cid, 0, 2, idA);
+  assert.equal(await decryptTopicMessageAesGcm(unwrappedByA, frame, wrongTopicAad), null);
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (16/16 test groups)!');
 process.exit(0);

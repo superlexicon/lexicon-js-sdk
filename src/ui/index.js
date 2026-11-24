@@ -32,6 +32,10 @@ import {
   openSlxUseCaseInstructions,
   mountSlxUseCaseHeaderDocs,
 } from './usecase-docs.js';
+import {
+  createIdentitySecurityTabController,
+  renderEciesSubtabBarHtml,
+} from './identity-security-ui.js';
 
 export {
   USECASE_DESCRIPTIONS,
@@ -500,8 +504,18 @@ export function mountSlxWalletHeader({
   let privRevealed = false;
   let statusBanner = '';
   let walletAssocItems = [];
-  let walletAssocVer = 2;
+  let walletAssocVer = 4;
   let walletAssocLoading = false;
+
+  const securityCtrl = createIdentitySecurityTabController({
+    wallet,
+    getRpcUrl: () => SlxHfsCache.load().rpcUrl || getDefaultNodeWsUrl(),
+    setStatus: (s) => {
+      statusBanner = s;
+    },
+    requestRender: () => renderModal(),
+    onWalletSwitch,
+  });
 
   async function refreshWalletAssocList() {
     const idRec = wallet.getIdentityRecord();
@@ -558,15 +572,18 @@ export function mountSlxWalletHeader({
           <button type="button" class="slx-mini-btn" id="slxModalCloseBtn">✕ Close</button>
         </div>
 
-        <div class="slx-modal-tabs">
+        <div class="slx-modal-tabs" style="flex-wrap:wrap;">
           <button type="button" class="slx-tab-btn ${activeTab === 'wallet' ? 'active' : ''}" data-slx-tab="wallet">
             🪪 Identity &amp; Keypair
+          </button>
+          <button type="button" class="slx-tab-btn ${activeTab === 'security' ? 'active' : ''}" data-slx-tab="security">
+            📱 Devices &amp; Shamir Recovery
           </button>
           <button type="button" class="slx-tab-btn ${activeTab === 'whitelist' ? 'active' : ''}" data-slx-tab="whitelist">
             🛡️ HFS Whitelist &amp; Spam${wlSpam.length ? ` (${wlSpam.length}⚠️)` : wlValid.length ? ` (${wlValid.length})` : ''}
           </button>
           <button type="button" class="slx-tab-btn ${activeTab === 'txs' ? 'active' : ''}" data-slx-tab="txs">
-            📡 Live On-Chain Signed Txs (${wallet.txHistory.length})
+            📡 Live Signed Txs (${wallet.txHistory.length})
           </button>
         </div>
 
@@ -765,7 +782,9 @@ export function mountSlxWalletHeader({
               </div>
             </div>
           `
-                : `
+                : activeTab === 'security'
+                  ? securityCtrl.renderHtml()
+                  : `
             <div class="slx-panel-box">
               <strong style="color:#6ee7b7;font-size:0.82rem;">📜 Live Signed EIP-155 Transactions on Subnet 1 (<code>${cachedRpc}</code>)</strong>
               <div style="display:flex;flex-direction:column;gap:0.45rem;max-height:320px;overflow-y:auto;">
@@ -809,9 +828,14 @@ export function mountSlxWalletHeader({
         renderModal();
         if (activeTab === 'whitelist') {
           refreshWalletAssocList();
+        } else if (activeTab === 'security') {
+          securityCtrl.refresh();
         }
       });
     });
+    if (activeTab === 'security') {
+      securityCtrl.wireEvents(modal);
+    }
     modal.querySelector('#slxBtnRefreshWlModal')?.addEventListener('click', () => {
       refreshWalletAssocList();
     });
@@ -2186,7 +2210,7 @@ export function mountSlxSocialWidgets({
   }
 
   let activeMode = 'network'; // 'network' | 'messages'
-  let activeMsgTab = 'dm'; // 'dm' | 'lounge' | 'wall'
+  let activeMsgTab = 'ecies'; // 'ecies' | 'dm' | 'lounge' | 'wall'
   let searchFilter = '';
   let statusText = '';
   let statusTone = 'info';
@@ -2234,12 +2258,15 @@ export function mountSlxSocialWidgets({
 
       <div data-soc="messagesPane" style="display:none;flex-direction:column;flex:1;min-height:0;">
         <div class="slx-soc-subtabs">
-          <button type="button" class="slx-soc-subtab active" data-soc-subtab="dm">🔒 Direct</button>
+          <button type="button" class="slx-soc-subtab active" data-soc-subtab="ecies">🔐 ECIES</button>
+          <button type="button" class="slx-soc-subtab" data-soc-subtab="dm">🔒 Direct</button>
           <button type="button" class="slx-soc-subtab" data-soc-subtab="lounge">📡 #${escapeHtmlText(appId)}</button>
           <button type="button" class="slx-soc-subtab" data-soc-subtab="wall">🌐 Wall</button>
         </div>
 
-        <div data-soc="dmPeerBar" style="padding:0.48rem 0.95rem;background:#070e1c;border-bottom:1px solid rgba(51,65,85,0.5);display:flex;align-items:center;gap:0.42rem;">
+        <div data-soc="eciesBar" style="padding:0.48rem 0.85rem;background:#070e1c;border-bottom:1px solid rgba(51,65,85,0.5);display:none;"></div>
+
+        <div data-soc="dmPeerBar" style="padding:0.48rem 0.95rem;background:#070e1c;border-bottom:1px solid rgba(51,65,85,0.5);display:none;align-items:center;gap:0.42rem;">
           <span style="font-family:monospace;font-size:0.66rem;color:#94a3b8;white-space:nowrap;">To Ally:</span>
           <select data-soc="dmPeerSelect" class="slx-input-field" style="min-width:0;padding:0.3rem 0.5rem;font-size:0.71rem;"></select>
         </div>
@@ -2269,6 +2296,7 @@ export function mountSlxSocialWidgets({
     networkList: backdrop.querySelector('[data-soc="networkList"]'),
     messagesPane: backdrop.querySelector('[data-soc="messagesPane"]'),
     subTabBtns: Array.from(backdrop.querySelectorAll('[data-soc-subtab]')),
+    eciesBar: backdrop.querySelector('[data-soc="eciesBar"]'),
     dmPeerBar: backdrop.querySelector('[data-soc="dmPeerBar"]'),
     dmPeerSelect: backdrop.querySelector('[data-soc="dmPeerSelect"]'),
     msgScroll: backdrop.querySelector('[data-soc="msgScroll"]'),
@@ -2562,6 +2590,7 @@ export function mountSlxSocialWidgets({
     for (const b of refs.subTabBtns) {
       const t = b.getAttribute('data-soc-subtab');
       b.classList.toggle('active', t === activeMsgTab);
+      if (t === 'ecies') b.textContent = `🔐 ECIES (${client.eciesChannels?.length || 0})`;
       if (t === 'dm') b.textContent = `🔒 Direct (${client.dmMsgs.length})`;
       if (t === 'lounge') b.textContent = `📡 #${appId} (${client.appChannelMsgs.length})`;
       if (t === 'wall') b.textContent = `🌐 Wall (${client.feedSnap?.posts?.length || 0})`;
@@ -2569,6 +2598,116 @@ export function mountSlxSocialWidgets({
 
     const myIdLow = String(client.myIdentityAddr || '').toLowerCase();
     const allies = [...client.connectedIds];
+
+    if (refs.eciesBar) {
+      refs.eciesBar.style.display = activeMsgTab === 'ecies' ? 'block' : 'none';
+      if (activeMsgTab === 'ecies' && !refs.eciesBar.contains(document.activeElement)) {
+        refs.eciesBar.innerHTML = renderEciesSubtabBarHtml(client, myIdLow);
+        refs.eciesBar.querySelector('[data-ecies="chanSelect"]')?.addEventListener('change', async (ev) => {
+          const cid = ev.target.value;
+          if (cid) await client.setActiveEciesChannel(cid, 0, wallet);
+        });
+        refs.eciesBar.querySelector('[data-ecies="toggleNew"]')?.addEventListener('click', () => {
+          const nb = refs.eciesBar.querySelector('[data-ecies="newBox"]');
+          if (nb) nb.style.display = nb.style.display === 'none' ? 'flex' : 'none';
+        });
+        refs.eciesBar.querySelector('[data-ecies="openBtn"]')?.addEventListener('click', async () => {
+          if (busy) return;
+          const checked = Array.from(refs.eciesBar.querySelectorAll('[data-ecies-peer]:checked')).map((el) =>
+            el.getAttribute('data-ecies-peer')
+          );
+          if (!checked.length) {
+            setStatus('⚠ Select at least 1 peer Identity to open an ECIES channel or topic.', 'err');
+            return;
+          }
+          const lbl = String(refs.eciesBar.querySelector('[data-ecies="newLabel"]')?.value || '').trim();
+          const tTitle = String(refs.eciesBar.querySelector('[data-ecies="newTopic"]')?.value || 'General').trim();
+          busy = true;
+          setStatus('⏳Wrapping AES-256-GCM key via secp256k1 ECIES & resolving roster…', 'info');
+          renderDrawer();
+          try {
+            const res = await client.openOrReuseEciesChannel(wallet, {
+              members: checked,
+              channelLabel: lbl,
+              topicTitle: tTitle,
+              appName: appTitle,
+            });
+            setStatus(
+              res?.createdNewChannel
+                ? `✓ Created ECIES Channel (${shortHex(res.channelId)}) • Topic #0 "${tTitle}" • Epoch #1!`
+                : `✓ Existing roster channel reused — created new Topic #${res?.topicId} "${tTitle}" under Epoch #${res?.keyEpoch}!`,
+              'ok'
+            );
+          } catch (err) {
+            setStatus(`⚠ ${err?.message || err}`, 'err');
+          } finally {
+            busy = false;
+            renderDrawer();
+          }
+        });
+        refs.eciesBar.querySelectorAll('[data-ecies-topic]').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const tid = Number(btn.getAttribute('data-ecies-topic') || 0);
+            await client.setActiveEciesChannel(client.activeEciesChannelId, tid, wallet);
+          });
+        });
+        refs.eciesBar.querySelector('[data-ecies="addTopicBtn"]')?.addEventListener('click', async () => {
+          if (busy || !client.activeEciesChannelId) return;
+          const nb = refs.eciesBar.querySelector('[data-ecies="newBox"]');
+          const topicInp = refs.eciesBar.querySelector('[data-ecies="newTopic"]');
+          const title = String(topicInp?.value || '').trim();
+          if (nb && nb.style.display === 'none') {
+            nb.style.display = 'flex';
+            topicInp?.focus();
+            setStatus('ℹ Enter a new Topic title above and click + Topic again (or Open).', 'info');
+            return;
+          }
+          const effTitle = title && title !== 'General' ? title : `Topic #${client.activeEciesDetails?.topicCount || 1}`;
+          busy = true;
+          setStatus(`⏳ Creating sub-topic "${effTitle}"…`, 'info');
+          renderDrawer();
+          try {
+            const res = await client.createEciesTopic(wallet, client.activeEciesChannelId, effTitle, { appName: appTitle });
+            setStatus(`✓ Created sub-topic #${res?.topicId} "${effTitle}"!`, 'ok');
+          } catch (err) {
+            setStatus(`⚠ ${err?.message || err}`, 'err');
+          } finally {
+            busy = false;
+            renderDrawer();
+          }
+        });
+        refs.eciesBar.querySelector('[data-ecies="rollKeyBtn"]')?.addEventListener('click', async () => {
+          if (busy || !client.activeEciesChannelId) return;
+          busy = true;
+          setStatus('⏳ Generating fresh 256-bit AES-GCM key & ECIES-wrapping for active members…', 'info');
+          renderDrawer();
+          try {
+            const res = await client.rollEciesChannelKey(wallet, client.activeEciesChannelId, { appName: appTitle });
+            setStatus(`✓ Rolled channel key to Epoch #${res?.newKeyEpoch}!`, 'ok');
+          } catch (err) {
+            setStatus(`⚠ ${err?.message || err}`, 'err');
+          } finally {
+            busy = false;
+            renderDrawer();
+          }
+        });
+        refs.eciesBar.querySelector('[data-ecies="leaveBtn"]')?.addEventListener('click', async () => {
+          if (busy || !client.activeEciesChannelId) return;
+          busy = true;
+          setStatus('⏳ Leaving ECIES channel & setting rekeyRequired=1 on-chain…', 'info');
+          renderDrawer();
+          try {
+            await client.leaveEciesChannel(wallet, client.activeEciesChannelId, { appName: appTitle });
+            setStatus('✓ Left channel — survivors must roll AES key before next send!', 'ok');
+          } catch (err) {
+            setStatus(`⚠ ${err?.message || err}`, 'err');
+          } finally {
+            busy = false;
+            renderDrawer();
+          }
+        });
+      }
+    }
 
     if (refs.dmPeerBar) {
       refs.dmPeerBar.style.display = activeMsgTab === 'dm' ? 'flex' : 'none';
@@ -2590,8 +2729,15 @@ export function mountSlxSocialWidgets({
       }
     }
 
+    const activeEciesCh = (client.eciesChannels || []).find((c) => c.channelId === client.activeEciesChannelId);
     if (refs.msgInput) {
-      if (activeMsgTab === 'dm') {
+      if (activeMsgTab === 'ecies') {
+        const curTopic = activeEciesCh?.topics?.find((t) => t.topicId === client.activeEciesTopicId);
+        refs.msgInput.placeholder = activeEciesCh?.isActiveMember
+          ? `Encrypt to #${curTopic?.title || 'General'} (AES-256-GCM Ep#${activeEciesCh.rekeyRequired ? activeEciesCh.currentKeyEpoch + 1 : activeEciesCh.currentKeyEpoch})…`
+          : 'Open or select an active ECIES channel above to send encrypted messages…';
+        refs.msgInput.disabled = busy || !activeEciesCh?.isActiveMember;
+      } else if (activeMsgTab === 'dm') {
         refs.msgInput.placeholder =
           allies.length > 0
             ? `Message ${client.resolveDisplayTag(client.activeDmPeerId)} ($0.00 gas)…`
@@ -2606,13 +2752,47 @@ export function mountSlxSocialWidgets({
       }
     }
     if (refs.msgSendBtn) {
-      refs.msgSendBtn.disabled = busy || (activeMsgTab === 'dm' && allies.length === 0);
-      refs.msgSendBtn.textContent = busy ? '⏳…' : activeMsgTab === 'wall' ? 'Post →' : 'Send →';
+      refs.msgSendBtn.disabled =
+        busy ||
+        (activeMsgTab === 'dm' && allies.length === 0) ||
+        (activeMsgTab === 'ecies' && !activeEciesCh?.isActiveMember);
+      refs.msgSendBtn.textContent = busy ? '⏳…' : activeMsgTab === 'wall' ? 'Post →' : activeMsgTab === 'ecies' ? '🔐 Send' : 'Send →';
     }
 
     if (!refs.msgScroll) return;
 
-    if (activeMsgTab === 'dm') {
+    if (activeMsgTab === 'ecies') {
+      if (!activeEciesCh) {
+        refs.msgScroll.innerHTML = `
+          <div style="padding:0.85rem;border-radius:0.65rem;background:rgba(15,23,42,0.8);border:1px dashed rgba(52,211,153,0.45);display:flex;flex-direction:column;gap:0.45rem;">
+            <strong style="color:#6ee7b7;font-size:0.78rem;">🔐 Sovereign ECIES + AES-256-GCM Multi-Topic Channels</strong>
+            <div style="color:#cbd5e1;font-size:0.71rem;">
+              Select 1 or more Identities above and click <strong>🔐 Open</strong>. Channels are deduplicated on-chain by hashing the sorted list of member <code>secp256k1</code> public keys, self-discovered directly from your <code>Identity</code> HFS, and protected by rolling <code>AES-256-GCM</code> epoch keys!
+            </div>
+          </div>
+        `;
+      } else if (!client.eciesTopicMsgs?.length) {
+        const curTopic = activeEciesCh.topics?.find((t) => t.topicId === client.activeEciesTopicId);
+        refs.msgScroll.innerHTML = `<div style="color:#94a3b8;font-size:0.73rem;padding:0.6rem 0.2rem;">No messages in <strong>#${escapeHtmlText(curTopic?.title || 'General')}</strong> yet — send the first <code>AES-256-GCM</code> ciphertext below!</div>`;
+      } else {
+        refs.msgScroll.innerHTML = client.eciesTopicMsgs
+          .map((m) => {
+            const mine = m.author === myIdLow;
+            const author = mine ? 'You' : client.resolveDisplayTag(m.author);
+            return `
+              <div class="slx-soc-msg-bubble ${mine ? 'mine' : ''}">
+                <div style="display:flex;justify-content:space-between;gap:0.35rem;font-family:monospace;font-size:0.62rem;color:#94a3b8;">
+                  <strong style="color:${mine ? '#7dd3fc' : '#6ee7b7'};">${escapeHtmlText(author)}</strong>
+                  <span>🔑 Ep#${m.keyEpoch} • Blk #${m.blockNumber}</span>
+                </div>
+                <div style="color:${m.decrypted ? '#f8fafc' : '#94a3b8'};word-break:break-word;">${escapeHtmlText(m.text)}</div>
+              </div>
+            `;
+          })
+          .join('');
+        refs.msgScroll.scrollTop = refs.msgScroll.scrollHeight;
+      }
+    } else if (activeMsgTab === 'dm') {
       if (allies.length === 0) {
         refs.msgScroll.innerHTML = `
           <div style="padding:0.85rem;border-radius:0.65rem;background:rgba(15,23,42,0.8);border:1px dashed rgba(56,189,248,0.45);display:flex;flex-direction:column;gap:0.55rem;">
@@ -2799,7 +2979,22 @@ export function mountSlxSocialWidgets({
     setStatus('⏳ Signing & confirming message on Subnet 1 ($0.00 gas)…', 'info');
     renderDrawer();
     try {
-      if (activeMsgTab === 'dm') {
+      if (activeMsgTab === 'ecies') {
+        const sendRes = await client.sendEciesTopicMessage(wallet, {
+          channelId: client.activeEciesChannelId,
+          topicId: client.activeEciesTopicId,
+          text: txt,
+          appName: appTitle,
+        });
+        refs.msgInput.value = '';
+        setStatus(
+          sendRes?.rotatedKeyAutomatically
+            ? `✓ Auto-rolled AES-256-GCM key to Epoch #${sendRes.keyEpoch} & confirmed encrypted message!`
+            : `✓ Encrypted (AES-256-GCM Ep#${sendRes?.keyEpoch}) & confirmed on Subnet 1!`,
+          'ok'
+        );
+        return;
+      } else if (activeMsgTab === 'dm') {
         await client.sendDirectMessage(wallet, client.activeDmPeerId, txt, { appName: appTitle });
       } else if (activeMsgTab === 'lounge') {
         await client.postAppChannel(wallet, txt, { appName: appTitle });

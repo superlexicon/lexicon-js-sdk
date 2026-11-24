@@ -687,7 +687,8 @@ export const USECASE_DESCRIPTIONS = {
       { label: 'Physical-Encounter Commits', tone: 'cyan' },
       { label: 'Stake-Free Trust & Voucher Slashing', tone: 'amber' },
       { label: '6-Module code_hash Pinning', tone: 'indigo' },
-      { label: 'v2 Identity Spam Isolation', tone: 'violet' },
+      { label: 'ECIES + AES-256-GCM Channels', tone: 'emerald' },
+      { label: 'Pedersen-VSS Shamir Recovery', tone: 'violet' },
       { label: 'Zero ISP / Zero Cloud Servers', tone: 'sky' },
     ],
     tabs: {
@@ -744,8 +745,12 @@ export const USECASE_DESCRIPTIONS = {
             <p><code>social_charter.wasm</code> replaces financial stake with social accountability: citizens earn Trust through genuine presence leases and mutual encounters, and vouching for a bad actor triggers automatic on-chain <code>-18</code> Trust slashing on the voucher—bounding Sybil amplification mathematically.</p>
           </div>
           <div class="slx-ucd-card">
-            <h4>🪪 v2 <code>Identity</code> HFS Whitelist &amp; Spam Separation</h4>
-            <p>Each citizen’s <code>identity.wasm</code> v2 contract maintains an owner-signed HFS association register, allowing UIs to cleanly separate verified guild citizens from unvouched spam accounts (e.g. <code>@wolf_spam_bot</code>) on-chain.</p>
+            <h4>🔐 ECIES + <code>AES-256-GCM</code> Multi-Topic Channels &amp; Rolling Epoch Keys</h4>
+            <p><code>messaging.wasm</code> v2 deduplicates <code>1:1</code> and <code>M:N</code> channels by hashing the sorted concatenated <code>secp256k1</code> public keys (<code>SLX_ECIES_PK_ROSTER_V1</code>), automatically reuses existing channels to add new Sub-Topics, links bidirectionally with <code>identity.wasm</code> for zero-indexer self-discovery, and enforces pre-join/post-leave secrecy via rolling <code>AES-256-GCM</code> epoch keys.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🛡️ Multi-Device <code>Identity</code> v4 &amp; Pedersen-VSS Blinded Shamir Recovery</h4>
+            <p>Each citizen’s <code>identity.wasm</code> v4 supports multiple self-managed device keypairs (with ECIES-wrapped encryption seeds), <code>N</code>-capped <code>GuardianKeychain</code> blast-radius sharding, and <code>2-of-3</code> Pedersen-VSS Shamir recovery where a Stateless Biometric Oracle submits a <code>416 B</code> ECDH-blinded Schnorr proof—never seeing or storing your key.</p>
           </div>
           <div class="slx-ucd-card">
             <h4>🧬 6-Subroutine <code>code_hash</code> Constitutional Pinning</h4>

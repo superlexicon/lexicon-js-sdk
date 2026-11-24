@@ -22,3 +22,5 @@ export * from './identity.js';
 export * from './social.js';
 export * from './confidential.js';
 export * from './bulletproofs.js';
+export * from './recovery.js';
+export * from './ecies_messaging.js';

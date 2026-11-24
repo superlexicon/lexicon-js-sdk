@@ -39,6 +39,7 @@ import {
   readOnChainIdentityNickname,
   readOnChainIdentityOwner,
 } from './identity.js';
+import { SlxEciesChannelClient } from './ecies_messaging.js';
 
 export const SUBNET1_FLEET_SOCIAL_DEFAULT = {
   identityRegistry: '0x35779fc846c1f35fe209032ec7c31830bc8b4ef9',
@@ -368,6 +369,16 @@ export class SlxSocialClient {
     this.dmMsgs = [];
     this.activeDmPeerId = '';
 
+    this.ecies = new SlxEciesChannelClient({
+      rpcUrlFn: () => this.rpcUrlFn(),
+      defaultMessagingAddr: (suiteOverride || SUBNET1_FLEET_SOCIAL_DEFAULT).messaging,
+    });
+    this.eciesChannels = [];
+    this.activeEciesChannelId = '';
+    this.activeEciesTopicId = 0;
+    this.eciesTopicMsgs = [];
+    this.activeEciesDetails = null;
+
     this.connectedIds = new Set();
     this.incomingHandshakes = [];
     this.outgoingIds = new Set();
@@ -392,10 +403,12 @@ export class SlxSocialClient {
 
   async ensureSuite() {
     if (this.suite?.charter && this.suite?.relationships && this.suite?.feed) {
+      this.ecies.defaultMessagingAddr = String(this.suite.messaging || '').toLowerCase();
       return this.suite;
     }
     const { manifest } = await SlxHfsCache.hydrateWithManifest().catch(() => ({ manifest: null }));
     this.suite = manifest?.fleetSocial || SUBNET1_FLEET_SOCIAL_DEFAULT;
+    this.ecies.defaultMessagingAddr = String(this.suite.messaging || '').toLowerCase();
     return this.suite;
   }
 
@@ -558,11 +571,60 @@ export class SlxSocialClient {
       this.dmMsgs = [];
     }
 
+    // Self-discover ECIES channels directly from user's `Identity` HFS + `Messaging` HFS
+    if (myIdLow) {
+      this.eciesChannels = await this.ecies.listIdentityChannels(myIdLow).catch(() => []);
+      if (
+        (!this.activeEciesChannelId ||
+          !this.eciesChannels.some((c) => c.channelId === this.activeEciesChannelId)) &&
+        this.eciesChannels.length > 0
+      ) {
+        this.activeEciesChannelId = this.eciesChannels[0].channelId;
+        this.activeEciesTopicId = 0;
+      }
+      if (this.activeEciesChannelId) {
+        const chSummary = this.eciesChannels.find((c) => c.channelId === this.activeEciesChannelId);
+        if (chSummary && this.activeEciesTopicId >= chSummary.topicCount) {
+          this.activeEciesTopicId = 0;
+        }
+        for (const memId of chSummary?.members || []) {
+          this.resolveDisplayTag(memId);
+        }
+        const readRes = await this.ecies
+          .readDecryptedTopicMessages(wallet, myIdLow, {
+            channelId: this.activeEciesChannelId,
+            topicId: this.activeEciesTopicId,
+            maxMessages: 40,
+            messagingAddr: chSummary?.messagingAddr || suite.messaging,
+          })
+          .catch(() => ({ details: null, messages: [] }));
+        this.activeEciesDetails = readRes.details;
+        this.eciesTopicMsgs = readRes.messages || [];
+        for (const em of this.eciesTopicMsgs) {
+          this.resolveDisplayTag(em.author);
+        }
+      } else {
+        this.activeEciesDetails = null;
+        this.eciesTopicMsgs = [];
+      }
+    } else {
+      this.eciesChannels = [];
+      this.activeEciesDetails = null;
+      this.eciesTopicMsgs = [];
+    }
+
     for (const m of [...this.appChannelMsgs, ...this.dmMsgs]) {
       this.resolveDisplayTag(m.authorAddr);
     }
     this._emit();
     return this;
+  }
+
+  async setActiveEciesChannel(channelId, topicId = 0, wallet = null) {
+    this.activeEciesChannelId = String(channelId || '').toLowerCase();
+    this.activeEciesTopicId = Number(topicId || 0);
+    await this.refresh(wallet);
+    return this.eciesTopicMsgs;
   }
 
   async setActiveDmPeer(peerIdentityAddr, wallet = null) {
@@ -840,5 +902,106 @@ export class SlxSocialClient {
     );
     await this.refresh(wallet);
     return true;
+  }
+
+  async openOrReuseEciesChannel(
+    wallet,
+    { members = [], channelLabel = '', topicTitle = 'General', appName = 'ECIES Comms' } = {}
+  ) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const res = await this.ecies.openOrReuseChannelWithTopic(wallet, this.myIdentityAddr, {
+      members,
+      channelLabel,
+      topicTitle,
+      messagingAddr: suite.messaging,
+    });
+    if (res?.channelId) {
+      this.activeEciesChannelId = res.channelId;
+      this.activeEciesTopicId = Number(res.topicId || 0);
+    }
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async createEciesTopic(wallet, channelId, topicTitle, { appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const res = await this.ecies.createTopic(wallet, this.myIdentityAddr, channelId, topicTitle, suite.messaging);
+    this.activeEciesChannelId = String(channelId).toLowerCase();
+    this.activeEciesTopicId = Number(res?.topicId || 0);
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async sendEciesTopicMessage(wallet, { channelId, topicId = 0, text, appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const clean = String(text || '').trim();
+    if (!clean) return null;
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const cid = String(channelId || this.activeEciesChannelId || '').toLowerCase();
+    const ch = this.eciesChannels.find((c) => c.channelId === cid);
+    const res = await this.ecies.sendTopicMessage(wallet, this.myIdentityAddr, {
+      channelId: cid,
+      topicId: Number(topicId ?? this.activeEciesTopicId ?? 0),
+      text: clean,
+      messagingAddr: ch?.messagingAddr || suite.messaging,
+    });
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async rollEciesChannelKey(wallet, channelId, { appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const cid = String(channelId || this.activeEciesChannelId || '').toLowerCase();
+    const ch = this.eciesChannels.find((c) => c.channelId === cid);
+    const res = await this.ecies.rollChannelKey(wallet, this.myIdentityAddr, cid, ch?.messagingAddr || suite.messaging);
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async addEciesChannelMember(wallet, channelId, newMemberId, { appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const cid = String(channelId || this.activeEciesChannelId || '').toLowerCase();
+    const ch = this.eciesChannels.find((c) => c.channelId === cid);
+    const res = await this.ecies.addChannelMember(wallet, this.myIdentityAddr, cid, newMemberId, ch?.messagingAddr || suite.messaging);
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async removeEciesChannelMember(wallet, channelId, targetMemberId, { appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const cid = String(channelId || this.activeEciesChannelId || '').toLowerCase();
+    const ch = this.eciesChannels.find((c) => c.channelId === cid);
+    const res = await this.ecies.removeChannelMember(wallet, this.myIdentityAddr, cid, targetMemberId, ch?.messagingAddr || suite.messaging);
+    await this.refresh(wallet);
+    return res;
+  }
+
+  async leaveEciesChannel(wallet, channelId, { appName = 'ECIES Comms' } = {}) {
+    const suite = await this.ensureSuite();
+    const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl: this.rpcUrlFn(), appName });
+    if (!idRec?.identityAddr) return null;
+    this.myIdentityAddr = idRec.identityAddr.toLowerCase();
+    const cid = String(channelId || this.activeEciesChannelId || '').toLowerCase();
+    const ch = this.eciesChannels.find((c) => c.channelId === cid);
+    const res = await this.ecies.leaveChannel(wallet, this.myIdentityAddr, cid, ch?.messagingAddr || suite.messaging);
+    await this.refresh(wallet);
+    return res;
   }
 }

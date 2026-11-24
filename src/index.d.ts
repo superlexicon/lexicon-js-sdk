@@ -844,3 +844,153 @@ export function computeNoirIndictmentDelta0(
 ): Uint8Array;
 export function proveNoirIndictmentBlind(params: Record<string, any>): Uint8Array;
 export function decodeNoirCaseState(rawHexOrBytes: string | Uint8Array): any;
+
+// Multi-Device Identity v4, N-Capped Keychain & Pedersen-VSS Shamir Recovery (`./recovery.js`)
+export const DEV_STATUS_ACTIVE: number;
+export const DEV_STATUS_REVOKED: number;
+export const SLOT_STATUS_ACTIVE: number;
+export const SLOT_STATUS_SEALED_FULL: number;
+export const SLOT_STATUS_RETIRED: number;
+export const SHARE_KIND_GUARDIAN_SLOT: number;
+export const SHARE_KIND_DIRECT_EOA: number;
+export const SHARE_KIND_SELF_PASSPHRASE: number;
+export const REC_STATUS_NONE: number;
+export const REC_STATUS_COLLECTING: number;
+export const REC_STATUS_TIMELOCKED: number;
+export const REC_STATUS_FINALIZED: number;
+export const REC_STATUS_CANCELLED: number;
+export const DEVICE_SEED_WRAP_TAG: string;
+export const GUARDIAN_SHARE_WRAP_TAG: string;
+
+export function deriveIdentityMasterSeedBytes32(
+  creatorPrivateKeyHex: string,
+  identityAddrHex: string
+): Uint8Array;
+export function wrapMasterSeedForDevice(
+  masterSeedBytes32: string | Uint8Array,
+  deviceSecpPub64: string | Uint8Array
+): Uint8Array;
+export function unwrapMasterSeedWithDeviceKey(
+  wrappedSeedEnvelope: string | Uint8Array,
+  devicePrivateKeyHex: string
+): Uint8Array | null;
+export function resolveIdentityEncryptionKeys(
+  rpcUrl: string,
+  devicePrivateKeyHex: string,
+  identityAddrHex: string
+): Promise<{
+  secpPrivHex: string;
+  secpPub64Bytes: Uint8Array;
+  secpPub64Hex: string;
+  edSecretScalar: bigint;
+  edSecretHex32: string;
+  edPub32Bytes: Uint8Array;
+  edPub32Hex: string;
+  masterSeedBytes32: Uint8Array;
+  masterSeedHex: string;
+  deviceEoa: string;
+  deviceSecpPub64Bytes: Uint8Array;
+  unwrappedFromDeviceRing: boolean;
+}>;
+export function encryptShareWithPassphrase(
+  plainShare128: string | Uint8Array,
+  passphrase: string,
+  identityAddrHex: string
+): Promise<Uint8Array>;
+export function decryptShareWithPassphrase(
+  envelopeInput: string | Uint8Array,
+  passphrase: string,
+  identityAddrHex: string
+): Promise<Uint8Array>;
+export function splitSecretPedersenVss(
+  secretBytes32: string | Uint8Array,
+  threshold?: number,
+  shareCount?: number
+): {
+  threshold: number;
+  shareCount: number;
+  vssCommitsPacked: Uint8Array;
+  vssCommitsHex: string;
+  shares: any[];
+};
+export function packConfiguredShamirShares(shareSpecs: Record<string, any>[]): Uint8Array;
+export function proveBlindedRecoveryShare(params: Record<string, any>): {
+  proofBytes: Uint8Array;
+  proofHex: string;
+};
+export function unblindAndRecoverMasterSeed(params: Record<string, any>): {
+  masterSeedBytes32: Uint8Array;
+  masterSeedHex: string;
+};
+export function deriveRecoverySessionKeypair(
+  newDevicePrivateKeyHex: string,
+  identityAddrHex: string
+): Record<string, any>;
+export function buildStatelessOracleRecoverySubmission(
+  rpcUrl: string,
+  oracleSlotPrivateKeyHex: string,
+  wardIdentityAddr: string
+): Promise<Record<string, any>>;
+export const IdentityV4RecoveryAbi: Record<string, (...args: any[]) => string>;
+export function decodeOwnerDevicesHex(hex: string): any[];
+export function decodeGuardianSlotDescriptorHex(hex: string): Record<string, any> | null;
+export function decodeGuardianKeychainHex(hex: string): any[];
+export function decodeRecoveryStateHex(hex: string): Record<string, any>;
+
+// Sovereign ECIES + AES-256-GCM Multi-Topic Channels (`./ecies_messaging.js`)
+export const ECIES_CHANNEL_KEY_WRAP_TAG: string;
+export const HFS_TYPE_MESSAGING_ECIES: string;
+export function packChannelMembersBytes(memberAddrs: string[]): Uint8Array;
+export function computeCanonicalRosterHashes(memberEntries: Record<string, any>[]): {
+  sortedMembers: string[];
+  pkRosterHash: string;
+  idRosterHash: string;
+};
+export function generateChannelAesKey256(): Uint8Array;
+export function wrapChannelKeyForMembers(
+  aesKey32: string | Uint8Array,
+  memberPubKeys: Record<string, any>[]
+): Uint8Array;
+export function unwrapChannelKeyForEpoch(
+  wrapEnvelopeInput: string | Uint8Array,
+  identitySecpPrivHex: string
+): Uint8Array | null;
+export function buildTopicMessageAad(
+  messagingAddr: string,
+  channelIdHex: string,
+  topicId: number,
+  keyEpoch: number,
+  authorIdentityAddr: string
+): Uint8Array;
+export function encryptTopicMessageAesGcm(
+  aesKey32: string | Uint8Array,
+  payloadOrText: string | Record<string, any>,
+  aadBytes: Uint8Array
+): Promise<Uint8Array>;
+export function decryptTopicMessageAesGcm(
+  aesKey32: string | Uint8Array,
+  frameInput: string | Uint8Array,
+  aadBytes: Uint8Array
+): Promise<{ text: string; ts: number; payload: any } | null>;
+export const SlxEciesMessagingAbi: Record<string, (...args: any[]) => string>;
+export function decodeOpenChannelReturnHex(hex: string): Record<string, any> | null;
+export function decodeIdentityChannelsHex(hex: string, messagingAddr?: string): any[];
+export function decodeChannelDetailsHex(hex: string): Record<string, any> | null;
+export function decodeTopicMessagesHex(hex: string): {
+  returnedCount: number;
+  totalCount: number;
+  messages: any[];
+};
+export class SlxEciesChannelClient {
+  constructor(opts?: Record<string, any>);
+  discoverMessagingSubroutinesFromIdentity(identityAddr: string): Promise<string[]>;
+  listIdentityChannels(identityAddr: string): Promise<any[]>;
+  openOrReuseChannelWithTopic(wallet: any, myIdentityAddr: string, opts: Record<string, any>): Promise<any>;
+  createTopic(wallet: any, myIdentityAddr: string, channelId: string, topicTitle: string, messagingAddr?: string): Promise<any>;
+  rollChannelKey(wallet: any, myIdentityAddr: string, channelId: string, messagingAddr?: string): Promise<any>;
+  addChannelMember(wallet: any, myIdentityAddr: string, channelId: string, newMemberIdentityAddr: string, messagingAddr?: string): Promise<any>;
+  removeChannelMember(wallet: any, myIdentityAddr: string, channelId: string, targetMemberIdentityAddr: string, messagingAddr?: string): Promise<any>;
+  leaveChannel(wallet: any, myIdentityAddr: string, channelId: string, messagingAddr?: string): Promise<any>;
+  sendTopicMessage(wallet: any, myIdentityAddr: string, opts: Record<string, any>): Promise<any>;
+  readDecryptedTopicMessages(wallet: any, myIdentityAddr: string, opts: Record<string, any>): Promise<any>;
+}

@@ -313,7 +313,17 @@ export class SlxWalletManager {
           // Transient RPC disconnect: do not wipe localStorage blindly while offline
           return rec;
         }
-        if (chk.deployed && chk.owner.toLowerCase() === eoa) {
+        let isActiveOwner = chk.deployed && chk.owner.toLowerCase() === eoa;
+        if (chk.deployed && !isActiveOwner) {
+          try {
+            const devRaw = await slxNodeRpc(rpcUrl, 'eth_call', [
+              { to: rec.identityAddr, data: encodeAbi('isOwnerDevice(address)', [['address', eoa]]) },
+              'latest',
+            ]);
+            isActiveOwner = decodeUintWord(devRaw) === 1;
+          } catch (_) {}
+        }
+        if (isActiveOwner) {
           this.lastClearedIdentityNotice = null;
           const liveNick = await readOnChainIdentityNickname(rpcUrl, rec.identityAddr);
           const verifiedRec =
@@ -654,6 +664,36 @@ export class SlxWalletManager {
     });
     await waitReceiptsChecked(rpcUrl, [txHash]);
     return this.saveIdentityRecord({ ...rec, nickname }, myEoa);
+  }
+
+  async bindExistingMultiDeviceIdentity(identityAddrHex, { rpcUrl = getDefaultNodeWsUrl() } = {}) {
+    const cleanAddr = String(identityAddrHex || '').trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(cleanAddr) || cleanAddr === ZERO_ADDR) {
+      throw new Error('Enter a valid 20-byte Identity HFS address (0x…).');
+    }
+    const myEoa = this.keypair.address.toLowerCase();
+    const chk = await checkIdentityDeployedOnChain(rpcUrl, cleanAddr);
+    if (!chk.deployed) {
+      throw new Error(`No deployed Identity HFS found at ${shortHex(cleanAddr)}.`);
+    }
+    let isOwner = chk.owner.toLowerCase() === myEoa;
+    if (!isOwner) {
+      const devRaw = await slxNodeRpc(rpcUrl, 'eth_call', [
+        { to: cleanAddr, data: encodeAbi('isOwnerDevice(address)', [['address', myEoa]]) },
+        'latest',
+      ]);
+      isOwner = decodeUintWord(devRaw) === 1;
+    }
+    if (!isOwner) {
+      throw new Error(`Current device EOA (${shortHex(myEoa)}) is not an active owner device on ${shortHex(cleanAddr)}.`);
+    }
+    const nickname =
+      (await readOnChainIdentityNickname(rpcUrl, cleanAddr)) || `Capt_${truncAddr4(cleanAddr)}`;
+    this._verifiedCache.clear();
+    return this.saveIdentityRecord(
+      { identityAddr: cleanAddr, nickname, handle: nickname },
+      myEoa
+    );
   }
 
   async ensureIdentityWithPrompt({
