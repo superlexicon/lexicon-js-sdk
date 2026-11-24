@@ -25,8 +25,312 @@ export const PUBLIC_SUBNET1_WSS_RPC = PUBLIC_SUBNET1_WSS_RPC_NODES[0];
 let _preferredPublicWssRpc = PUBLIC_SUBNET1_WSS_RPC;
 export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
 const STORAGE_KEY_HFS_CACHE = 'slx_hfs_address_cache_v1';
+const STORAGE_KEY_ACTIVE_SUBNET = 'slx_active_subnet_v1';
+const STORAGE_KEY_CUSTOM_SUBNETS = 'slx_custom_subnets_v1';
+const STORAGE_KEY_DISCOVERED_SUBNETS = 'slx_discovered_subnets_meta_v1';
+
+function _httpToWs(u) {
+  const s = String(u || '').trim();
+  if (!s) return '';
+  if (s.startsWith('ws://') || s.startsWith('wss://')) return s;
+  if (s.startsWith('https://')) return 'wss://' + s.slice('https://'.length);
+  if (s.startsWith('http://')) return 'ws://' + s.slice('http://'.length);
+  return 'ws://' + s;
+}
+
+function _getLanPrefix() {
+  if (typeof window !== 'undefined' && window.location?.hostname) {
+    const h = window.location.hostname.toLowerCase();
+    if (h.startsWith('192.168.1.')) return '192.168.1';
+  }
+  return '192.168.50';
+}
+
+export const SlxSubnetManager = {
+  _hydratedDiscovery: false,
+
+  getBuiltInSubnets() {
+    const isHttps =
+      typeof window !== 'undefined' &&
+      (window.location?.protocol === 'https:' ||
+        String(window.location?.hostname || '').toLowerCase().endsWith('superlexicon.com'));
+    const lanPrefix = _getLanPrefix();
+    const host =
+      typeof window !== 'undefined' && window.location?.hostname
+        ? window.location.hostname
+        : `${lanPrefix}.91`;
+    const localHostRpc =
+      host === 'localhost' || host === '127.0.0.1'
+        ? `ws://${lanPrefix}.91:8545`
+        : `ws://${host}:8545`;
+
+    let meta = {};
+    if (typeof localStorage !== 'undefined') {
+      try {
+        meta = JSON.parse(localStorage.getItem(STORAGE_KEY_DISCOVERED_SUBNETS) || '{}') || {};
+      } catch (_) {}
+    }
+
+    const s1 = {
+      key: 'subnet1',
+      name: 'Subnet 1 — 915 MHz LR2021 RF',
+      shortLabel: 'SUBNET 1 • RF',
+      icon: '📡',
+      transport: 'flrc',
+      subnetId: meta.subnet1?.subnetId || '00000001',
+      manifestUrl: '/contracts/subnet1-deployments.json',
+      rpcUrl: isHttps ? _preferredPublicWssRpc : localHostRpc,
+      pubsubWsUrls: isHttps
+        ? [
+            'wss://node1.superlexicon.com',
+            'wss://node3.superlexicon.com',
+            'wss://node4.superlexicon.com',
+            'wss://node2.superlexicon.com',
+          ]
+        : [
+            `ws://${lanPrefix}.91:8566`,
+            `ws://${lanPrefix}.93:8566`,
+            `ws://${lanPrefix}.94:8566`,
+            `ws://${lanPrefix}.92:8566`,
+            `ws://${host}:8566`,
+            `ws://${host}:8546`,
+          ],
+      validatorNodes: isHttps
+        ? [
+            { name: 'Validator node1', url: 'wss://node1.superlexicon.com/rpc', pubkeyPrefix: 'c8692b6e' },
+            { name: 'Validator node2', url: 'wss://node2.superlexicon.com/rpc', pubkeyPrefix: '75c9f6e5' },
+            { name: 'Validator node3', url: 'wss://node3.superlexicon.com/rpc', pubkeyPrefix: '33b12ce4' },
+            { name: 'Validator node4', url: 'wss://node4.superlexicon.com/rpc', pubkeyPrefix: 'fbfc4fee' },
+          ]
+        : [
+            { name: `RF Validator 1 (.91)`, url: `ws://${lanPrefix}.91:8545`, pubkeyPrefix: 'c8692b6e' },
+            { name: `RF Validator 2 (.92)`, url: `ws://${lanPrefix}.92:8555`, pubkeyPrefix: '75c9f6e5' },
+            { name: `RF Validator 3 (.93)`, url: `ws://${lanPrefix}.93:8545`, pubkeyPrefix: '33b12ce4' },
+            { name: `RF Validator 4 (.94)`, url: `ws://${lanPrefix}.94:8545`, pubkeyPrefix: 'fbfc4fee' },
+          ],
+      builtin: true,
+    };
+
+    const s2RpcUrls = Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
+      ? meta.subnet2.rpcUrls.map(_httpToWs)
+      : [`ws://${lanPrefix}.91:18545`, `ws://${lanPrefix}.92:18545`, `ws://${lanPrefix}.94:18545`];
+    const s2PubsubUrls = Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
+      ? meta.subnet2.wsUrls
+      : [`ws://${lanPrefix}.91:18566`, `ws://${lanPrefix}.92:18566`, `ws://${lanPrefix}.94:18566`];
+
+    const s2 = {
+      key: 'subnet2',
+      name: meta.subnet2?.name || 'Subnet 2 — Encrypted TCP/IP Mesh',
+      shortLabel: 'SUBNET 2 • TCP',
+      icon: '🔌',
+      transport: meta.subnet2?.transport || 'tcp',
+      subnetId: meta.subnet2?.subnetId || '6eaa3da4',
+      manifestUrl: '/contracts/subnet2-deployments.json',
+      rpcUrl: s2RpcUrls[0],
+      pubsubWsUrls: s2PubsubUrls,
+      validatorNodes: s2RpcUrls.map((u, idx) => ({
+        name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+        url: u,
+        pubkeyPrefix: null,
+      })),
+      builtin: true,
+    };
+
+    const extraFromConfig = Array.isArray(meta.configuredSubnets) ? meta.configuredSubnets : [];
+    return isHttps ? [s1, ...extraFromConfig] : [s1, s2, ...extraFromConfig];
+  },
+
+  getCustomSubnets() {
+    if (typeof localStorage === 'undefined') return [];
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY_CUSTOM_SUBNETS) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch (_) {
+      return [];
+    }
+  },
+
+  listSubnets() {
+    const builtins = this.getBuiltInSubnets();
+    const customs = this.getCustomSubnets().map((c) => {
+      const wsRpc = _httpToWs(c.rpcUrl);
+      let pubsub = c.pubsubWsUrl ? [_httpToWs(c.pubsubWsUrl)] : [];
+      if (!pubsub.length && wsRpc) {
+        try {
+          const u = new URL(wsRpc);
+          const p = Number(u.port || 8545);
+          const u1 = new URL(wsRpc);
+          u1.port = String(p + 21); // 8545 -> 8566, 18545 -> 18566
+          const u2 = new URL(wsRpc);
+          u2.port = String(p + 1); // 8545 -> 8546
+          pubsub = [u1.toString().replace(/\/$/, ''), u2.toString().replace(/\/$/, '')];
+        } catch (_) {}
+      }
+      return {
+        key: c.key,
+        name: c.name || `Custom Subnet (${wsRpc})`,
+        shortLabel: c.shortLabel || (c.name ? c.name.slice(0, 16).toUpperCase() : 'CUSTOM SUBNET'),
+        icon: c.transport === 'flrc' ? '📡' : '🌐',
+        transport: c.transport || 'tcp',
+        subnetId: c.subnetId || 'custom',
+        manifestUrl: c.manifestUrl || '',
+        rpcUrl: wsRpc,
+        pubsubWsUrls: pubsub,
+        validatorNodes: [{ name: c.name || 'Subnet Validator', url: wsRpc, pubkeyPrefix: null }],
+        builtin: false,
+      };
+    });
+    return [...builtins, ...customs];
+  },
+
+  getActiveSubnetKey() {
+    if (typeof window !== 'undefined' && window.location?.search) {
+      try {
+        const q = new URLSearchParams(window.location.search).get('subnet');
+        if (q && this.listSubnets().some((s) => s.key === q || s.subnetId === q)) {
+          const matched = this.listSubnets().find((s) => s.key === q || s.subnetId === q);
+          if (matched && typeof localStorage !== 'undefined') {
+            localStorage.setItem(STORAGE_KEY_ACTIVE_SUBNET, matched.key);
+          }
+          return matched ? matched.key : 'subnet1';
+        }
+      } catch (_) {}
+    }
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SUBNET);
+      if (saved && this.listSubnets().some((s) => s.key === saved)) {
+        return saved;
+      }
+    }
+    return 'subnet1';
+  },
+
+  getActiveSubnetProfile() {
+    const key = this.getActiveSubnetKey();
+    const list = this.listSubnets();
+    const prof = list.find((s) => s.key === key) || list[0];
+    if (typeof window !== 'undefined' && prof) {
+      window.__SLX_ACTIVE_SUBNET__ = prof;
+      window.__SLX_ACTIVE_PUBSUB_WS_URLS__ = prof.pubsubWsUrls || [];
+    }
+    return prof;
+  },
+
+  setActiveSubnetKey(key, { reload = true } = {}) {
+    const list = this.listSubnets();
+    const target = list.find((s) => s.key === key) || list[0];
+    if (!target) return null;
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEY_ACTIVE_SUBNET, target.key);
+      } catch (_) {}
+    }
+    if (typeof window !== 'undefined') {
+      window.__SLX_ACTIVE_SUBNET__ = target;
+      window.__SLX_ACTIVE_PUBSUB_WS_URLS__ = target.pubsubWsUrls || [];
+      try {
+        const u = new URL(window.location.href);
+        if (target.key === 'subnet1') u.searchParams.delete('subnet');
+        else u.searchParams.set('subnet', target.key);
+        window.history.replaceState({}, '', u.toString());
+      } catch (_) {}
+      window.dispatchEvent(new CustomEvent('slx:subnet-changed', { detail: target }));
+      if (reload) {
+        window.location.reload();
+      }
+    }
+    return target;
+  },
+
+  addCustomSubnet({ name, rpcUrl, pubsubWsUrl = '', manifestUrl = '', transport = 'tcp', subnetId = '' }) {
+    const cleanRpc = _httpToWs(rpcUrl);
+    if (!cleanRpc) throw new Error('RPC URL is required');
+    const key = `custom_${Date.now().toString(36)}`;
+    const list = this.getCustomSubnets();
+    list.push({
+      key,
+      name: String(name || cleanRpc).trim(),
+      shortLabel: String(name || 'CUSTOM').trim().slice(0, 16).toUpperCase(),
+      rpcUrl: cleanRpc,
+      pubsubWsUrl: pubsubWsUrl ? _httpToWs(pubsubWsUrl) : '',
+      manifestUrl: String(manifestUrl || '').trim(),
+      transport,
+      subnetId: String(subnetId || '').trim(),
+    });
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_SUBNETS, JSON.stringify(list));
+    }
+    return key;
+  },
+
+  removeCustomSubnet(key) {
+    const next = this.getCustomSubnets().filter((c) => c.key !== key);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_SUBNETS, JSON.stringify(next));
+    }
+    if (this.getActiveSubnetKey() === key) {
+      this.setActiveSubnetKey('subnet1', { reload: true });
+    }
+  },
+
+  async refreshDiscoveryMetadata() {
+    if (typeof fetch === 'undefined') return;
+    const meta = {};
+    try {
+      const r2 = await fetch('/contracts/subnet2-deployments.json', { cache: 'no-store' });
+      if (r2.ok) {
+        const j2 = await r2.json();
+        meta.subnet2 = {
+          subnetId: j2.subnetId || '6eaa3da4',
+          transport: j2.transport || 'tcp',
+          rpcUrls: j2.rpcUrls || [],
+          wsUrls: j2.wsUrls || [],
+        };
+        if (j2.subnet1Id) {
+          meta.subnet1 = { subnetId: j2.subnet1Id };
+        }
+      }
+    } catch (_) {}
+    try {
+      const rs = await fetch('/contracts/subnets.json', { cache: 'no-store' });
+      if (rs.ok) {
+        const js = await rs.json();
+        if (Array.isArray(js?.subnets)) {
+          meta.configuredSubnets = js.subnets
+            .filter((x) => x && x.key && x.key !== 'subnet1' && x.key !== 'subnet2' && x.rpcUrl)
+            .map((x) => ({
+              key: String(x.key),
+              name: x.name || String(x.key),
+              shortLabel: x.shortLabel || String(x.name || x.key).slice(0, 16).toUpperCase(),
+              icon: x.transport === 'flrc' ? '📡' : '🔌',
+              transport: x.transport || 'tcp',
+              subnetId: x.subnetId || '',
+              manifestUrl: x.manifestUrl || '',
+              rpcUrl: _httpToWs(x.rpcUrl),
+              pubsubWsUrls: Array.isArray(x.pubsubWsUrls) ? x.pubsubWsUrls.map(_httpToWs) : [],
+              validatorNodes: Array.isArray(x.validatorNodes)
+                ? x.validatorNodes
+                : [{ name: x.name || 'Validator', url: _httpToWs(x.rpcUrl), pubkeyPrefix: null }],
+              builtin: true,
+            }));
+        }
+      }
+    } catch (_) {}
+    if (typeof localStorage !== 'undefined' && Object.keys(meta).length > 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY_DISCOVERED_SUBNETS, JSON.stringify(meta));
+      } catch (_) {}
+    }
+    this._hydratedDiscovery = true;
+    return this.getActiveSubnetProfile();
+  },
+};
 
 export function getDefaultNodeWsUrl() {
+  const active = SlxSubnetManager.getActiveSubnetProfile();
+  if (active && active.key !== 'subnet1' && active.rpcUrl) {
+    return active.rpcUrl;
+  }
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const host = window.location.hostname.toLowerCase();
     if (window.location.protocol === 'https:' || host.endsWith('superlexicon.com')) {
@@ -37,11 +341,16 @@ export function getDefaultNodeWsUrl() {
   return _preferredPublicWssRpc;
 }
 
+function _scopedCacheStorageKey() {
+  const key = SlxSubnetManager.getActiveSubnetKey();
+  return key === 'subnet1' ? STORAGE_KEY_HFS_CACHE : `${STORAGE_KEY_HFS_CACHE}:${key}`;
+}
+
 export const SlxHfsCache = {
   load() {
     if (typeof localStorage === 'undefined') return {};
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_HFS_CACHE);
+      const raw = localStorage.getItem(_scopedCacheStorageKey());
       return raw ? JSON.parse(raw) : {};
     } catch (_) {
       return {};
@@ -51,12 +360,19 @@ export const SlxHfsCache = {
     const next = { ...this.load(), ...patch };
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(STORAGE_KEY_HFS_CACHE, JSON.stringify(next));
+        localStorage.setItem(_scopedCacheStorageKey(), JSON.stringify(next));
       } catch (_) {}
     }
     return next;
   },
-  async hydrateWithManifest(manifestUrl = '/contracts/subnet1-deployments.json') {
+  async hydrateWithManifest(manifestUrl = undefined) {
+    await SlxSubnetManager.refreshDiscoveryMetadata().catch(() => null);
+    const activeProf = SlxSubnetManager.getActiveSubnetProfile();
+    const effectiveManifestUrl =
+      manifestUrl !== undefined
+        ? manifestUrl
+        : activeProf?.manifestUrl || '/contracts/subnet1-deployments.json';
+
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.removeItem('slx_inst_wasm_snapshot_v1');
@@ -64,15 +380,15 @@ export const SlxHfsCache = {
     }
     let cached = this.load();
     let manifest = null;
-    if (typeof fetch !== 'undefined') {
+    if (typeof fetch !== 'undefined' && effectiveManifestUrl) {
       try {
-        const res = await fetch(manifestUrl, { cache: 'no-store' });
+        const res = await fetch(effectiveManifestUrl, { cache: 'no-store' });
         if (res.ok) manifest = await res.json();
       } catch (_) {}
     }
     const manifestReg = String(manifest?.hfsRegistry || '').toLowerCase();
     const cachedReg = String(cached.hfsRegistry || '').toLowerCase();
-    if (manifestReg && cachedReg !== manifestReg) {
+    if (activeProf?.key === 'subnet1' && manifestReg && cachedReg !== manifestReg) {
       if (typeof localStorage !== 'undefined') {
         try {
           // Preserve returning users' chosen nicknames before purging stale pre-reset chain caches
@@ -112,6 +428,7 @@ export const SlxHfsCache = {
       typeof window !== 'undefined' && window.location?.protocol === 'https:';
     const cachedRpc = String(cached.rpcUrl || '');
     const isStaleCachedRpc =
+      (activeProf && activeProf.key !== 'subnet1') ||
       !cachedRpc.startsWith('ws') ||
       cachedRpc.includes('superlexicon.com:8545') ||
       (isHttpsPage && cachedRpc.startsWith('ws://')) ||
@@ -124,8 +441,12 @@ export const SlxHfsCache = {
         ? cached.socialCharterAddr
         : '';
     const merged = {
+      subnetKey: activeProf?.key || 'subnet1',
+      subnetId: manifest?.subnetId || activeProf?.subnetId || '00000001',
       rpcUrl: useRpc,
       hfsRegistry: manifest?.hfsRegistry || cached.hfsRegistry || '',
+      messagingAddr:
+        manifest?.messaging || manifest?.commonsRf?.messaging || cached.messagingAddr || '',
       deployedAt: manifest?.deployedAt || cached.deployedAt || '',
       battleshipAddr: manifest?.battleship?.contractAddr || cached.battleshipAddr || '',
       battleId: manifest?.battleship?.battleId || cached.battleId || '',
@@ -150,7 +471,7 @@ export const SlxHfsCache = {
       codeHashes: manifest?.codeHashes || {},
     };
     this.save(merged);
-    return { cache: merged, manifest };
+    return { cache: merged, manifest, subnet: activeProf };
   },
 };
 

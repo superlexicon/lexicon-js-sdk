@@ -67,7 +67,7 @@ export function toPubSubWsUrl(inputUrl) {
     }
     if (u.port) {
       const p = Number(u.port);
-      if (Number.isFinite(p) && p >= 8500 && p < 9000 && p % 10 === 5) {
+      if (Number.isFinite(p) && p >= 8500 && p < 65500 && p % 10 === 5) {
         u.port = String(p + 1);
       }
     }
@@ -87,6 +87,23 @@ export function derivePubSubWsCandidates(rpcUrl) {
     if (!out.includes(u)) out.push(u);
   };
 
+  const activeSubnet =
+    typeof window !== 'undefined' ? window.__SLX_ACTIVE_SUBNET__ : null;
+  if (activeSubnet && Array.isArray(activeSubnet.pubsubWsUrls)) {
+    for (const u of activeSubnet.pubsubWsUrls) pushUnique(u);
+  }
+
+  // Also include `+21` pub/sub port convention (`8545 -> 8566`, `18545 -> 18566`)
+  try {
+    const rawWs = String(rpcUrl || '').replace(/^http/, 'ws');
+    const u = new URL(rawWs);
+    const p = Number(u.port);
+    if (Number.isFinite(p) && p % 100 === 45) {
+      u.port = String(p + 21);
+      pushUnique(u.toString().replace(/\/$/, ''));
+    }
+  } catch (_) {}
+
   const primary = toPubSubWsUrl(rpcUrl);
   // If `primary` is a public validator subdomain (`wss://nodeX.superlexicon.com`), prefer the last
   // verified-healthy TLS validator first so an expired/restarting node never stalls initial subscribe.
@@ -95,8 +112,10 @@ export function derivePubSubWsCandidates(rpcUrl) {
   }
   pushUnique(primary);
 
-  for (const pub of PUBLIC_PUBSUB_WS_NODES) {
-    pushUnique(pub);
+  if (!activeSubnet || activeSubnet.key === 'subnet1') {
+    for (const pub of PUBLIC_PUBSUB_WS_NODES) {
+      pushUnique(pub);
+    }
   }
   return out.length ? out : [...PUBLIC_PUBSUB_WS_NODES];
 }

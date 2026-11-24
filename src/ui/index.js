@@ -10,7 +10,7 @@
  */
 
 import { shortHex, truncAddr4 } from '../abi.js';
-import { getDefaultNodeWsUrl, SlxHfsCache } from '../rpc.js';
+import { getDefaultNodeWsUrl, SlxHfsCache, SlxSubnetManager } from '../rpc.js';
 import { slxSubscribeStats, slxSubscribeNewHeads } from '../events.js';
 import {
   HFS_TYPES,
@@ -1826,15 +1826,28 @@ function normHexPrefixed(h) {
  *  - Live Mempool Queue + Cumulative Chain Confirmed Transactions + `$0.00 Gas`
  *  - Active HFS Contract Address Chip (Click-to-Copy) + Optional `⚙ Node` Toggle + `📊 Explorer ↗`
  */
+function isSlidesDeployment() {
+  if (typeof __SLX_HAS_SLIDES__ !== 'undefined') {
+    return Boolean(__SLX_HAS_SLIDES__);
+  }
+  return Boolean(typeof window !== 'undefined' && window.__SLX_HAS_SLIDES__);
+}
+
 export function mountSlxChainBar({
   mountContainer = null,
   rpcUrlFn = () => getDefaultNodeWsUrl(),
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/?view=explorer#slide-4',
+  explorerHref = undefined,
   embedded = false,
 } = {}) {
+  const effectiveExplorerHref =
+    explorerHref !== undefined
+      ? explorerHref
+      : isSlidesDeployment()
+      ? '/?view=explorer#slide-4'
+      : '/explorer.html';
   if (typeof document === 'undefined') return null;
   injectSlxUiStyles();
 
@@ -1851,16 +1864,18 @@ export function mountSlxChainBar({
   // Idempotent replace if already mounted in this container
   host.innerHTML = '';
 
+  const initSubnet = SlxSubnetManager.getActiveSubnetProfile();
   const bar = document.createElement('div');
   bar.className = embedded ? 'slx-chain-bar embedded' : 'slx-chain-bar';
   bar.setAttribute('role', 'region');
   bar.setAttribute('aria-label', 'SuperLexicon Live Blockchain Telemetry');
   bar.innerHTML = `
     <div class="slx-cb-group">
-      <span class="slx-cb-net" title="Connected to SuperLexicon Subnet 1 BFT Blockchain Mesh">
+      <button type="button" class="slx-cb-net slx-cb-subnet-btn" data-cb="subnetbtn" aria-expanded="false" title="Select Active SuperLexicon Subnet (switches live telemetry &amp; HFS directory)">
         <span class="slx-cb-dot" data-cb="dot"></span>
-        <span>SUBNET 1 CHAIN</span>
-      </span>
+        <span data-cb="subnetlbl">${escapeHtmlText(initSubnet?.icon || '📡')} ${escapeHtmlText(initSubnet?.shortLabel || 'SUBNET 1')} (${escapeHtmlText(initSubnet?.subnetId || '00000001')})</span>
+        <span style="opacity:0.75;font-size:0.62rem;">▾</span>
+      </button>
       <span class="slx-cb-chip" data-cb="vals" title="Active BFT Validators &amp; Mesh Peers">— Val</span>
       <span class="slx-cb-sep">│</span>
       <span>BLK <strong class="slx-cb-blk" data-cb="height">#—</strong></span>
@@ -1875,10 +1890,10 @@ export function mountSlxChainBar({
     </div>
 
     <div class="slx-cb-group">
-      <span class="slx-cb-chip emerald" data-cb="tps" title="Rolling finalized Subnet 1 throughput">⚡ — tx/s</span>
+      <span class="slx-cb-chip emerald" data-cb="tps" title="Rolling finalized Subnet throughput">⚡ — tx/s</span>
       <span class="slx-cb-chip" data-cb="blkmeta" title="Transactions &amp; BFT finality latency of latest block">— txs/blk • —s</span>
-      <span class="slx-cb-chip" data-cb="mempool" title="Merged Subnet 1 mempool queue">Mempool: 0</span>
-      <span class="slx-cb-chip" data-cb="totaltxs" title="Cumulative finalized transactions since Subnet 1 genesis">∑ — txs</span>
+      <span class="slx-cb-chip" data-cb="mempool" title="Merged Subnet mempool queue">Mempool: 0</span>
+      <span class="slx-cb-chip" data-cb="totaltxs" title="Cumulative finalized transactions since Subnet genesis">∑ — txs</span>
       <span class="slx-cb-chip emerald" title="Zero gas fees via explicit extraTargets parallel execution">$0.00 Gas</span>
     </div>
 
@@ -1889,12 +1904,19 @@ export function mountSlxChainBar({
           ? `<button type="button" class="slx-cb-chip clickable" data-cb="nodebtn" title="Toggle RPC Node &amp; Deployment Inspector">⚙ Node</button>`
           : ''
       }
-      <a class="slx-cb-link" data-cb="explorer" href="${escapeHtmlText(explorerHref)}" title="Open Subnet 1 Cryptographic Block Explorer &amp; Receipt Verifier">📊 Explorer ↗</a>
+      <a class="slx-cb-link" data-cb="explorer" href="${escapeHtmlText(effectiveExplorerHref)}" title="Open Multi-Subnet Cryptographic Block Explorer &amp; HFS Inspector">📊 Explorer ↗</a>
     </div>
   `;
   host.appendChild(bar);
 
+  const subnetMenu = document.createElement('div');
+  subnetMenu.className = 'slx-cb-subnet-menu';
+  subnetMenu.setAttribute('role', 'menu');
+  document.body.appendChild(subnetMenu);
+
   const refs = {
+    subnetbtn: bar.querySelector('[data-cb="subnetbtn"]'),
+    subnetlbl: bar.querySelector('[data-cb="subnetlbl"]'),
     dot: bar.querySelector('[data-cb="dot"]'),
     vals: bar.querySelector('[data-cb="vals"]'),
     height: bar.querySelector('[data-cb="height"]'),
@@ -1908,6 +1930,122 @@ export function mountSlxChainBar({
     explorer: bar.querySelector('[data-cb="explorer"]'),
     phases: Array.from(bar.querySelectorAll('[data-cb-phase]')),
   };
+
+  function updateSubnetBadgeLabel() {
+    const cur = SlxSubnetManager.getActiveSubnetProfile();
+    if (refs.subnetlbl && cur) {
+      refs.subnetlbl.textContent = `${cur.icon || '🌐'} ${cur.shortLabel} (${cur.subnetId || '—'})`;
+    }
+  }
+
+  function closeSubnetMenu() {
+    subnetMenu.classList.remove('is-open');
+    refs.subnetbtn?.setAttribute('aria-expanded', 'false');
+  }
+
+  function renderSubnetMenu() {
+    const list = SlxSubnetManager.listSubnets();
+    const activeKey = SlxSubnetManager.getActiveSubnetKey();
+    subnetMenu.innerHTML = `
+      <div class="slx-cb-sm-hdr">Select Active Subnet (Switches HFS Directory &amp; RPC)</div>
+      <div class="slx-cb-sm-list">
+        ${list
+          .map((s) => {
+            const act = s.key === activeKey;
+            return `
+              <div class="slx-cb-sm-item ${act ? 'active' : ''}" data-sm-select="${escapeHtmlText(s.key)}">
+                <div style="display:flex;align-items:center;gap:0.45rem;min-width:0;">
+                  <span style="font-size:0.92rem;">${escapeHtmlText(s.icon || '🌐')}</span>
+                  <div style="min-width:0;">
+                    <div style="font-size:0.73rem;font-weight:700;color:#f8fafc;">${escapeHtmlText(s.name)}</div>
+                    <div style="font-size:0.62rem;color:#94a3b8;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ID: ${escapeHtmlText(s.subnetId || '—')} • ${escapeHtmlText(s.rpcUrl)}</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:0.35rem;flex-shrink:0;">
+                  ${act ? '<span style="font-size:0.6rem;font-weight:800;color:#6ee7b7;font-family:monospace;">ACTIVE</span>' : ''}
+                  ${
+                    !s.builtin
+                      ? `<button type="button" data-sm-del="${escapeHtmlText(s.key)}" title="Remove custom subnet" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:0.72rem;padding:2px 4px;">✕</button>`
+                      : ''
+                  }
+                </div>
+              </div>
+            `;
+          })
+          .join('')}
+      </div>
+      <details class="slx-cb-sm-add">
+        <summary>+ Connect Custom Subnet RPC…</summary>
+        <form data-sm-form style="display:flex;flex-direction:column;gap:0.38rem;margin-top:0.45rem;">
+          <input type="text" name="name" placeholder="Subnet Name (e.g. LAN Subnet 3)" required class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          <input type="text" name="rpcUrl" placeholder="JSON-RPC URL (e.g. ws://192.168.1.10:8545)" required class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          <input type="text" name="manifestUrl" placeholder="Optional Manifest URL (/contracts/...)" class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          <button type="submit" class="slx-mini-btn emerald" style="justify-content:center;padding:0.32rem 0.6rem;font-size:0.68rem;">Connect &amp; Switch Subnet →</button>
+        </form>
+      </details>
+    `;
+
+    subnetMenu.querySelectorAll('[data-sm-select]').forEach((row) => {
+      row.addEventListener('click', (ev) => {
+        if (ev.target.closest('[data-sm-del]')) return;
+        const k = row.getAttribute('data-sm-select');
+        closeSubnetMenu();
+        if (k && k !== SlxSubnetManager.getActiveSubnetKey()) {
+          SlxSubnetManager.setActiveSubnetKey(k, { reload: true });
+        }
+      });
+    });
+
+    subnetMenu.querySelectorAll('[data-sm-del]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const k = btn.getAttribute('data-sm-del');
+        if (k) {
+          SlxSubnetManager.removeCustomSubnet(k);
+          renderSubnetMenu();
+        }
+      });
+    });
+
+    subnetMenu.querySelector('[data-sm-form]')?.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target);
+      const key = SlxSubnetManager.addCustomSubnet({
+        name: fd.get('name'),
+        rpcUrl: fd.get('rpcUrl'),
+        manifestUrl: fd.get('manifestUrl'),
+      });
+      closeSubnetMenu();
+      SlxSubnetManager.setActiveSubnetKey(key, { reload: true });
+    });
+  }
+
+  refs.subnetbtn?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = !subnetMenu.classList.contains('is-open');
+    if (!open) {
+      closeSubnetMenu();
+      return;
+    }
+    renderSubnetMenu();
+    const rect = refs.subnetbtn.getBoundingClientRect();
+    subnetMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
+    subnetMenu.style.left = `${Math.max(8, Math.round(rect.left))}px`;
+    subnetMenu.classList.add('is-open');
+    refs.subnetbtn.setAttribute('aria-expanded', 'true');
+  });
+
+  const onSubnetDocClick = (ev) => {
+    if (!subnetMenu.contains(ev.target) && !refs.subnetbtn?.contains(ev.target)) {
+      closeSubnetMenu();
+    }
+  };
+  document.addEventListener('click', onSubnetDocClick);
+
+  SlxSubnetManager.refreshDiscoveryMetadata()
+    .then(() => updateSubnetBadgeLabel())
+    .catch(() => {});
+  window.addEventListener('slx:subnet-changed', updateSubnetBadgeLabel);
 
   const st = {
     live: false,
@@ -2055,7 +2193,7 @@ export function mountSlxChainBar({
     const path = window.location?.pathname || '';
     if (
       (path === '/' || path.endsWith('/index.html')) &&
-      String(explorerHref).includes('#slide-4')
+      String(effectiveExplorerHref).includes('#slide-4')
     ) {
       ev.preventDefault();
       if (typeof window.goToSlide === 'function') window.goToSlide(3);
@@ -2136,10 +2274,16 @@ export function mountSlxChainBar({
   renderBar();
 
   return {
-    refresh: renderHfsChip,
+    refresh: () => {
+      updateSubnetBadgeLabel();
+      renderHfsChip();
+    },
     destroy: () => {
+      document.removeEventListener('click', onSubnetDocClick);
+      window.removeEventListener('slx:subnet-changed', updateSubnetBadgeLabel);
       statsSub.unsubscribe();
       headsSub.unsubscribe();
+      subnetMenu.remove();
       bar.remove();
     },
   };
@@ -3053,6 +3197,15 @@ export const SLX_PLATFORM_APPS = [
     group: 'SuperLexicon Platform',
   },
   {
+    id: 'explorer',
+    icon: '🔎',
+    label: 'Subnet Block Explorer',
+    shortLabel: 'Block Explorer',
+    sub: 'Blocks, Quorum Verifier & Subnet HFS Directory',
+    href: '/explorer.html',
+    group: 'SuperLexicon Platform',
+  },
+  {
     id: 'dex',
     icon: '📈',
     label: 'DEX Central Limit Book',
@@ -3176,13 +3329,13 @@ export function mountSlxUnifiedHeader({
   activeAppId = 'deck',
   title = 'SuperLexicon — Blockchain 3.0 & Decentralized Apps',
   subtitle = 'Infrastructure-Free Radio Mesh • Zero Gas, Zero ISPs • Hardware-Native Autonomous Ecosystem',
-  logoSrc = '/assets/presentation/slide_asset_01_ff6f13a11e4a.png',
+  logoSrc = undefined,
   logoHref = '/',
   rpcUrlFn = () => getDefaultNodeWsUrl(),
   getContractAddr = () => '',
   getContractLabel = () => 'HFS',
   onToggleNodeDrawer = null,
-  explorerHref = '/?view=explorer#slide-4',
+  explorerHref = undefined,
   onWalletSwitch = null,
   getAppPeers = null,
   socialClient = null,
@@ -3191,6 +3344,22 @@ export function mountSlxUnifiedHeader({
   mobileElements = [],
   appsList = SLX_PLATFORM_APPS,
 } = {}) {
+  const slidesMode = isSlidesDeployment();
+  const effectiveLogoSrc =
+    logoSrc !== undefined
+      ? logoSrc
+      : slidesMode
+      ? '/assets/presentation/slide_asset_01_ff6f13a11e4a.png'
+      : '/logo_horizontal_transparent.png';
+  const effectiveExplorerHref =
+    explorerHref !== undefined
+      ? explorerHref
+      : slidesMode
+      ? '/?view=explorer#slide-4'
+      : '/explorer.html';
+  const effectiveAppsList = (appsList || SLX_PLATFORM_APPS).filter(
+    (app) => slidesMode || app.id !== 'deck'
+  );
   if (typeof document === 'undefined') return null;
   injectSlxUiStyles();
 
@@ -3207,10 +3376,10 @@ export function mountSlxUnifiedHeader({
   host.innerHTML = '';
 
   const canonicalActiveId = APP_ID_ALIASES[activeAppId] || activeAppId;
-  const activeAppSpec = appsList.find((a) => a.id === canonicalActiveId) || null;
+  const activeAppSpec = effectiveAppsList.find((a) => a.id === canonicalActiveId) || null;
 
   const groups = [];
-  for (const app of appsList) {
+  for (const app of effectiveAppsList) {
     let g = groups.find((x) => x.name === app.group);
     if (!g) {
       g = { name: app.group, items: [] };
@@ -3250,9 +3419,9 @@ export function mountSlxUnifiedHeader({
   hdr.innerHTML = `
     <div class="slx-uh-main-row">
       <div class="slx-uh-left">
-        <a href="${escapeHtmlText(logoHref)}" class="slx-uh-logo-link" title="SuperLexicon — Blockchain 3.0 Presentation Slides">
+        <a href="${escapeHtmlText(logoHref)}" class="slx-uh-logo-link" title="SuperLexicon Home">
           <img
-            src="${escapeHtmlText(logoSrc)}"
+            src="${escapeHtmlText(effectiveLogoSrc)}"
             alt="SuperLexicon Logo"
             class="slx-uh-logo"
             onerror="if(!this.dataset.fb){this.dataset.fb='1';this.src='/logo_horizontal.png';}"
@@ -3408,7 +3577,7 @@ export function mountSlxUnifiedHeader({
     getContractAddr,
     getContractLabel,
     onToggleNodeDrawer,
-    explorerHref,
+    explorerHref: effectiveExplorerHref,
     embedded: true,
   });
 
