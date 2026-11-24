@@ -71,17 +71,27 @@ export const SlxSubnetManager = {
       } catch (_) {}
     }
 
+    const s1Meta = meta.thisSubnet && (!meta.thisSubnet.subnet_id || meta.thisSubnet.subnet_id === (meta.subnet1?.subnetId || '00000001'))
+      ? meta.thisSubnet
+      : null;
+
     const s1 = {
       key: 'subnet1',
-      name: 'Subnet 1 — 915 MHz LR2021 RF',
+      name: s1Meta?.name || 'Subnet 1 — 915 MHz LR2021 RF',
       shortLabel: 'SUBNET 1 • RF',
-      icon: '📡',
-      transport: 'flrc',
-      subnetId: meta.subnet1?.subnetId || '00000001',
-      manifestUrl: '/contracts/subnet1-deployments.json',
-      rpcUrl: isHttps ? _preferredPublicWssRpc : localHostRpc,
+      icon: (s1Meta?.transport || 'flrc') === 'tcp' ? '🔌' : '📡',
+      transport: s1Meta?.transport || 'flrc',
+      subnetId: s1Meta?.subnet_id || meta.subnet1?.subnetId || '00000001',
+      tipHeight: Number(s1Meta?.tip_height || 0),
+      validatorCount: Number(s1Meta?.validator_count || 4),
+      hfsRegistry: s1Meta?.hfs_registry || '',
+      manifestUrl: s1Meta?.manifest_url || '/contracts/subnet1-deployments.json',
+      rpcUrl: isHttps
+        ? _httpToWs(s1Meta?.public_rpc_url || _preferredPublicWssRpc)
+        : localHostRpc,
       pubsubWsUrls: isHttps
         ? [
+            ...(s1Meta?.public_ws_url ? [_httpToWs(s1Meta.public_ws_url)] : []),
             'wss://node1.superlexicon.com',
             'wss://node3.superlexicon.com',
             'wss://node4.superlexicon.com',
@@ -111,33 +121,142 @@ export const SlxSubnetManager = {
       builtin: true,
     };
 
-    const s2RpcUrls = Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
-      ? meta.subnet2.rpcUrls.map(_httpToWs)
-      : [`ws://${lanPrefix}.91:18545`, `ws://${lanPrefix}.92:18545`, `ws://${lanPrefix}.94:18545`];
-    const s2PubsubUrls = Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
-      ? meta.subnet2.wsUrls
-      : [`ws://${lanPrefix}.91:18566`, `ws://${lanPrefix}.92:18566`, `ws://${lanPrefix}.94:18566`];
+    const result = [s1];
+    const seenIds = new Set([String(s1.subnetId || '').toLowerCase()]);
+    const roamingList = Array.isArray(meta.roamingSubnets) ? meta.roamingSubnets : [];
 
-    const s2 = {
-      key: 'subnet2',
-      name: meta.subnet2?.name || 'Subnet 2 — Encrypted TCP/IP Mesh',
-      shortLabel: 'SUBNET 2 • TCP',
-      icon: '🔌',
-      transport: meta.subnet2?.transport || 'tcp',
-      subnetId: meta.subnet2?.subnetId || '6eaa3da4',
-      manifestUrl: '/contracts/subnet2-deployments.json',
-      rpcUrl: s2RpcUrls[0],
-      pubsubWsUrls: s2PubsubUrls,
-      validatorNodes: s2RpcUrls.map((u, idx) => ({
-        name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
-        url: u,
-        pubkeyPrefix: null,
-      })),
-      builtin: true,
-    };
+    for (let i = 0; i < roamingList.length; i++) {
+      const rm = roamingList[i];
+      const sid = String(rm?.subnet_id || '').trim().toLowerCase();
+      if (!sid || sid === '00000000' || seenIds.has(sid)) continue;
+      seenIds.add(sid);
+
+      const isKnownS2 = sid === String(meta.subnet2?.subnetId || '6eaa3da4').toLowerCase();
+      const transport =
+        rm.transport ||
+        (isKnownS2 ? meta.subnet2?.transport || 'tcp' : Number(rm.last_channel_hz) === 1 ? 'tcp' : 'flrc');
+      const isTcp = transport === 'tcp';
+      const key = isKnownS2 ? 'subnet2' : `subnet_${sid}`;
+
+      let rpcUrls = [];
+      let pubsubUrls = [];
+      if (isHttps) {
+        const pubRpc = rm.public_rpc_url
+          ? _httpToWs(rm.public_rpc_url)
+          : isKnownS2 || isTcp
+            ? 'wss://node6.superlexicon.com/rpc'
+            : '';
+        if (pubRpc) rpcUrls = [pubRpc];
+        const pubWs = rm.public_ws_url
+          ? _httpToWs(rm.public_ws_url)
+          : isKnownS2 || isTcp
+            ? 'wss://node6.superlexicon.com'
+            : '';
+        if (pubWs) pubsubUrls = [pubWs];
+      } else {
+        if (rm.lan_rpc_url) rpcUrls.push(_httpToWs(rm.lan_rpc_url));
+        if (isKnownS2) {
+          const fallbackLanRpcs =
+            Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
+              ? meta.subnet2.rpcUrls.map(_httpToWs)
+              : [`ws://${lanPrefix}.91:18545`, `ws://${lanPrefix}.92:18545`, `ws://${lanPrefix}.94:18545`];
+          for (const u of fallbackLanRpcs) {
+            if (!rpcUrls.includes(u)) rpcUrls.push(u);
+          }
+        } else if (!rpcUrls.length && rm.public_rpc_url) {
+          rpcUrls.push(_httpToWs(rm.public_rpc_url));
+        }
+
+        if (rm.lan_ws_url) pubsubUrls.push(_httpToWs(rm.lan_ws_url));
+        if (isKnownS2) {
+          const fallbackLanWs =
+            Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
+              ? meta.subnet2.wsUrls.map(_httpToWs)
+              : [`ws://${lanPrefix}.91:18566`, `ws://${lanPrefix}.92:18566`, `ws://${lanPrefix}.94:18566`];
+          for (const u of fallbackLanWs) {
+            if (!pubsubUrls.includes(u)) pubsubUrls.push(u);
+          }
+        } else if (!pubsubUrls.length && rm.public_ws_url) {
+          pubsubUrls.push(_httpToWs(rm.public_ws_url));
+        }
+      }
+
+      const defaultName = isKnownS2
+        ? meta.subnet2?.name || 'Subnet 2 — Encrypted TCP/IP Mesh'
+        : isTcp
+          ? `Subnet ${sid} — Encrypted TCP/IP Mesh`
+          : `Subnet ${sid} — LR2021 RF`;
+      const displayName = rm.name || defaultName;
+      const shortLabel = isKnownS2
+        ? `SUBNET 2 • ${isTcp ? 'TCP' : 'RF'}`
+        : `SUBNET ${sid.slice(0, 4).toUpperCase()} • ${isTcp ? 'TCP' : 'RF'}`;
+
+      result.push({
+        key,
+        name: displayName,
+        shortLabel,
+        icon: isTcp ? '🔌' : '📡',
+        transport,
+        subnetId: sid,
+        tipHeight: Number(rm.tip_height || 0),
+        validatorCount: Number(rm.validator_count || 0),
+        hfsRegistry: rm.hfs_registry || '',
+        manifestUrl:
+          rm.manifest_url || (isKnownS2 ? '/contracts/subnet2-deployments.json' : ''),
+        rpcUrl: rpcUrls[0] || '',
+        pubsubWsUrls: pubsubUrls,
+        validatorNodes: rpcUrls.length
+          ? rpcUrls.map((u, idx) => ({
+              name: `${isTcp ? 'TCP' : 'RF'} Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+              url: u,
+              pubkeyPrefix: null,
+            }))
+          : [],
+        builtin: true,
+        discovered: true,
+      });
+    }
+
+    // Fallback on LAN before first slx_roamingStatus resolves so Subnet 2 is immediately selectable
+    const defaultS2Id = String(meta.subnet2?.subnetId || '6eaa3da4').toLowerCase();
+    if (!isHttps && !seenIds.has(defaultS2Id)) {
+      const s2RpcUrls =
+        Array.isArray(meta.subnet2?.rpcUrls) && meta.subnet2.rpcUrls.length
+          ? meta.subnet2.rpcUrls.map(_httpToWs)
+          : [`ws://${lanPrefix}.91:18545`, `ws://${lanPrefix}.92:18545`, `ws://${lanPrefix}.94:18545`];
+      const s2PubsubUrls =
+        Array.isArray(meta.subnet2?.wsUrls) && meta.subnet2.wsUrls.length
+          ? meta.subnet2.wsUrls.map(_httpToWs)
+          : [`ws://${lanPrefix}.91:18566`, `ws://${lanPrefix}.92:18566`, `ws://${lanPrefix}.94:18566`];
+      result.push({
+        key: 'subnet2',
+        name: meta.subnet2?.name || 'Subnet 2 — Encrypted TCP/IP Mesh',
+        shortLabel: 'SUBNET 2 • TCP',
+        icon: '🔌',
+        transport: meta.subnet2?.transport || 'tcp',
+        subnetId: defaultS2Id,
+        tipHeight: 0,
+        validatorCount: 3,
+        hfsRegistry: '',
+        manifestUrl: '/contracts/subnet2-deployments.json',
+        rpcUrl: s2RpcUrls[0],
+        pubsubWsUrls: s2PubsubUrls,
+        validatorNodes: s2RpcUrls.map((u, idx) => ({
+          name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+          url: u,
+          pubkeyPrefix: null,
+        })),
+        builtin: true,
+      });
+    }
 
     const extraFromConfig = Array.isArray(meta.configuredSubnets) ? meta.configuredSubnets : [];
-    return isHttps ? [s1, ...extraFromConfig] : [s1, s2, ...extraFromConfig];
+    for (const ex of extraFromConfig) {
+      if (!result.some((r) => r.key === ex.key || (ex.subnetId && r.subnetId === ex.subnetId))) {
+        result.push(ex);
+      }
+    }
+    return result;
   },
 
   getCustomSubnets() {
@@ -273,56 +392,142 @@ export const SlxSubnetManager = {
     }
   },
 
-  async refreshDiscoveryMetadata() {
-    if (typeof fetch === 'undefined') return;
-    const meta = {};
-    try {
-      const r2 = await fetch('/contracts/subnet2-deployments.json', { cache: 'no-store' });
-      if (r2.ok) {
-        const j2 = await r2.json();
-        meta.subnet2 = {
-          subnetId: j2.subnetId || '6eaa3da4',
-          transport: j2.transport || 'tcp',
-          rpcUrls: j2.rpcUrls || [],
-          wsUrls: j2.wsUrls || [],
-        };
-        if (j2.subnet1Id) {
-          meta.subnet1 = { subnetId: j2.subnet1Id };
-        }
-      }
-    } catch (_) {}
-    try {
-      const rs = await fetch('/contracts/subnets.json', { cache: 'no-store' });
-      if (rs.ok) {
-        const js = await rs.json();
-        if (Array.isArray(js?.subnets)) {
-          meta.configuredSubnets = js.subnets
-            .filter((x) => x && x.key && x.key !== 'subnet1' && x.key !== 'subnet2' && x.rpcUrl)
-            .map((x) => ({
-              key: String(x.key),
-              name: x.name || String(x.key),
-              shortLabel: x.shortLabel || String(x.name || x.key).slice(0, 16).toUpperCase(),
-              icon: x.transport === 'flrc' ? '📡' : '🔌',
-              transport: x.transport || 'tcp',
-              subnetId: x.subnetId || '',
-              manifestUrl: x.manifestUrl || '',
-              rpcUrl: _httpToWs(x.rpcUrl),
-              pubsubWsUrls: Array.isArray(x.pubsubWsUrls) ? x.pubsubWsUrls.map(_httpToWs) : [],
-              validatorNodes: Array.isArray(x.validatorNodes)
-                ? x.validatorNodes
-                : [{ name: x.name || 'Validator', url: _httpToWs(x.rpcUrl), pubkeyPrefix: null }],
-              builtin: true,
-            }));
-        }
-      }
-    } catch (_) {}
+  async refreshDiscoveryMetadata(seedRpcOverride = '') {
+    let meta = {};
+    if (typeof localStorage !== 'undefined') {
+      try {
+        meta = JSON.parse(localStorage.getItem(STORAGE_KEY_DISCOVERED_SUBNETS) || '{}') || {};
+      } catch (_) {}
+    }
+
+    const isHttps =
+      typeof window !== 'undefined' &&
+      (window.location?.protocol === 'https:' ||
+        String(window.location?.hostname || '').toLowerCase().endsWith('superlexicon.com'));
+    const lanPrefix = _getLanPrefix();
+    const host =
+      typeof window !== 'undefined' && window.location?.hostname
+        ? window.location.hostname
+        : `${lanPrefix}.91`;
+    const localSeedRpc =
+      host === 'localhost' || host === '127.0.0.1'
+        ? `ws://${lanPrefix}.91:8545`
+        : `ws://${host}:8545`;
+    const seedRpc = seedRpcOverride
+      ? _httpToWs(seedRpcOverride)
+      : isHttps
+        ? _preferredPublicWssRpc
+        : localSeedRpc;
+
+    const tasks = [];
+    if (typeof WebSocket !== 'undefined' && seedRpc) {
+      tasks.push(
+        slxNodeRpc(seedRpc, 'slx_roamingStatus', [], 3500)
+          .then((roam) => {
+            if (!roam || typeof roam !== 'object') return;
+            if (roam.this_subnet && typeof roam.this_subnet === 'object') {
+              meta.thisSubnet = roam.this_subnet;
+            } else if (roam.subnet_id && roam.subnet_id !== '00000000') {
+              meta.subnet1 = { subnetId: roam.subnet_id };
+            }
+            if (Array.isArray(roam.world_map_subnets)) {
+              const prevById = new Map(
+                (Array.isArray(meta.roamingSubnets) ? meta.roamingSubnets : []).map((x) => [
+                  String(x?.subnet_id || '').toLowerCase(),
+                  x,
+                ])
+              );
+              for (const item of roam.world_map_subnets) {
+                const sid = String(item?.subnet_id || '').trim().toLowerCase();
+                if (!sid || sid === '00000000') continue;
+                const prev = prevById.get(sid) || {};
+                prevById.set(sid, {
+                  subnet_id: sid,
+                  last_channel_hz: Number(item.last_channel_hz ?? prev.last_channel_hz ?? 0),
+                  tip_height: Number(item.tip_height ?? prev.tip_height ?? 0),
+                  validator_count: Number(item.validator_count ?? prev.validator_count ?? 0),
+                  name: item.name || prev.name || '',
+                  transport: item.transport || prev.transport || '',
+                  public_rpc_url: item.public_rpc_url || prev.public_rpc_url || '',
+                  public_ws_url: item.public_ws_url || prev.public_ws_url || '',
+                  lan_rpc_url: item.lan_rpc_url || prev.lan_rpc_url || '',
+                  lan_ws_url: item.lan_ws_url || prev.lan_ws_url || '',
+                  manifest_url: item.manifest_url || prev.manifest_url || '',
+                  hfs_registry: item.hfs_registry || prev.hfs_registry || '',
+                });
+              }
+              meta.roamingSubnets = Array.from(prevById.values());
+            }
+          })
+          .catch(() => {})
+      );
+    }
+
+    if (typeof fetch !== 'undefined') {
+      tasks.push(
+        fetch('/contracts/subnet2-deployments.json', { cache: 'no-store' })
+          .then(async (r2) => {
+            if (!r2.ok) return;
+            const j2 = await r2.json();
+            meta.subnet2 = {
+              name: j2.name || meta.subnet2?.name || '',
+              subnetId: j2.subnetId || '6eaa3da4',
+              transport: j2.transport || 'tcp',
+              rpcUrls: j2.rpcUrls || [],
+              wsUrls: j2.wsUrls || [],
+            };
+            if (j2.subnet1Id) {
+              meta.subnet1 = { subnetId: j2.subnet1Id };
+            }
+          })
+          .catch(() => {})
+      );
+      tasks.push(
+        fetch('/contracts/subnets.json', { cache: 'no-store' })
+          .then(async (rs) => {
+            if (!rs.ok) return;
+            const js = await rs.json();
+            if (Array.isArray(js?.subnets)) {
+              meta.configuredSubnets = js.subnets
+                .filter((x) => x && x.key && x.key !== 'subnet1' && x.key !== 'subnet2' && x.rpcUrl)
+                .map((x) => ({
+                  key: String(x.key),
+                  name: x.name || String(x.key),
+                  shortLabel: x.shortLabel || String(x.name || x.key).slice(0, 16).toUpperCase(),
+                  icon: x.transport === 'flrc' ? '📡' : '🔌',
+                  transport: x.transport || 'tcp',
+                  subnetId: x.subnetId || '',
+                  manifestUrl: x.manifestUrl || '',
+                  rpcUrl: _httpToWs(x.rpcUrl),
+                  pubsubWsUrls: Array.isArray(x.pubsubWsUrls) ? x.pubsubWsUrls.map(_httpToWs) : [],
+                  validatorNodes: Array.isArray(x.validatorNodes)
+                    ? x.validatorNodes
+                    : [{ name: x.name || 'Validator', url: _httpToWs(x.rpcUrl), pubkeyPrefix: null }],
+                  builtin: true,
+                }));
+            }
+          })
+          .catch(() => {})
+      );
+    }
+
+    if (tasks.length) {
+      await Promise.allSettled(tasks);
+    }
+
     if (typeof localStorage !== 'undefined' && Object.keys(meta).length > 0) {
       try {
         localStorage.setItem(STORAGE_KEY_DISCOVERED_SUBNETS, JSON.stringify(meta));
       } catch (_) {}
     }
     this._hydratedDiscovery = true;
-    return this.getActiveSubnetProfile();
+    const prof = this.getActiveSubnetProfile();
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('slx:subnets-updated', { detail: this.listSubnets() }));
+      } catch (_) {}
+    }
+    return prof;
   },
 };
 
@@ -444,7 +649,7 @@ export const SlxHfsCache = {
       subnetKey: activeProf?.key || 'subnet1',
       subnetId: manifest?.subnetId || activeProf?.subnetId || '00000001',
       rpcUrl: useRpc,
-      hfsRegistry: manifest?.hfsRegistry || cached.hfsRegistry || '',
+      hfsRegistry: manifest?.hfsRegistry || activeProf?.hfsRegistry || cached.hfsRegistry || '',
       messagingAddr:
         manifest?.messaging || manifest?.commonsRf?.messaging || cached.messagingAddr || '',
       deployedAt: manifest?.deployedAt || cached.deployedAt || '',

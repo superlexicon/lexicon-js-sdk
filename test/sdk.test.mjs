@@ -27,6 +27,7 @@ import {
   matchesCompiledFilter,
   toPubSubWsUrl,
   derivePubSubWsCandidates,
+  SlxSubnetManager,
   SlxWalletManager,
   SlxCallCache,
   SlxIdentityDirectory,
@@ -785,5 +786,96 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   assert.equal(await decryptTopicMessageAesGcm(unwrappedByA, frame, wrongTopicAad), null);
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (16/16 test groups)!');
+// 17. Protocol-Native SubnetWorldMap Auto-Discovery on HTTPS & LAN (`SlxSubnetManager`)
+{
+  const store = new Map();
+  const prevLs = globalThis.localStorage;
+  const prevWin = globalThis.window;
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+
+  try {
+    store.set(
+      'slx_discovered_subnets_meta_v1',
+      JSON.stringify({
+        thisSubnet: {
+          subnet_id: '00000001',
+          name: 'Subnet 1 — 915 MHz LR2021 RF',
+          transport: 'flrc',
+          tip_height: 3250,
+          validator_count: 4,
+          public_rpc_url: 'wss://node1.superlexicon.com/rpc',
+          public_ws_url: 'wss://node1.superlexicon.com',
+          hfs_registry: '0xe1dc7648205c3704eba81797325e6163a9404d64',
+        },
+        roamingSubnets: [
+          {
+            subnet_id: '6eaa3da4',
+            last_channel_hz: 1,
+            tip_height: 88,
+            validator_count: 3,
+            name: 'Subnet 2 — Encrypted TCP/IP Mesh',
+            transport: 'tcp',
+            public_rpc_url: 'wss://node6.superlexicon.com/rpc',
+            public_ws_url: 'wss://node6.superlexicon.com',
+            lan_rpc_url: 'ws://192.168.50.91:18545',
+            lan_ws_url: 'ws://192.168.50.91:18566',
+            manifest_url: '/contracts/subnet2-deployments.json',
+            hfs_registry: '',
+          },
+          {
+            subnet_id: 'a1b2c3d4',
+            last_channel_hz: 917_000_000,
+            tip_height: 512,
+            validator_count: 4,
+            name: 'Subnet 3 — Alpine RF Relay',
+            transport: 'flrc',
+            public_rpc_url: 'wss://node9.superlexicon.com/rpc',
+            public_ws_url: 'wss://node9.superlexicon.com',
+            lan_rpc_url: 'ws://192.168.50.99:8545',
+            lan_ws_url: 'ws://192.168.50.99:8566',
+            manifest_url: '',
+            hfs_registry: '0x1111111111111111111111111111111111111111',
+          },
+        ],
+      })
+    );
+
+    // Simulate HTTPS deployment (`https://superlexicon.com`): all 3 subnets appear with WSS endpoints!
+    globalThis.window = {
+      location: { protocol: 'https:', hostname: 'superlexicon.com', href: 'https://superlexicon.com/' },
+      dispatchEvent: () => {},
+    };
+    const httpsSubs = SlxSubnetManager.listSubnets();
+    assert.equal(httpsSubs.length, 3);
+    assert.equal(httpsSubs[0].subnetId, '00000001');
+    assert.equal(httpsSubs[0].rpcUrl, 'wss://node1.superlexicon.com/rpc');
+    assert.equal(httpsSubs[1].key, 'subnet2');
+    assert.equal(httpsSubs[1].subnetId, '6eaa3da4');
+    assert.equal(httpsSubs[1].transport, 'tcp');
+    assert.equal(httpsSubs[1].rpcUrl, 'wss://node6.superlexicon.com/rpc');
+    assert.deepEqual(httpsSubs[1].pubsubWsUrls, ['wss://node6.superlexicon.com']);
+    assert.equal(httpsSubs[2].key, 'subnet_a1b2c3d4');
+    assert.equal(httpsSubs[2].rpcUrl, 'wss://node9.superlexicon.com/rpc');
+    assert.equal(httpsSubs[2].hfsRegistry, '0x1111111111111111111111111111111111111111');
+
+    // Simulate LAN deployment (`http://192.168.50.93:5173`): all 3 subnets use LAN WS endpoints!
+    globalThis.window = {
+      location: { protocol: 'http:', hostname: '192.168.50.93', href: 'http://192.168.50.93:5173/' },
+      dispatchEvent: () => {},
+    };
+    const lanSubs = SlxSubnetManager.listSubnets();
+    assert.equal(lanSubs.length, 3);
+    assert.equal(lanSubs[1].rpcUrl, 'ws://192.168.50.91:18545');
+    assert.equal(lanSubs[2].rpcUrl, 'ws://192.168.50.99:8545');
+  } finally {
+    globalThis.localStorage = prevLs;
+    globalThis.window = prevWin;
+  }
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (17/17 test groups)!');
 process.exit(0);

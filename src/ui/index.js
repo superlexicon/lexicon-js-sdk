@@ -1958,7 +1958,7 @@ export function mountSlxChainBar({
                   <span style="font-size:0.92rem;">${escapeHtmlText(s.icon || '🌐')}</span>
                   <div style="min-width:0;">
                     <div style="font-size:0.73rem;font-weight:700;color:#f8fafc;">${escapeHtmlText(s.name)}</div>
-                    <div style="font-size:0.62rem;color:#94a3b8;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ID: ${escapeHtmlText(s.subnetId || '—')} • ${escapeHtmlText(s.rpcUrl)}</div>
+                    <div style="font-size:0.62rem;color:#94a3b8;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">ID: ${escapeHtmlText(s.subnetId || '—')}${s.tipHeight ? ` • #${fmtInt(s.tipHeight)}` : ''} • ${escapeHtmlText(s.rpcUrl || 'Awaiting TLS gateway')}</div>
                   </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:0.35rem;flex-shrink:0;">
@@ -2046,6 +2046,12 @@ export function mountSlxChainBar({
     .then(() => updateSubnetBadgeLabel())
     .catch(() => {});
   window.addEventListener('slx:subnet-changed', updateSubnetBadgeLabel);
+  window.addEventListener('slx:subnets-updated', () => {
+    updateSubnetBadgeLabel();
+    if (subnetMenu.classList.contains('is-open')) {
+      renderSubnetMenu();
+    }
+  });
 
   const st = {
     live: false,
