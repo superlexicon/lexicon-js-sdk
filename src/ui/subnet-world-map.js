@@ -30,6 +30,20 @@ const MAX_Z = 17.8;
 const GLOBAL_DEFAULT_LAT = 16;
 const GLOBAL_DEFAULT_LON = 24;
 const TILE_SUBDOMAINS = ['a', 'b', 'c', 'd'];
+export const DEFAULT_CARTO_TILE_API_KEY = 'cb1_5f92_1_70c89ce56da2d7a73187e4e9';
+
+function resolveCartoTileKey(explicitKey = '') {
+  if (explicitKey) return String(explicitKey).trim();
+  if (typeof window !== 'undefined' && window.__SLX_MAP_TILE_KEY__) {
+    return String(window.__SLX_MAP_TILE_KEY__).trim();
+  }
+  try {
+    if (import.meta?.env?.VITE_MAP_TILE_KEY) {
+      return String(import.meta.env.VITE_MAP_TILE_KEY).trim();
+    }
+  } catch (_) {}
+  return DEFAULT_CARTO_TILE_API_KEY;
+}
 
 // Pixel-calibrated static world_map.jpg constants kept for `latLonToMapXY` / offline backdrop
 const PRIME_MERIDIAN_X_FRAC = 0.4848;
@@ -658,6 +672,7 @@ function injectSubnetWorldMapStyles() {
 export function mountSlxSubnetWorldMap({
   mountContainer,
   backgroundImgUrl = '/assets/hegemony/world_map.jpg',
+  tileApiKey = '',
   initialMode = 'auto-fit', // 'auto-fit' (World -> auto-zoom to fit all subnets) | 'fit-immediate' | 'global-only'
   initialView = 'map', // 'map' | 'phase'
   showCloseButton = false,
@@ -666,6 +681,7 @@ export function mountSlxSubnetWorldMap({
 } = {}) {
   if (typeof document === 'undefined' || !mountContainer) return null;
   injectSubnetWorldMapStyles();
+  const effectiveTileKey = resolveCartoTileKey(tileApiKey);
 
   const state = {
     view: initialView === 'phase' ? 'phase' : 'map',
@@ -1013,12 +1029,13 @@ export function mountSlxSubnetWorldMap({
 
     const nextKey = `${tz}:${txMin}..${txMax}:${tyMin}..${tyMax}`;
     if (nextKey !== prevKey) {
+      const qs = effectiveTileKey ? `?key=${encodeURIComponent(effectiveTileKey)}` : '';
       let html = '';
       for (let ty = tyMin; ty <= tyMax; ty++) {
         for (let tx = txMin; tx <= txMax; tx++) {
           const wrappedTx = ((tx % maxTile) + maxTile) % maxTile;
           const sub = TILE_SUBDOMAINS[(wrappedTx + ty) & 3];
-          const url = `https://${sub}.basemaps.cartocdn.com/dark_all/${tz}/${wrappedTx}/${ty}@2x.png`;
+          const url = `https://${sub}.basemaps.cartocdn.com/dark_all/${tz}/${wrappedTx}/${ty}@2x.png${qs}`;
           html += `<image href="${url}" x="${tx * 256}" y="${ty * 256}" width="256.6" height="256.6" preserveAspectRatio="none" />`;
         }
       }

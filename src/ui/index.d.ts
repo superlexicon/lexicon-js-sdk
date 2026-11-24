@@ -177,6 +177,7 @@ export function extractLiveGpsFromStats(stats: any): {
 export function mountSlxSubnetWorldMap(opts: {
   mountContainer: HTMLElement | null;
   backgroundImgUrl?: string;
+  tileApiKey?: string;
   initialMode?: 'auto-fit' | 'fit-immediate' | 'global-only' | 'global' | 'cluster';
   initialView?: 'map' | 'phase';
   showCloseButton?: boolean;
