@@ -44,6 +44,7 @@ import {
   mapXYToLatLon,
   mountSlxSubnetWorldMap,
   openSlxSubnetWorldMapModal,
+  openSlxSubnetRegistryModal,
 } from './subnet-world-map.js';
 
 export {
@@ -59,6 +60,7 @@ export {
   mapXYToLatLon,
   mountSlxSubnetWorldMap,
   openSlxSubnetWorldMapModal,
+  openSlxSubnetRegistryModal,
 };
 
 function escapeHtmlText(s) {
@@ -537,6 +539,9 @@ export function mountSlxWalletHeader({
   onWalletSwitch = null,
 }) {
   if (!mountContainer || typeof document === 'undefined') return null;
+  if (typeof window !== 'undefined' && wallet) {
+    window.__SLX_WALLET__ = wallet;
+  }
   injectSlxUiStyles();
 
   const formatPillLabel = () => {
@@ -1150,6 +1155,9 @@ export function mountHfsRegistryDropdown({
   onCustomDeployClick = null,
 }) {
   if (!mountContainer || typeof document === 'undefined') return null;
+  if (typeof window !== 'undefined' && wallet) {
+    window.__SLX_WALLET__ = wallet;
+  }
   injectSlxUiStyles();
 
   const spec = HFS_TYPES[typeName] || {
@@ -2055,9 +2063,12 @@ export function mountSlxChainBar({
           })
           .join('')}
       </div>
-      <div style="padding:0.4rem 0.55rem;border-top:1px solid rgba(51,65,85,0.55);">
+      <div style="padding:0.4rem 0.55rem;border-top:1px solid rgba(51,65,85,0.55);display:flex;flex-direction:column;gap:0.35rem;">
         <button type="button" data-sm-open-map class="slx-mini-btn" style="width:100%;justify-content:center;padding:0.38rem 0.6rem;font-size:0.7rem;border-color:rgba(56,189,248,0.65);background:rgba(14,165,233,0.18);color:#bae6fd;">
           🌍 Open Interactive Subnet World Map
+        </button>
+        <button type="button" data-sm-reg-hfs class="slx-mini-btn emerald" style="width:100%;justify-content:center;padding:0.36rem 0.6rem;font-size:0.69rem;">
+          ⛓️ + Register Subnet &amp; Stats URLs On-Chain (HFS)
         </button>
       </div>
       <details class="slx-cb-sm-add">
@@ -2079,6 +2090,14 @@ export function mountSlxChainBar({
       ev.stopPropagation();
       closeSubnetMenu();
       openSlxSubnetWorldMapModal();
+    });
+
+    subnetMenu.querySelector('[data-sm-reg-hfs]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeSubnetMenu();
+      openSlxSubnetRegistryModal({
+        onSaved: () => renderSubnetMenu(),
+      });
     });
 
     subnetMenu.querySelectorAll('[data-sm-select]').forEach((row) => {

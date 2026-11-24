@@ -994,3 +994,55 @@ export class SlxEciesChannelClient {
   sendTopicMessage(wallet: any, myIdentityAddr: string, opts: Record<string, any>): Promise<any>;
   readDecryptedTopicMessages(wallet: any, myIdentityAddr: string, opts: Record<string, any>): Promise<any>;
 }
+
+// subnet-registry HFS
+export const SUBNET_REGISTRY_CODE_HASH: string;
+export const SUBNET1_SUBNET_REGISTRY_ADDRESS: string;
+export const SUBNET2_SUBNET_REGISTRY_ADDRESS: string;
+export const SubnetRegistryAbi: Record<string, (...args: any[]) => string>;
+export function degToE7UnsignedBits(deg: number): bigint;
+export function readSignedI32BE(bytes: Uint8Array, offset: number): number;
+export function decodeSubnetRegistrySliceHex(hex: string): {
+  totalCount: number;
+  items: Array<Record<string, any>>;
+};
+export function decodeSingleSubnetHex(hex: string): Record<string, any> | null;
+export function resolveSubnetRegistryAddress(opts?: {
+  rpcUrl?: string;
+  registryAddr?: string;
+  hfsRegistryAddr?: string;
+}): Promise<string>;
+export function fetchOnChainSubnets(opts?: {
+  rpcUrl?: string;
+  registryAddr?: string;
+  includeArchived?: boolean;
+}): Promise<{ registryAddr: string; subnets: Array<Record<string, any>> }>;
+export function fetchSubnetRegistryMeta(opts?: {
+  rpcUrl?: string;
+  registryAddr?: string;
+}): Promise<{ registryAddr: string; admin: string; totalCount: number }>;
+export function upsertSubnetOnChain(opts: {
+  wallet?: SlxWalletManager | null;
+  privateKey?: string;
+  rpcUrl?: string;
+  registryAddr?: string;
+  chainId?: bigint | number;
+  subnet: Record<string, any>;
+}): Promise<{ txHash: string; receipt: any; registryAddr: string }>;
+export function probeSubnetNodeStats(
+  subnetProfile: Record<string, any>,
+  opts?: { isHttps?: boolean; timeoutMs?: number }
+): Promise<{
+  nodes: Array<{
+    name: string;
+    url: string;
+    pubkeyPrefix: string | null;
+    online: boolean;
+    blockHeight: number;
+    rttMs: number;
+  }>;
+  maxHeight: number;
+  onlineCount: number;
+  totalCount: number;
+  quorumMatched: boolean;
+}>;

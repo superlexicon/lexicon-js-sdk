@@ -970,5 +970,126 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   }
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (18/18 test groups)!');
+// 19. On-Chain SubnetRegistry HFS ABI, Signed E7 Coords & SlxSubnetManager Hydration
+{
+  const {
+    SubnetRegistryAbi,
+    degToE7UnsignedBits,
+    readSignedI32BE,
+    decodeSubnetRegistrySliceHex,
+    SlxSubnetManager,
+    utf8ToBytes,
+    bytesToHex,
+    concatBytes,
+    u64BEBytes,
+    u16BEBytes,
+    hexToBytes,
+  } = await import('../src/index.js');
+
+  const u32BE = (n) => u64BEBytes(BigInt(n) & 0xffffffffn).slice(4, 8);
+
+  // Verify signed negative lat/lon 32-bit two's-complement packing
+  const negBits = degToE7UnsignedBits(-33.8688);
+  assert.ok(negBits <= 0xffffffffn);
+  const b4 = u32BE(negBits);
+  assert.equal(readSignedI32BE(b4, 0), -338_688_000);
+
+  // Verify upsertSubnet calldata encodes cleanly and guards >1536B payload
+  const cdHex = SubnetRegistryAbi.upsertSubnet({
+    subnetId: '9f31a8c2',
+    name: 'Geneva Quantum Subnet',
+    transport: 'tcp',
+    channelHz: 1,
+    validatorCount: 3,
+    lat: 46.2044,
+    lon: 6.1432,
+    endpoints: { publicRpcUrls: ['wss://node31.superlexicon.com/rpc'] },
+  });
+  assert.ok(cdHex.startsWith('0x') && cdHex.length > 680);
+
+  // Build a synthetic binary slice matching `subnet_registry.wasm` wire format and decode
+  const sidBytes = utf8ToBytes('9f31a8c2');
+  const nameBytes = utf8ToBytes('Geneva Quantum Subnet');
+  const trBytes = utf8ToBytes('tcp');
+  const epBytes = utf8ToBytes(
+    JSON.stringify({
+      shortLabel: 'SUBNET 3 • TCP',
+      locationLabel: 'Geneva, Switzerland',
+      publicRpcUrls: ['wss://node31.superlexicon.com/rpc', 'wss://node32.superlexicon.com/rpc'],
+      publicWsUrls: ['wss://node31.superlexicon.com', 'wss://node32.superlexicon.com'],
+    })
+  );
+  const hdr = new Uint8Array(102);
+  hdr[0] = 1; // STATUS_ACTIVE
+  hdr[1] = sidBytes.length;
+  hdr[2] = nameBytes.length;
+  hdr[3] = trBytes.length;
+  hdr.set(u16BEBytes(epBytes.length), 4);
+  hdr.set(u32BE(2), 6);
+  hdr.set(u32BE(degToE7UnsignedBits(-33.8688)), 10);
+  hdr.set(u32BE(degToE7UnsignedBits(151.2093)), 14);
+  hdr.set(u64BEBytes(1), 18);
+  hdr.set(u64BEBytes(7000), 26);
+  hdr.set(u64BEBytes(7010), 34);
+  hdr.set(hexToBytes('0x1111111111111111111111111111111111111111'), 42);
+  hdr.set(hexToBytes('0x2222222222222222222222222222222222222222'), 82);
+
+  const sliceBytes = concatBytes(
+    u64BEBytes(1),
+    u64BEBytes(1),
+    u64BEBytes(0),
+    hdr,
+    sidBytes,
+    nameBytes,
+    trBytes,
+    epBytes
+  );
+  const decoded = decodeSubnetRegistrySliceHex(bytesToHex(sliceBytes));
+  assert.equal(decoded.totalCount, 1);
+  assert.equal(decoded.items.length, 1);
+  assert.equal(decoded.items[0].subnetId, '9f31a8c2');
+  assert.ok(Math.abs(decoded.items[0].lat - -33.8688) < 1e-4);
+  assert.ok(Math.abs(decoded.items[0].lon - 151.2093) < 1e-4);
+  assert.deepEqual(decoded.items[0].statsRpcUrls, [
+    'wss://node31.superlexicon.com/rpc',
+    'wss://node32.superlexicon.com/rpc',
+  ]);
+
+  // Verify SlxSubnetManager hydrates on-chain registered subnets & their stats node URLs
+  const prevLs = globalThis.localStorage;
+  const prevWin = globalThis.window;
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  globalThis.window = {
+    location: { protocol: 'https:', hostname: 'superlexicon.com', href: 'https://superlexicon.com/' },
+    dispatchEvent: () => {},
+  };
+  try {
+    store.set(
+      'slx_discovered_subnets_meta_v1',
+      JSON.stringify({
+        onChainRegistryAddr: '0xd7983d631634bb6d1dea4318a25dd413066ad5fc',
+        onChainSubnets: decoded.items,
+      })
+    );
+    const list = SlxSubnetManager.listSubnets();
+    const s3 = list.find((s) => s.subnetId === '9f31a8c2');
+    assert.ok(s3);
+    assert.equal(s3.onChainRegistered, true);
+    assert.equal(s3.rpcUrl, 'wss://node31.superlexicon.com/rpc');
+    assert.deepEqual(s3.statsRpcUrls, [
+      'wss://node31.superlexicon.com/rpc',
+      'wss://node32.superlexicon.com/rpc',
+    ]);
+  } finally {
+    globalThis.localStorage = prevLs;
+    globalThis.window = prevWin;
+  }
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (19/19 test groups)!');
 process.exit(0);

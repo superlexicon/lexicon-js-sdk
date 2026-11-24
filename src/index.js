@@ -24,3 +24,4 @@ export * from './confidential.js';
 export * from './bulletproofs.js';
 export * from './recovery.js';
 export * from './ecies_messaging.js';
+export * from './subnet-registry.js';

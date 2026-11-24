@@ -13,6 +13,7 @@ import {
 } from './crypto.js';
 import { encodeAbi } from './abi.js';
 import { slxWaitForReceipt, slxWatchChainApp } from './events.js';
+import { fetchOnChainSubnets, SUBNET1_SUBNET_REGISTRY_ADDRESS } from './subnet-registry.js';
 
 export const PUBLIC_SUBNET1_WSS_RPC_NODES = [
   'wss://node1.superlexicon.com/rpc',
@@ -70,6 +71,17 @@ function _getLanPrefix() {
 
 export const SlxSubnetManager = {
   _hydratedDiscovery: false,
+  _refreshInFlight: null,
+
+  getOnChainRegistryAddress() {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const meta = JSON.parse(localStorage.getItem(STORAGE_KEY_DISCOVERED_SUBNETS) || '{}') || {};
+        if (meta.onChainRegistryAddr) return String(meta.onChainRegistryAddr).toLowerCase();
+      } catch (_) {}
+    }
+    return SUBNET1_SUBNET_REGISTRY_ADDRESS || '';
+  },
 
   getBuiltInSubnets() {
     const isHttps =
@@ -97,70 +109,233 @@ export const SlxSubnetManager = {
     const s1DefaultId = 'e40af3dd';
     const s1GpsLat = Number(s1Meta?.detected_lat_e7 || 0) !== 0 ? Number(s1Meta.detected_lat_e7) / 1e7 : null;
     const s1GpsLon = Number(s1Meta?.detected_lon_e7 || 0) !== 0 ? Number(s1Meta.detected_lon_e7) / 1e7 : null;
+    const onChainList = Array.isArray(meta.onChainSubnets) ? meta.onChainSubnets : [];
+    const s1IdCandidate = String(
+      s1Meta?.subnet_id ||
+        (meta.subnet1?.subnetId && meta.subnet1.subnetId !== '00000001'
+          ? meta.subnet1.subnetId
+          : s1DefaultId)
+    ).toLowerCase();
+    const s1OnChain =
+      onChainList.find((o) => String(o?.subnetId || '').toLowerCase() === s1IdCandidate) || null;
+
     const s1Lat =
-      s1GpsLat ?? (Number.isFinite(Number(meta.subnet1?.lat)) ? Number(meta.subnet1.lat) : 1.3031);
+      s1GpsLat ??
+      (s1OnChain && Number.isFinite(Number(s1OnChain.lat))
+        ? Number(s1OnChain.lat)
+        : Number.isFinite(Number(meta.subnet1?.lat))
+          ? Number(meta.subnet1.lat)
+          : 1.3031);
     const s1Lon =
-      s1GpsLon ?? (Number.isFinite(Number(meta.subnet1?.lon)) ? Number(meta.subnet1.lon) : 103.9128);
+      s1GpsLon ??
+      (s1OnChain && Number.isFinite(Number(s1OnChain.lon))
+        ? Number(s1OnChain.lon)
+        : Number.isFinite(Number(meta.subnet1?.lon))
+          ? Number(meta.subnet1.lon)
+          : 103.9128);
+
+    const s1PubRpcs =
+      s1OnChain?.publicRpcUrls?.length
+        ? s1OnChain.publicRpcUrls.map(_httpToWs)
+        : [s1Meta?.public_rpc_url ? _httpToWs(s1Meta.public_rpc_url) : _preferredPublicWssRpc];
+    const s1LanRpcs =
+      s1OnChain?.lanRpcUrls?.length
+        ? s1OnChain.lanRpcUrls.map(_httpToWs)
+        : [localHostRpc];
 
     const s1 = {
       key: 'subnet1',
-      name: s1Meta?.name || 'Subnet 1 — 915 MHz LR2021 RF',
-      shortLabel: 'SUBNET 1 • RF',
-      icon: (s1Meta?.transport || 'flrc') === 'tcp' ? '🔌' : '📡',
-      transport: s1Meta?.transport || 'flrc',
-      subnetId:
-        s1Meta?.subnet_id ||
-        (meta.subnet1?.subnetId && meta.subnet1.subnetId !== '00000001'
-          ? meta.subnet1.subnetId
-          : s1DefaultId),
+      name: s1OnChain?.name || s1Meta?.name || 'Subnet 1 — 915 MHz LR2021 RF',
+      shortLabel: s1OnChain?.shortLabel || 'SUBNET 1 • RF',
+      icon: (s1OnChain?.transport || s1Meta?.transport || 'flrc') === 'tcp' ? '🔌' : '📡',
+      transport: s1OnChain?.transport || s1Meta?.transport || 'flrc',
+      subnetId: s1IdCandidate,
       tipHeight: Number(s1Meta?.tip_height || 0),
-      validatorCount: Number(s1Meta?.validator_count || 4),
-      channelHz: Number(s1Meta?.last_channel_hz || 915_000_000),
+      validatorCount: Number(s1OnChain?.validatorCount || s1Meta?.validator_count || 4),
+      channelHz: Number(s1OnChain?.channelHz || s1Meta?.last_channel_hz || 915_000_000),
       lat: s1Lat,
       lon: s1Lon,
       gpsDetected: s1GpsLat !== null && s1GpsLon !== null,
       locationLabel:
-        meta.subnet1?.locationLabel || 'Marine Crescent Sub-GHz RF Mesh, Singapore',
-      hfsRegistry: s1Meta?.hfs_registry || '',
-      manifestUrl: s1Meta?.manifest_url || '/contracts/subnet1-deployments.json',
-      rpcUrl: isHttps
-        ? _httpToWs(s1Meta?.public_rpc_url || _preferredPublicWssRpc)
-        : localHostRpc,
+        s1OnChain?.locationLabel ||
+        meta.subnet1?.locationLabel ||
+        'Marine Crescent Sub-GHz RF Mesh, Singapore',
+      hfsRegistry: s1OnChain?.hfsRegistry || s1Meta?.hfs_registry || '',
+      manifestUrl: s1OnChain?.manifestUrl || s1Meta?.manifest_url || '/contracts/subnet1-deployments.json',
+      rpcUrl: isHttps ? s1PubRpcs[0] || _preferredPublicWssRpc : localHostRpc,
+      publicRpcUrls: s1OnChain?.publicRpcUrls || PUBLIC_SUBNET1_WSS_RPC_NODES,
+      lanRpcUrls: s1LanRpcs,
+      statsRpcUrls: isHttps
+        ? s1OnChain?.statsRpcUrls?.length
+          ? s1OnChain.statsRpcUrls
+          : PUBLIC_SUBNET1_WSS_RPC_NODES.slice(0, 4)
+        : s1OnChain?.lanStatsRpcUrls?.length
+          ? s1OnChain.lanStatsRpcUrls
+          : [
+              `ws://${lanPrefix}.91:8545`,
+              `ws://${lanPrefix}.92:8555`,
+              `ws://${lanPrefix}.93:8545`,
+              `ws://${lanPrefix}.94:8545`,
+            ],
       pubsubWsUrls: isHttps
-        ? [
-            ...(s1Meta?.public_ws_url ? [_httpToWs(s1Meta.public_ws_url)] : []),
-            'wss://node1.superlexicon.com',
-            'wss://node3.superlexicon.com',
-            'wss://node4.superlexicon.com',
-            'wss://node2.superlexicon.com',
-          ]
-        : [
-            `ws://${lanPrefix}.91:8566`,
-            `ws://${lanPrefix}.93:8566`,
-            `ws://${lanPrefix}.94:8566`,
-            `ws://${lanPrefix}.92:8566`,
-            `ws://${host}:8566`,
-            `ws://${host}:8546`,
-          ],
-      validatorNodes: isHttps
-        ? [
-            { name: 'Validator node1', url: 'wss://node1.superlexicon.com/rpc', pubkeyPrefix: 'c8692b6e' },
-            { name: 'Validator node2', url: 'wss://node2.superlexicon.com/rpc', pubkeyPrefix: '75c9f6e5' },
-            { name: 'Validator node3', url: 'wss://node3.superlexicon.com/rpc', pubkeyPrefix: '33b12ce4' },
-            { name: 'Validator node4', url: 'wss://node4.superlexicon.com/rpc', pubkeyPrefix: 'fbfc4fee' },
-          ]
-        : [
-            { name: `RF Validator 1 (.91)`, url: `ws://${lanPrefix}.91:8545`, pubkeyPrefix: 'c8692b6e' },
-            { name: `RF Validator 2 (.92)`, url: `ws://${lanPrefix}.92:8555`, pubkeyPrefix: '75c9f6e5' },
-            { name: `RF Validator 3 (.93)`, url: `ws://${lanPrefix}.93:8545`, pubkeyPrefix: '33b12ce4' },
-            { name: `RF Validator 4 (.94)`, url: `ws://${lanPrefix}.94:8545`, pubkeyPrefix: 'fbfc4fee' },
-          ],
+        ? s1OnChain?.publicWsUrls?.length
+          ? s1OnChain.publicWsUrls.map(_httpToWs)
+          : [
+              ...(s1Meta?.public_ws_url ? [_httpToWs(s1Meta.public_ws_url)] : []),
+              'wss://node1.superlexicon.com',
+              'wss://node3.superlexicon.com',
+              'wss://node4.superlexicon.com',
+              'wss://node2.superlexicon.com',
+            ]
+        : s1OnChain?.lanWsUrls?.length
+          ? [...s1OnChain.lanWsUrls.map(_httpToWs), `ws://${host}:8566`, `ws://${host}:8546`]
+          : [
+              `ws://${lanPrefix}.91:8566`,
+              `ws://${lanPrefix}.93:8566`,
+              `ws://${lanPrefix}.94:8566`,
+              `ws://${lanPrefix}.92:8566`,
+              `ws://${host}:8566`,
+              `ws://${host}:8546`,
+            ],
+      validatorNodes:
+        s1OnChain?.validatorNodes?.length
+          ? s1OnChain.validatorNodes.map((v) => ({
+              name: v.name,
+              url: isHttps ? _httpToWs(v.url) : _httpToWs(v.lanUrl || v.url),
+              lanUrl: v.lanUrl ? _httpToWs(v.lanUrl) : '',
+              pubkeyPrefix: v.pubkeyPrefix || null,
+            }))
+          : isHttps
+            ? [
+                { name: 'Validator node1', url: 'wss://node1.superlexicon.com/rpc', pubkeyPrefix: 'c8692b6e' },
+                { name: 'Validator node2', url: 'wss://node2.superlexicon.com/rpc', pubkeyPrefix: '75c9f6e5' },
+                { name: 'Validator node3', url: 'wss://node3.superlexicon.com/rpc', pubkeyPrefix: '33b12ce4' },
+                { name: 'Validator node4', url: 'wss://node4.superlexicon.com/rpc', pubkeyPrefix: 'fbfc4fee' },
+              ]
+            : [
+                { name: `RF Validator 1 (.91)`, url: `ws://${lanPrefix}.91:8545`, pubkeyPrefix: 'c8692b6e' },
+                { name: `RF Validator 2 (.92)`, url: `ws://${lanPrefix}.92:8555`, pubkeyPrefix: '75c9f6e5' },
+                { name: `RF Validator 3 (.93)`, url: `ws://${lanPrefix}.93:8545`, pubkeyPrefix: '33b12ce4' },
+                { name: `RF Validator 4 (.94)`, url: `ws://${lanPrefix}.94:8545`, pubkeyPrefix: 'fbfc4fee' },
+              ],
+      ownerEoa: s1OnChain?.ownerEoa || '',
+      operatorIdentity: s1OnChain?.operatorIdentity || '',
+      onChainRegistered: Boolean(s1OnChain),
+      onChainRegistryAddr: meta.onChainRegistryAddr || SUBNET1_SUBNET_REGISTRY_ADDRESS || '',
+      contracts: s1OnChain?.contracts || {},
       builtin: true,
     };
 
     const result = [s1];
     const seenIds = new Set([String(s1.subnetId || '').toLowerCase()]);
     const roamingList = Array.isArray(meta.roamingSubnets) ? meta.roamingSubnets : [];
+    const roamingById = new Map(
+      roamingList.map((r) => [String(r?.subnet_id || '').trim().toLowerCase(), r])
+    );
+
+    // 1. Hydrate all subnets registered on-chain in SubnetRegistry HFS
+    for (const oc of onChainList) {
+      const sid = String(oc?.subnetId || '').trim().toLowerCase();
+      if (!sid || seenIds.has(sid)) continue;
+      seenIds.add(sid);
+
+      const rm = roamingById.get(sid) || null;
+      const isKnownS2 = sid === String(meta.subnet2?.subnetId || '6eaa3da4').toLowerCase();
+      const transport = oc.transport || rm?.transport || 'tcp';
+      const isTcp = transport === 'tcp';
+      const key = isKnownS2 ? 'subnet2' : `subnet_${sid}`;
+
+      const pubRpcs = (oc.publicRpcUrls || [])
+        .map((u) => _sanitizeSubnet2PublicUrl(u, true))
+        .filter(Boolean);
+      const pubWs = (oc.publicWsUrls || [])
+        .map((u) => _sanitizeSubnet2PublicUrl(u, false))
+        .filter(Boolean);
+      const lanRpcs = (oc.lanRpcUrls || []).map(_httpToWs).filter(Boolean);
+      const lanWs = (oc.lanWsUrls || []).map(_httpToWs).filter(Boolean);
+
+      const rpcUrls = isHttps
+        ? pubRpcs.length
+          ? pubRpcs
+          : isKnownS2
+            ? [...PUBLIC_SUBNET2_WSS_RPC_NODES]
+            : []
+        : lanRpcs.length
+          ? lanRpcs
+          : pubRpcs;
+
+      const pubsubUrls = isHttps
+        ? pubWs.length
+          ? pubWs
+          : isKnownS2
+            ? [...PUBLIC_SUBNET2_PUBSUB_WS_NODES]
+            : []
+        : lanWs.length
+          ? lanWs
+          : pubWs;
+
+      const statsUrls = isHttps
+        ? (oc.statsRpcUrls || []).length
+          ? oc.statsRpcUrls.map((u) => _sanitizeSubnet2PublicUrl(u, true))
+          : rpcUrls
+        : (oc.lanStatsRpcUrls || []).length
+          ? oc.lanStatsRpcUrls.map(_httpToWs)
+          : rpcUrls;
+
+      const rmGpsLat =
+        rm && Number(rm.detected_lat_e7 || 0) !== 0 ? Number(rm.detected_lat_e7) / 1e7 : null;
+      const rmGpsLon =
+        rm && Number(rm.detected_lon_e7 || 0) !== 0 ? Number(rm.detected_lon_e7) / 1e7 : null;
+
+      result.push({
+        key,
+        name: oc.name || rm?.name || `Subnet ${sid}`,
+        shortLabel:
+          oc.shortLabel ||
+          (isKnownS2
+            ? `SUBNET 2 • ${isTcp ? 'TCP' : 'RF'}`
+            : `SUBNET ${sid.slice(0, 4).toUpperCase()} • ${isTcp ? 'TCP' : 'RF'}`),
+        icon: isTcp ? '🔌' : '📡',
+        transport,
+        subnetId: sid,
+        tipHeight: Number(rm?.tip_height || 0),
+        validatorCount: Number(oc.validatorCount || rm?.validator_count || statsUrls.length || 3),
+        channelHz: Number(oc.channelHz || rm?.last_channel_hz || (isTcp ? 1 : 915_000_000)),
+        lat: rmGpsLat ?? Number(oc.lat ?? 1.3521),
+        lon: rmGpsLon ?? Number(oc.lon ?? 103.9894),
+        gpsDetected: rmGpsLat !== null && rmGpsLon !== null,
+        locationLabel: oc.locationLabel || 'Registered in On-Chain SubnetRegistry HFS',
+        hfsRegistry: oc.hfsRegistry || rm?.hfs_registry || '',
+        manifestUrl: oc.manifestUrl || rm?.manifest_url || '',
+        rpcUrl: rpcUrls[0] || '',
+        publicRpcUrls: pubRpcs,
+        lanRpcUrls: lanRpcs,
+        statsRpcUrls: statsUrls,
+        pubsubWsUrls: pubsubUrls,
+        validatorNodes:
+          Array.isArray(oc.validatorNodes) && oc.validatorNodes.length
+            ? oc.validatorNodes.map((v) => ({
+                name: v.name,
+                url: isHttps
+                  ? _sanitizeSubnet2PublicUrl(v.url, true)
+                  : _httpToWs(v.lanUrl || v.url),
+                lanUrl: v.lanUrl ? _httpToWs(v.lanUrl) : '',
+                pubkeyPrefix: v.pubkeyPrefix || null,
+              }))
+            : statsUrls.map((u, idx) => ({
+                name: `${isTcp ? 'TCP' : 'RF'} Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
+                url: u,
+                pubkeyPrefix: null,
+              })),
+        ownerEoa: oc.ownerEoa || '',
+        operatorIdentity: oc.operatorIdentity || '',
+        onChainRegistered: true,
+        onChainRegistryAddr: meta.onChainRegistryAddr || SUBNET1_SUBNET_REGISTRY_ADDRESS || '',
+        contracts: oc.contracts || {},
+        builtin: true,
+        discovered: true,
+      });
+    }
 
     for (let i = 0; i < roamingList.length; i++) {
       const rm = roamingList[i];
@@ -509,12 +684,16 @@ export const SlxSubnetManager = {
   },
 
   async refreshDiscoveryMetadata(seedRpcOverride = '') {
-    let meta = {};
-    if (typeof localStorage !== 'undefined') {
-      try {
-        meta = JSON.parse(localStorage.getItem(STORAGE_KEY_DISCOVERED_SUBNETS) || '{}') || {};
-      } catch (_) {}
+    if (!seedRpcOverride && this._refreshInFlight) {
+      return this._refreshInFlight;
     }
+    const runPromise = (async () => {
+      let meta = {};
+      if (typeof localStorage !== 'undefined') {
+        try {
+          meta = JSON.parse(localStorage.getItem(STORAGE_KEY_DISCOVERED_SUBNETS) || '{}') || {};
+        } catch (_) {}
+      }
 
     const isHttps =
       typeof window !== 'undefined' &&
@@ -537,6 +716,18 @@ export const SlxSubnetManager = {
 
     const tasks = [];
     if (typeof WebSocket !== 'undefined' && seedRpc) {
+      tasks.push(
+        fetchOnChainSubnets({ rpcUrl: seedRpc })
+          .then((res) => {
+            if (res && res.registryAddr) {
+              meta.onChainRegistryAddr = res.registryAddr;
+            }
+            if (res && Array.isArray(res.subnets) && res.subnets.length > 0) {
+              meta.onChainSubnets = res.subnets;
+            }
+          })
+          .catch(() => {})
+      );
       tasks.push(
         slxNodeRpc(seedRpc, 'slx_roamingStatus', [], 3500)
           .then((roam) => {
@@ -654,14 +845,22 @@ export const SlxSubnetManager = {
         localStorage.setItem(STORAGE_KEY_DISCOVERED_SUBNETS, JSON.stringify(meta));
       } catch (_) {}
     }
-    this._hydratedDiscovery = true;
-    const prof = this.getActiveSubnetProfile();
-    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('slx:subnets-updated', { detail: this.listSubnets() }));
-      } catch (_) {}
+      this._hydratedDiscovery = true;
+      const prof = this.getActiveSubnetProfile();
+      if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('slx:subnets-updated', { detail: this.listSubnets() }));
+        } catch (_) {}
+      }
+      return prof;
+    })();
+    if (!seedRpcOverride) {
+      this._refreshInFlight = runPromise.finally(() => {
+        if (this._refreshInFlight === runPromise) this._refreshInFlight = null;
+      });
+      return this._refreshInFlight;
     }
-    return prof;
+    return runPromise;
   },
 };
 

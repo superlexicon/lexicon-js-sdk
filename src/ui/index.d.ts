@@ -187,3 +187,12 @@ export function openSlxSubnetWorldMapModal(opts?: {
   close: () => void;
   mapInst: ReturnType<typeof mountSlxSubnetWorldMap>;
 } | null;
+
+export function openSlxSubnetRegistryModal(opts?: {
+  initialSubnet?: any;
+  wallet?: SlxWalletManager | null;
+  rpcUrl?: string;
+  onSaved?: ((res: any) => void) | null;
+}): {
+  close: () => void;
+} | null;

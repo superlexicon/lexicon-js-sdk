@@ -8,6 +8,12 @@
  */
 
 import { SlxSubnetManager, slxNodeRpc } from '../rpc.js';
+import { SlxWalletManager } from '../identity.js';
+import {
+  upsertSubnetOnChain,
+  probeSubnetNodeStats,
+  SUBNET1_SUBNET_REGISTRY_ADDRESS,
+} from '../subnet-registry.js';
 
 export const MAP_BASE_W = 1200;
 export const MAP_BASE_H = 675; // Exact 16:9 matching /assets/hegemony/world_map.jpg (1600x900)
@@ -449,6 +455,8 @@ export function mountSlxSubnetWorldMap({
     selectedKey: SlxSubnetManager.getActiveSubnetKey(),
     bgFailed: false,
     heightsByKey: new Map(),
+    nodeStatsByKey: new Map(),
+    regAddrCopiedUntil: 0,
     bridge: {
       active: true,
       lane: 'hybrid-rf+tcp',
@@ -465,7 +473,8 @@ export function mountSlxSubnetWorldMap({
       <div class="slx-swm-hdr">
         <div class="slx-swm-title-wrap">
           <span class="slx-swm-title">🌍 GLOBAL SUBNET WORLD MAP &amp; ROAMING MESH</span>
-          <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetWorldMap…</span>
+          <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetRegistry HFS…</span>
+          <button type="button" class="slx-swm-btn" data-swm="hfs-badge" title="Click to copy On-Chain SubnetRegistry HFS contract address" style="padding:2px 8px;font-size:0.63rem;color:#7dd3fc;border-color:rgba(56,189,248,0.45);">⛓️ HFS Registry</button>
         </div>
         <div class="slx-swm-controls">
           <span class="slx-swm-coords" data-swm="coords">1.30° N, 103.91° E</span>
@@ -473,6 +482,7 @@ export function mountSlxSubnetWorldMap({
           <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Active Subnet Mesh Cluster">📍 Cluster Zoom</button>
           <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
           <button type="button" class="slx-swm-btn" data-swm-act="zoom-out" title="Zoom Out">➖</button>
+          <button type="button" class="slx-swm-btn cta" data-swm-act="register-hfs" title="Register a new subnet &amp; validator stats URLs on-chain in SubnetRegistry HFS ($0.00 gas)">⛓️ + Register Subnet</button>
           ${
             showCloseButton
               ? `<button type="button" class="slx-swm-btn" data-swm-act="close" title="Close World Map">✕ Close</button>`
@@ -497,6 +507,7 @@ export function mountSlxSubnetWorldMap({
   `;
 
   const elSummaryPill = mountContainer.querySelector('[data-swm="summary-pill"]');
+  const elHfsBadge = mountContainer.querySelector('[data-swm="hfs-badge"]');
   const elCoords = mountContainer.querySelector('[data-swm="coords"]');
   const elStage = mountContainer.querySelector('[data-swm="stage"]');
   const elSvg = mountContainer.querySelector('[data-swm="svg"]');
@@ -886,24 +897,58 @@ export function mountSlxSubnetWorldMap({
       });
     }
 
+    if (elHfsBadge) {
+      const regAddr =
+        SlxSubnetManager.getOnChainRegistryAddress?.() || SUBNET1_SUBNET_REGISTRY_ADDRESS || '';
+      if (Date.now() < state.regAddrCopiedUntil) {
+        elHfsBadge.textContent = '✓ Copied HFS Addr!';
+      } else if (regAddr) {
+        elHfsBadge.textContent = `⛓️ SubnetRegistry HFS: ${regAddr.slice(0, 6)}…${regAddr.slice(-4)}`;
+        elHfsBadge.dataset.addr = regAddr;
+      }
+    }
+
     const sel = subs.find((s) => s.key === state.selectedKey) || subs[0];
     if (elInspector && sel) {
       const isAct = sel.key === activeKey;
       const isTcp = sel.transport === 'tcp';
       const valCnt = Number(sel.validatorCount || sel.validatorNodes?.length || 1);
+      const nodeProbe = state.nodeStatsByKey.get(sel.key) || null;
+      const nodePillsHtml =
+        nodeProbe && Array.isArray(nodeProbe.nodes) && nodeProbe.nodes.length
+          ? `
+            <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:4px;">
+              ${nodeProbe.nodes
+                .map(
+                  (nd) => `
+                  <span title="${escHtml(nd.url)}" style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;background:rgba(15,23,42,0.92);border:1px solid ${nd.online ? 'rgba(52,211,153,0.45)' : 'rgba(248,113,113,0.45)'};font-size:0.62rem;color:${nd.online ? '#a7f3d0' : '#fca5a5'};">
+                    <span>${nd.online ? '🟢' : '🔴'}</span>
+                    <strong style="color:#f8fafc;">${escHtml(nd.name)}</strong>
+                    <span>${nd.online ? `#${fmtNum(nd.blockHeight)} (${nd.rttMs}ms)` : 'offline'}</span>
+                  </span>
+                `
+                )
+                .join('')}
+            </div>
+          `
+          : '';
+
       elInspector.innerHTML = `
-        <div style="display:flex;flex-direction:column;gap:3px;min-width:0;">
+        <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1;">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <strong style="color:${isTcp ? '#e9d5ff' : '#7dd3fc'};font-size:0.76rem;">${escHtml(sel.icon || '🌐')} ${escHtml(sel.name)}</strong>
             <span style="color:#cbd5e1;">Subnet ID: <code style="color:#fcd34d;">${escHtml(sel.subnetId || '—')}</code></span>
             <span style="color:#6ee7b7;">${sel.liveHeight > 0 ? `Block #${fmtNum(sel.liveHeight)}` : 'Online'} • ${fmtNum(valCnt)} BFT Validator${valCnt === 1 ? '' : 's'}</span>
+            ${sel.onChainRegistered ? `<span style="font-size:0.6rem;padding:1px 6px;border-radius:999px;background:rgba(56,189,248,0.16);border:1px solid rgba(56,189,248,0.45);color:#bae6fd;">⛓️ Stored in SubnetRegistry HFS</span>` : ''}
           </div>
           <div style="color:#94a3b8;font-size:0.66rem;word-break:break-all;">
-            📍 ${escHtml(formatLatLon(sel.lat, sel.lon))} (${escHtml(sel.locationLabel || 'Mesh Cluster')}) • RPC: <code style="color:#bae6fd;">${escHtml(sel.rpcUrl || 'Auto-Discovered')}</code>
+            📍 ${escHtml(formatLatLon(sel.lat, sel.lon))} (${escHtml(sel.locationLabel || 'Mesh Cluster')}) • Stats Nodes: <code style="color:#bae6fd;">${escHtml((sel.statsRpcUrls || [sel.rpcUrl]).filter(Boolean).join(', ') || 'Auto-Discovered')}</code>
           </div>
+          ${nodePillsHtml}
         </div>
         <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;flex-shrink:0;">
           <button type="button" class="slx-swm-btn" data-swm-focus="${escHtml(sel.key)}">🎯 Zoom Here</button>
+          <button type="button" class="slx-swm-btn" data-swm-edit-hfs="${escHtml(sel.key)}" title="Update node URLs &amp; metadata on-chain (requires subnet owner wallet)">✎ Edit Nodes</button>
           ${
             isAct
               ? `<span class="slx-swm-pill">✓ Currently Connected Subnet</span>`
@@ -915,6 +960,15 @@ export function mountSlxSubnetWorldMap({
       elInspector.querySelector('[data-swm-focus]')?.addEventListener('click', () => {
         const pt = latLonToMapXY(sel.lat, sel.lon);
         animateCameraTo(pt.x, pt.y, 3.4, 'cluster');
+      });
+
+      elInspector.querySelector('[data-swm-edit-hfs]')?.addEventListener('click', () => {
+        openSlxSubnetRegistryModal({
+          initialSubnet: sel,
+          onSaved: () => {
+            SlxSubnetManager.refreshDiscoveryMetadata().then(() => pollSubnetHeights());
+          },
+        });
       });
 
       elInspector.querySelector('[data-swm-switch]')?.addEventListener('click', () => {
@@ -948,6 +1002,27 @@ export function mountSlxSubnetWorldMap({
     const nextZ = Math.max(1, state.zoom / 1.45);
     if (nextZ <= 1.05) animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global');
     else animateCameraTo(state.cx, state.cy, nextZ, 'custom');
+  });
+  elHfsBadge?.addEventListener('click', () => {
+    const addr =
+      elHfsBadge.dataset.addr ||
+      SlxSubnetManager.getOnChainRegistryAddress?.() ||
+      SUBNET1_SUBNET_REGISTRY_ADDRESS;
+    if (addr && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(addr).catch(() => {});
+      state.regAddrCopiedUntil = Date.now() + 1600;
+      renderCardsAndInspector();
+      setTimeout(() => {
+        if (!state.destroyed) renderCardsAndInspector();
+      }, 1650);
+    }
+  });
+  mountContainer.querySelector('[data-swm-act="register-hfs"]')?.addEventListener('click', () => {
+    openSlxSubnetRegistryModal({
+      onSaved: () => {
+        SlxSubnetManager.refreshDiscoveryMetadata().then(() => pollSubnetHeights());
+      },
+    });
   });
   mountContainer.querySelector('[data-swm-act="close"]')?.addEventListener('click', () => {
     if (typeof onClose === 'function') onClose();
@@ -1020,18 +1095,17 @@ export function mountSlxSubnetWorldMap({
     { passive: false }
   );
 
-  // Live lightweight height probe so standalone modal & explorer both show live block tips
+  // Live per-node stats probe using the validator RPC URLs registered in SubnetRegistry HFS
   async function pollSubnetHeights() {
     if (state.destroyed) return;
     const subs = SlxSubnetManager.listSubnets();
     await Promise.allSettled(
       subs.map(async (s) => {
-        if (!s.rpcUrl) return;
-        const hex = await slxNodeRpc(s.rpcUrl, 'eth_blockNumber', [], 2600).catch(() => null);
-        if (typeof hex === 'string' && hex.startsWith('0x')) {
-          const n = Number.parseInt(hex, 16);
-          if (Number.isFinite(n) && n > 0) {
-            state.heightsByKey.set(s.key, n);
+        const probe = await probeSubnetNodeStats(s, { timeoutMs: 2600 }).catch(() => null);
+        if (probe) {
+          state.nodeStatsByKey.set(s.key, probe);
+          if (probe.maxHeight > 0) {
+            state.heightsByKey.set(s.key, probe.maxHeight);
           }
         }
       })
@@ -1126,4 +1200,260 @@ export function openSlxSubnetWorldMapModal({ initialMode = 'global' } = {}) {
 
   _activeMapModal = { backdrop, close, mapInst };
   return _activeMapModal;
+}
+
+function derivePubSubFromRpcUrl(rpcUrl) {
+  const s = String(rpcUrl || '').trim();
+  if (!s) return '';
+  try {
+    const u = new URL(s.startsWith('http') ? s.replace(/^http/, 'ws') : s);
+    if (u.pathname === '/rpc' || u.pathname === '/rpc/') {
+      u.pathname = '/';
+    } else if (u.port) {
+      const p = Number(u.port);
+      if (Number.isFinite(p) && p % 100 === 45) u.port = String(p + 21);
+    }
+    return u.toString().replace(/\/$/, '');
+  } catch (_) {
+    return s.replace(/\/rpc\/?$/, '');
+  }
+}
+
+/**
+ * Interactive modal to register a new Subnet or update an owned Subnet's validator stats/RPC URLs
+ * directly on-chain inside the `SubnetRegistry` HFS ($0.00 gas).
+ */
+export function openSlxSubnetRegistryModal({
+  initialSubnet = null,
+  wallet = null,
+  rpcUrl = '',
+  onSaved = null,
+} = {}) {
+  if (typeof document === 'undefined') return null;
+  injectSubnetWorldMapStyles();
+
+  const effWallet =
+    wallet ||
+    (typeof window !== 'undefined' && window.__SLX_WALLET__) ||
+    new SlxWalletManager();
+  const myAddr = String(effWallet?.keypair?.address || '').toLowerCase();
+  const isEdit = Boolean(initialSubnet && initialSubnet.subnetId);
+  const ownerMismatch =
+    isEdit &&
+    initialSubnet.ownerEoa &&
+    myAddr &&
+    String(initialSubnet.ownerEoa).toLowerCase() !== myAddr;
+
+  const regAddr =
+    SlxSubnetManager.getOnChainRegistryAddress?.() || SUBNET1_SUBNET_REGISTRY_ADDRESS || '';
+
+  const initPubUrls = isEdit
+    ? (initialSubnet.publicRpcUrls || initialSubnet.statsRpcUrls || [initialSubnet.rpcUrl])
+        .filter(Boolean)
+        .join('\n')
+    : '';
+  const initLanUrls = isEdit ? (initialSubnet.lanRpcUrls || []).filter(Boolean).join('\n') : '';
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'slx-swm-modal-backdrop';
+  backdrop.style.zIndex = '10080';
+
+  const card = document.createElement('div');
+  card.style.cssText =
+    'width:min(580px,100%);max-height:90dvh;overflow-y:auto;border-radius:15px;border:1.5px solid rgba(56,189,248,0.52);background:linear-gradient(180deg,#060d1d,#091326);padding:16px 18px;box-shadow:0 20px 50px rgba(0,0,0,0.65);color:#f8fafc;font-family:Inter,system-ui,sans-serif;display:flex;flex-direction:column;gap:11px;';
+
+  const fieldStyle =
+    'width:100%;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid rgba(71,85,105,0.75);background:#040915;color:#f8fafc;font-family:"JetBrains Mono",monospace;font-size:16px;outline:none;';
+  const lblStyle =
+    'display:flex;flex-direction:column;gap:4px;font-size:0.7rem;font-weight:700;color:#cbd5e1;font-family:"JetBrains Mono",monospace;';
+
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid rgba(51,65,85,0.6);padding-bottom:9px;">
+      <div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.86rem;font-weight:800;color:#7dd3fc;">
+          ⛓️ ${isEdit ? `Update On-Chain Subnet (${escHtml(initialSubnet.subnetId)})` : 'Register Subnet & Stats Nodes in SubnetRegistry HFS'}
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:0.64rem;color:#94a3b8;margin-top:2px;">
+          HFS: <code style="color:#fcd34d;">${escHtml(regAddr || 'Auto-Discover')}</code> • Signer: <code style="color:#6ee7b7;">${escHtml(myAddr ? `${myAddr.slice(0, 8)}…${myAddr.slice(-4)}` : '—')}</code> • $0.00 Gas
+        </div>
+      </div>
+      <button type="button" class="slx-swm-btn" data-srm-close>✕</button>
+    </div>
+
+    ${
+      ownerMismatch
+        ? `<div style="padding:8px 10px;border-radius:8px;background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.45);color:#fde68a;font-family:'JetBrains Mono',monospace;font-size:0.66rem;">
+            ⚠️ Subnet <code>${escHtml(initialSubnet.subnetId)}</code> is owned on-chain by <code>${escHtml(initialSubnet.ownerEoa.slice(0, 10))}…</code>. Change Subnet ID below to register a new subnet under your wallet, or switch to the owner keypair to update this record.
+          </div>`
+        : ''
+    }
+
+    <form data-srm-form style="display:flex;flex-direction:column;gap:9px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <label style="${lblStyle}">
+          <span>Subnet ID (BLAKE3 Hex / Slug) *</span>
+          <input name="subnetId" required maxlength="32" value="${escHtml(isEdit ? initialSubnet.subnetId : '')}" placeholder="e.g. 9f31a8c2" style="${fieldStyle}" />
+        </label>
+        <label style="${lblStyle}">
+          <span>Transport Layer *</span>
+          <select name="transport" style="${fieldStyle}">
+            <option value="tcp" ${!isEdit || initialSubnet.transport === 'tcp' ? 'selected' : ''}>🔌 Encrypted TCP/IP Mesh</option>
+            <option value="flrc" ${isEdit && initialSubnet.transport === 'flrc' ? 'selected' : ''}>📡 915 MHz LR2021 Sub-GHz RF</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;">
+        <label style="${lblStyle}">
+          <span>Display Name *</span>
+          <input name="name" required maxlength="80" value="${escHtml(isEdit ? initialSubnet.name : '')}" placeholder="e.g. Subnet 3 — Geneva Alpine Mesh" style="${fieldStyle}" />
+        </label>
+        <label style="${lblStyle}">
+          <span>Short Badge</span>
+          <input name="shortLabel" maxlength="20" value="${escHtml(isEdit ? initialSubnet.shortLabel || '' : '')}" placeholder="SUBNET 3 • TCP" style="${fieldStyle}" />
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+        <label style="${lblStyle}">
+          <span>Latitude (°) *</span>
+          <input type="number" step="any" name="lat" required value="${escHtml(isEdit ? initialSubnet.lat : '46.2044')}" placeholder="46.2044" style="${fieldStyle}" />
+        </label>
+        <label style="${lblStyle}">
+          <span>Longitude (°) *</span>
+          <input type="number" step="any" name="lon" required value="${escHtml(isEdit ? initialSubnet.lon : '6.1432')}" placeholder="6.1432" style="${fieldStyle}" />
+        </label>
+        <label style="${lblStyle}">
+          <span>Validators</span>
+          <input type="number" min="1" max="128" name="validatorCount" value="${escHtml(isEdit ? initialSubnet.validatorCount || 3 : 3)}" style="${fieldStyle}" />
+        </label>
+      </div>
+
+      <label style="${lblStyle}">
+        <span>Geographic Location Label</span>
+        <input name="locationLabel" maxlength="80" value="${escHtml(isEdit ? initialSubnet.locationLabel || '' : '')}" placeholder="e.g. Geneva Quantum Clearinghouse, Switzerland" style="${fieldStyle}" />
+      </label>
+
+      <label style="${lblStyle}">
+        <span>Public WSS Validator RPC &amp; Stats URLs (1 per line) *</span>
+        <textarea name="publicRpcUrls" rows="3" required placeholder="wss://node31.superlexicon.com/rpc&#10;wss://node32.superlexicon.com/rpc&#10;wss://node33.superlexicon.com/rpc" style="${fieldStyle}font-size:13px;">${escHtml(initPubUrls)}</textarea>
+      </label>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <label style="${lblStyle}">
+          <span>Optional LAN WS RPC URLs (1/line)</span>
+          <textarea name="lanRpcUrls" rows="2" placeholder="ws://192.168.50.91:28545" style="${fieldStyle}font-size:13px;">${escHtml(initLanUrls)}</textarea>
+        </label>
+        <label style="${lblStyle}">
+          <span>Optional Target HfsRegistry (0x…)</span>
+          <input name="hfsRegistry" value="${escHtml(isEdit ? initialSubnet.hfsRegistry || '' : '')}" placeholder="0x…" style="${fieldStyle}font-size:13px;" />
+        </label>
+      </div>
+
+      <div data-srm-status style="display:none;padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:0.68rem;"></div>
+
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:2px;">
+        <button type="button" class="slx-swm-btn" data-srm-close>Cancel</button>
+        <button type="submit" class="slx-swm-btn cta" data-srm-submit style="padding:7px 14px;">⛓️ Sign &amp; Save to SubnetRegistry HFS ($0.00 Gas)</button>
+      </div>
+    </form>
+  `;
+
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (ev) => {
+    if (ev.key === 'Escape') close();
+  };
+  document.addEventListener('keydown', onKey);
+  backdrop.addEventListener('click', (ev) => {
+    if (ev.target === backdrop) close();
+  });
+  card.querySelectorAll('[data-srm-close]').forEach((b) => b.addEventListener('click', close));
+
+  const form = card.querySelector('[data-srm-form]');
+  const statusEl = card.querySelector('[data-srm-status]');
+  const submitBtn = card.querySelector('[data-srm-submit]');
+
+  form?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fd = new FormData(form);
+    const pubList = String(fd.get('publicRpcUrls') || '')
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const lanList = String(fd.get('lanRpcUrls') || '')
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (!pubList.length) return;
+    const transport = String(fd.get('transport') || 'tcp');
+    const pubWsUrls = pubList.map(derivePubSubFromRpcUrl).filter(Boolean);
+    const lanWsUrls = lanList.map(derivePubSubFromRpcUrl).filter(Boolean);
+    const validatorNodes = pubList.map((u, idx) => ({
+      name: `${transport === 'flrc' ? 'RF' : 'TCP'} Validator #${idx + 1}`,
+      url: u,
+      ...(lanList[idx] ? { lanUrl: lanList[idx] } : {}),
+    }));
+
+    submitBtn.disabled = true;
+    statusEl.style.display = 'block';
+    statusEl.style.background = 'rgba(14,165,233,0.16)';
+    statusEl.style.border = '1px solid rgba(56,189,248,0.45)';
+    statusEl.style.color = '#bae6fd';
+    statusEl.textContent = '⏳ Signing & finalizing upsertSubnet() on SubnetRegistry HFS…';
+
+    try {
+      const targetRpc =
+        rpcUrl ||
+        SlxSubnetManager.getActiveSubnetProfile()?.rpcUrl ||
+        'wss://node1.superlexicon.com/rpc';
+
+      const res = await upsertSubnetOnChain({
+        wallet: effWallet,
+        rpcUrl: targetRpc,
+        subnet: {
+          subnetId: String(fd.get('subnetId') || '').trim(),
+          name: String(fd.get('name') || '').trim(),
+          transport,
+          channelHz: transport === 'flrc' ? 915_000_000 : 1,
+          validatorCount: Number(fd.get('validatorCount') || pubList.length || 3),
+          lat: Number(fd.get('lat') || 0),
+          lon: Number(fd.get('lon') || 0),
+          hfsRegistry: String(fd.get('hfsRegistry') || '').trim(),
+          endpoints: {
+            shortLabel: String(fd.get('shortLabel') || '').trim(),
+            locationLabel: String(fd.get('locationLabel') || '').trim(),
+            publicRpcUrls: pubList,
+            publicWsUrls: pubWsUrls,
+            lanRpcUrls: lanList,
+            lanWsUrls,
+            validatorNodes,
+          },
+        },
+      });
+
+      statusEl.style.background = 'rgba(16,185,129,0.18)';
+      statusEl.style.border = '1px solid rgba(52,211,153,0.55)';
+      statusEl.style.color = '#a7f3d0';
+      statusEl.textContent = `✓ Confirmed in SubnetRegistry HFS (${res.txHash.slice(0, 12)}…)! Refreshing subnets…`;
+
+      await SlxSubnetManager.refreshDiscoveryMetadata();
+      if (typeof onSaved === 'function') onSaved(res);
+      setTimeout(close, 650);
+    } catch (err) {
+      submitBtn.disabled = false;
+      statusEl.style.background = 'rgba(239,68,68,0.18)';
+      statusEl.style.border = '1px solid rgba(248,113,113,0.55)';
+      statusEl.style.color = '#fecaca';
+      statusEl.textContent = `✕ Failed: ${err?.message || String(err)}`;
+    }
+  });
+
+  return { close };
 }

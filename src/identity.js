@@ -1125,6 +1125,14 @@ export const HFS_TYPES = {
     modalTitle: 'Select Confidential Category Roll-Up Ledger HFS',
     placeholder: '',
   },
+  SUBNET_REGISTRY: {
+    typeName: 'SUBNET_REGISTRY',
+    icon: '🌐',
+    shortLabel: 'Subnet Registry HFS',
+    deployBtnText: null,
+    modalTitle: 'Select On-Chain SubnetRegistry HFS',
+    placeholder: '',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {
