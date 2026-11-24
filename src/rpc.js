@@ -72,7 +72,7 @@ export const SlxSubnetManager = {
     }
 
     const s1Meta = meta.thisSubnet || null;
-    const s1DefaultId = 'c06cb54b';
+    const s1DefaultId = 'e40af3dd';
 
     const s1 = {
       key: 'subnet1',
