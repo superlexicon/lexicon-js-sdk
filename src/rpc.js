@@ -71,9 +71,8 @@ export const SlxSubnetManager = {
       } catch (_) {}
     }
 
-    const s1Meta = meta.thisSubnet && (!meta.thisSubnet.subnet_id || meta.thisSubnet.subnet_id === (meta.subnet1?.subnetId || '00000001'))
-      ? meta.thisSubnet
-      : null;
+    const s1Meta = meta.thisSubnet || null;
+    const s1DefaultId = 'c06cb54b';
 
     const s1 = {
       key: 'subnet1',
@@ -81,7 +80,11 @@ export const SlxSubnetManager = {
       shortLabel: 'SUBNET 1 • RF',
       icon: (s1Meta?.transport || 'flrc') === 'tcp' ? '🔌' : '📡',
       transport: s1Meta?.transport || 'flrc',
-      subnetId: s1Meta?.subnet_id || meta.subnet1?.subnetId || '00000001',
+      subnetId:
+        s1Meta?.subnet_id ||
+        (meta.subnet1?.subnetId && meta.subnet1.subnetId !== '00000001'
+          ? meta.subnet1.subnetId
+          : s1DefaultId),
       tipHeight: Number(s1Meta?.tip_height || 0),
       validatorCount: Number(s1Meta?.validator_count || 4),
       hfsRegistry: s1Meta?.hfs_registry || '',
@@ -437,11 +440,13 @@ export const SlxSubnetManager = {
                   x,
                 ])
               );
+              const nextList = [];
+              const ownSid = String(roam.this_subnet?.subnet_id || roam.subnet_id || '').toLowerCase();
               for (const item of roam.world_map_subnets) {
                 const sid = String(item?.subnet_id || '').trim().toLowerCase();
-                if (!sid || sid === '00000000') continue;
+                if (!sid || sid === '00000000' || sid === '00000001' || sid === ownSid) continue;
                 const prev = prevById.get(sid) || {};
-                prevById.set(sid, {
+                nextList.push({
                   subnet_id: sid,
                   last_channel_hz: Number(item.last_channel_hz ?? prev.last_channel_hz ?? 0),
                   tip_height: Number(item.tip_height ?? prev.tip_height ?? 0),
@@ -456,7 +461,7 @@ export const SlxSubnetManager = {
                   hfs_registry: item.hfs_registry || prev.hfs_registry || '',
                 });
               }
-              meta.roamingSubnets = Array.from(prevById.values());
+              meta.roamingSubnets = nextList;
             }
           })
           .catch(() => {})
@@ -848,28 +853,41 @@ export async function slxNodeRpc(endpointUrl, method, params = [], timeoutMs = 1
     _deadWsCooldownUntil.set(wsUrl, Date.now() + DEAD_WS_COOLDOWN_MS);
 
     if (allowFailover) {
-      const isHttpsPage =
-        typeof window !== 'undefined' && window.location?.protocol === 'https:';
       const now = Date.now();
-      const fallbackNodes = PUBLIC_SUBNET1_WSS_RPC_NODES.filter(
+      const isPublicSubnet1Target = PUBLIC_SUBNET1_WSS_RPC_NODES.includes(wsUrl);
+      let sameSubnetCandidates = [];
+      if (isPublicSubnet1Target) {
+        sameSubnetCandidates = PUBLIC_SUBNET1_WSS_RPC_NODES;
+      } else {
+        const matchingSub = SlxSubnetManager.listSubnets().find(
+          (s) =>
+            s.rpcUrl === wsUrl ||
+            (Array.isArray(s.validatorNodes) && s.validatorNodes.some((v) => v.url === wsUrl))
+        );
+        if (matchingSub && Array.isArray(matchingSub.validatorNodes)) {
+          sameSubnetCandidates = matchingSub.validatorNodes.map((v) => v.url).filter(Boolean);
+        }
+      }
+      const fallbackNodes = sameSubnetCandidates.filter(
         (u) => u !== wsUrl && (_deadWsCooldownUntil.get(u) || 0) <= now
       );
-      // Only fall back to public WSS nodes if we're on HTTPS or already targeting a public WSS node
-      if (isHttpsPage || wsUrl.startsWith('wss://')) {
-        for (const cand of fallbackNodes) {
-          try {
-            const res = await sendSingleWsRpc(cand, method, params, Math.min(timeoutMs, 4500));
-            _deadWsCooldownUntil.delete(cand);
+      for (const cand of fallbackNodes) {
+        try {
+          const res = await sendSingleWsRpc(cand, method, params, Math.min(timeoutMs, 4500));
+          _deadWsCooldownUntil.delete(cand);
+          if (isPublicSubnet1Target) {
             _preferredPublicWssRpc = cand;
             SlxHfsCache.save({ rpcUrl: cand });
-            return res;
-          } catch (candErr) {
-            if (candErr?.isJsonRpcError) {
-              _preferredPublicWssRpc = cand;
-              throw candErr;
-            }
-            _deadWsCooldownUntil.set(cand, Date.now() + DEAD_WS_COOLDOWN_MS);
           }
+          return res;
+        } catch (candErr) {
+          if (candErr?.isJsonRpcError) {
+            if (isPublicSubnet1Target) {
+              _preferredPublicWssRpc = cand;
+            }
+            throw candErr;
+          }
+          _deadWsCooldownUntil.set(cand, Date.now() + DEAD_WS_COOLDOWN_MS);
         }
       }
     }

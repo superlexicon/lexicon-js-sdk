@@ -862,6 +862,12 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
     assert.equal(httpsSubs[2].rpcUrl, 'wss://node9.superlexicon.com/rpc');
     assert.equal(httpsSubs[2].hfsRegistry, '0x1111111111111111111111111111111111111111');
 
+    // Verify strict cross-subnet isolation: when Subnet 2 is active, pub/sub candidates NEVER fall back to Subnet 1's node1..node5!
+    globalThis.window.__SLX_ACTIVE_SUBNET__ = httpsSubs[1];
+    const s2PubSubCands = derivePubSubWsCandidates('wss://node6.superlexicon.com/rpc');
+    assert.deepEqual(s2PubSubCands, ['wss://node6.superlexicon.com']);
+    assert.ok(!s2PubSubCands.includes('wss://node1.superlexicon.com'));
+
     // Simulate LAN deployment (`http://192.168.50.93:5173`): all 3 subnets use LAN WS endpoints!
     globalThis.window = {
       location: { protocol: 'http:', hostname: '192.168.50.93', href: 'http://192.168.50.93:5173/' },

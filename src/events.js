@@ -116,8 +116,9 @@ export function derivePubSubWsCandidates(rpcUrl) {
     for (const pub of PUBLIC_PUBSUB_WS_NODES) {
       pushUnique(pub);
     }
+    return out.length ? out : [...PUBLIC_PUBSUB_WS_NODES];
   }
-  return out.length ? out : [...PUBLIC_PUBSUB_WS_NODES];
+  return out;
 }
 
 export function getCanonicalLogKey(log) {
