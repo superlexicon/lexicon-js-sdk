@@ -2052,6 +2052,48 @@ function injectUseCaseDocStyles() {
       border-color: rgba(125, 211, 252, 0.6);
       color: #ffffff;
     }
+    @media (max-width: 640px) {
+      .slx-ucd-hdr-btn {
+        padding: 4px 8px;
+        font-size: 11px;
+        gap: 4px;
+      }
+      .slx-ucd-backdrop {
+        padding: 0;
+        align-items: flex-end;
+      }
+      .slx-ucd-modal {
+        max-width: 100%;
+        width: 100%;
+        max-height: 92dvh;
+        border-radius: 14px 14px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+      }
+      .slx-ucd-hdr {
+        padding: 12px 14px;
+      }
+      .slx-ucd-hdr h2 {
+        font-size: 15px;
+      }
+      .slx-ucd-pills,
+      .slx-ucd-tabs {
+        padding: 8px 12px;
+      }
+      .slx-ucd-body {
+        padding: 13px 14px;
+        font-size: 12.4px;
+      }
+      .slx-ucd-table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .slx-ucd-ftr {
+        padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+      }
+    }
   `;
   document.head.appendChild(style);
 }

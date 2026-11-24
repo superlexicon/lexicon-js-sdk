@@ -79,6 +79,8 @@ const FALLBACK_CSS = `
 .slx-wallet-pill-group{display:inline-flex;align-items:center;gap:.4rem;flex-wrap:wrap}
 .slx-wallet-btn{display:inline-flex;align-items:center;gap:.45rem;padding:.44rem .82rem;border-radius:.65rem;background:linear-gradient(135deg,rgba(16,185,129,.2),rgba(14,165,233,.2));border:1.5px solid rgba(52,211,153,.65);color:#ecfdf5;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;font-weight:700;cursor:pointer}
 .slx-wallet-dot{width:8px;height:8px;border-radius:999px;background:#34d399;box-shadow:0 0 8px #34d399;display:inline-block}
+.slx-wallet-btn.spectator{background:linear-gradient(135deg,rgba(14,165,233,.16),rgba(30,41,59,.92));border-color:rgba(56,189,248,.58);color:#e0f2fe}
+.slx-wallet-dot.spectator{background:#38bdf8;box-shadow:0 0 8px #38bdf8}
 .slx-wasm-proof-pill{display:inline-flex;align-items:center;gap:.38rem;padding:.42rem .72rem;border-radius:.65rem;background:rgba(15,23,42,.92);border:1px solid rgba(56,189,248,.52);color:#bae6fd;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem;font-weight:700;cursor:pointer}
 .slx-wasm-proof-pill.tx-pulse{border-color:#34d399;background:rgba(6,78,59,.65);color:#a7f3d0}
 .slx-hfs-selector-bar{display:inline-flex;align-items:center;gap:.38rem;padding:.32rem .6rem;border-radius:999px;background:rgba(15,23,42,.92);border:1px solid rgba(56,189,248,.45);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.77rem;color:#e2e8f0}
@@ -104,7 +106,8 @@ const FALLBACK_CSS = `
 .slx-modal-backdrop.is-open{display:flex}
 .slx-modal-card{width:100%;max-width:840px;max-height:88vh;overflow-y:auto;background:#0b1222;border:2px solid rgba(56,189,248,.5);border-radius:1rem;box-shadow:0 24px 64px rgba(0,0,0,.78);color:#f1f5f9;font-family:Inter,system-ui,-apple-system,sans-serif;display:flex;flex-direction:column}
 .slx-modal-header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.9rem 1.15rem;border-bottom:1px solid rgba(100,116,139,.35);background:#080e1c;position:sticky;top:0;z-index:2}
-.slx-modal-tabs{display:flex;gap:.45rem;padding:.65rem 1.15rem 0;border-bottom:1px solid rgba(100,116,139,.3);background:#091020}
+.slx-modal-tabs{display:flex;gap:.45rem;padding:.65rem 1.15rem 0;border-bottom:1px solid rgba(100,116,139,.3);background:#091020;overflow-x:auto;white-space:nowrap;flex-wrap:nowrap;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.slx-modal-tabs::-webkit-scrollbar{display:none}
 .slx-tab-btn{padding:.48rem .85rem;border-radius:.55rem .55rem 0 0;border:1px solid transparent;border-bottom:none;background:transparent;color:#94a3b8;font-family:monospace;font-size:.74rem;font-weight:700;cursor:pointer}
 .slx-tab-btn.active{background:#0b1222;border-color:rgba(56,189,248,.45);color:#7dd3fc}
 .slx-modal-body{padding:1rem 1.15rem 1.2rem;display:flex;flex-direction:column;gap:.9rem;font-size:.78rem}
@@ -193,6 +196,16 @@ const FALLBACK_CSS = `
 .slx-skel-bar{display:inline-block;height:12px;border-radius:6px;background:linear-gradient(90deg,rgba(30,41,59,.72) 20%,rgba(56,189,248,.22) 50%,rgba(30,41,59,.72) 80%);background-size:200% 100%;animation:slxSkelShimmer 1.45s ease-in-out infinite;vertical-align:middle}
 .slx-skel-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;width:100%}
 .slx-skel-card{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:12px;background:rgba(11,20,38,.78);border:1px solid rgba(51,65,85,.55)}
+.slx-cb-subnet-btn{background:rgba(15,23,42,.85);border:1px solid rgba(56,189,248,.45);border-radius:999px;padding:2px 9px;cursor:pointer;transition:all .16s ease;font-family:inherit}
+.slx-cb-subnet-menu{display:none;position:fixed;z-index:10050;width:min(350px,calc(100vw - 16px));border-radius:12px;border:1px solid rgba(56,189,248,.55);background:rgba(6,12,24,.98);box-shadow:0 18px 42px rgba(0,0,0,.65);padding:8px;flex-direction:column;gap:6px;backdrop-filter:blur(14px)}
+.slx-cb-subnet-menu.is-open{display:flex}
+.slx-cb-sm-hdr{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#7dd3fc;padding:2px 6px 4px;border-bottom:1px solid rgba(51,65,85,.55)}
+.slx-cb-sm-list{display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto}
+.slx-cb-sm-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-radius:8px;border:1px solid rgba(51,65,85,.45);background:rgba(15,23,42,.65);cursor:pointer;transition:all .14s ease}
+.slx-cb-sm-item.active{border-color:rgba(52,211,153,.7);background:rgba(16,185,129,.14)}
+.slx-cb-sm-add{border-top:1px solid rgba(51,65,85,.55);padding:6px 4px 2px;font-size:.68rem;color:#bae6fd}
+@media(max-width:820px){html,body{max-width:100vw;overflow-x:clip}.slx-uh-main-row{flex-wrap:nowrap;min-height:48px;padding:.34rem .65rem;gap:.4rem}.slx-uh-left{gap:.5rem}.slx-uh-logo{height:30px}.slx-uh-divider{height:24px}.slx-uh-title{font-size:.86rem}.slx-uh-right,.slx-uh-suite-pills,.slx-social-pill-group,.slx-wallet-pill-group{flex-wrap:nowrap;gap:.28rem}.slx-social-btn .slx-btn-lbl,.slx-wasm-proof-pill{display:none!important}.slx-uh-apps-btn,.slx-social-btn,.slx-wallet-btn{padding:.32rem .52rem;font-size:.71rem;border-radius:.52rem;gap:.28rem}.slx-uh-apps-menu{position:fixed;top:calc(var(--slx-unified-hdr-h,80px) + 4px);left:8px;right:8px;width:auto;max-height:calc(100dvh - var(--slx-unified-hdr-h,80px) - 16px)}.slx-uh-app-bar{min-height:36px;padding:.26rem .65rem;gap:.38rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.slx-uh-app-bar::-webkit-scrollbar{display:none}.slx-uh-context,.slx-uh-extra{flex-wrap:nowrap;flex-shrink:0;gap:.35rem}.slx-hfs-selector-bar{padding:.22rem .48rem;font-size:.69rem;flex-shrink:0}.slx-hfs-select{max-width:155px;font-size:.7rem}.slx-chain-bar,.slx-chain-bar.embedded{height:32px;min-height:32px;padding:0 .65rem;gap:.4rem;font-size:.68rem}.slx-cb-secondary,[data-cb="hash"],[data-cb="hfs"],.slx-cb-phase-sub{display:none!important}.slx-cb-subnet-btn{padding:1px 7px;font-size:.68rem}.slx-cb-chip,.slx-cb-link{padding:.12rem .42rem;font-size:.67rem}.slx-cb-phase{padding:.1rem .3rem;font-size:.63rem}}
+@media(max-width:560px){.slx-uh-divider,.slx-uh-titles{display:none!important}.slx-uh-logo{height:25px}[data-uh="mobileSlot"] button{padding:.26rem .44rem!important;font-size:.67rem!important}[data-uh="appsLabel"]{max-width:68px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}#slxWalletAddrBadge{max-width:82px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom}.slx-modal-backdrop{padding:0;align-items:flex-end}.slx-modal-card{max-width:100%!important;width:100%!important;max-height:92dvh;border-radius:1rem 1rem 0 0;border-left:none;border-right:none;border-bottom:none}.slx-modal-header{padding:.72rem .85rem}.slx-modal-tabs{padding:.45rem .85rem 0}.slx-modal-body{padding:.8rem .85rem calc(1rem + env(safe-area-inset-bottom))}.slx-kv-val{flex-wrap:wrap;font-size:.68rem}.slx-input-field{min-width:0!important;width:100%;font-size:16px!important}.slx-social-drawer{width:100vw;max-width:100vw;border-left:none}.slx-quarantine-banner{padding:.48rem .75rem;font-size:.72rem}}
 `;
 
 export function injectSlxUiStyles() {
@@ -343,7 +356,7 @@ export function openIdentityCreateModal(
   injectSlxUiStyles();
   if (_activePromptPromise) return _activePromptPromise;
 
-  _activePromptPromise = new Promise((resolve) => {
+  _activePromptPromise = new Promise((resolve, reject) => {
     let backdrop = document.getElementById('slxIdentityPromptBackdrop');
     if (!backdrop) {
       backdrop = document.createElement('div');
@@ -353,6 +366,7 @@ export function openIdentityCreateModal(
       document.body.appendChild(backdrop);
     }
 
+    let isDeploying = false;
     const preferredNick = wallet.getPreferredNickname?.() || '';
     const clearedNotice = wallet.lastClearedIdentityNotice || null;
     const defaultSuggestion = preferredNick || `Capt_${truncAddr4(wallet.keypair.address)}`;
@@ -363,18 +377,19 @@ export function openIdentityCreateModal(
           <div>
             <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">
               <strong style="font-size:0.98rem;color:#f8fafc;">🪪 Create Your On-Chain Identity</strong>
-              <span style="padding:0.14rem 0.48rem;border-radius:999px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.5);color:#6ee7b7;font-family:monospace;font-size:0.66rem;font-weight:700;">1-Time Subnet 1 Deploy</span>
+              <span style="padding:0.14rem 0.48rem;border-radius:999px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.5);color:#6ee7b7;font-family:monospace;font-size:0.66rem;font-weight:700;">1-Time Subnet Deploy</span>
             </div>
             <div style="font-size:0.72rem;color:#94a3b8;margin-top:3px;">
-              Welcome to <strong>${escapeHtmlText(appName)}</strong>! Deploy your personal <code>identity.wasm</code> smart contract once — shared automatically across <strong>Phantom Fleet</strong>, <strong>DEX CLOB</strong>, <strong>CorporateCharter</strong> &amp; <strong>E-Commerce</strong>.
+              This action in <strong>${escapeHtmlText(appName)}</strong> requires an on-chain <code>identity.wasm</code> smart contract — deploy once to share across all SuperLexicon apps, or click <strong>Spectate Only</strong> to keep browsing.
             </div>
           </div>
+          <button type="button" class="slx-mini-btn" id="slxIdentityCloseBtn" aria-label="Close and continue spectating">✕</button>
         </div>
         <form id="slxIdentityCreateForm" class="slx-modal-body">
           ${
             clearedNotice
               ? `<div style="padding:0.45rem 0.65rem;border-radius:0.5rem;background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.45);color:#fde68a;font-size:0.71rem;">
-                   Previous cached Identity HFS (<code>${shortHex(clearedNotice.identityAddr)}</code>) is not deployed on the current Subnet 1 chain — confirm your nickname below to deploy a fresh Identity smart contract in 1 block.
+                   Previous cached Identity HFS (<code>${shortHex(clearedNotice.identityAddr)}</code>) is not deployed on the active subnet — confirm your nickname below to deploy a fresh Identity smart contract in 1 block.
                  </div>`
               : ''
           }
@@ -394,16 +409,19 @@ export function openIdentityCreateModal(
               required
               placeholder="e.g. AdmiralVex, Mano, MacroWhale"
               value="${escapeHtmlText(defaultSuggestion)}"
-              style="font-size:0.88rem;padding:0.55rem 0.7rem;"
+              style="font-size:1rem;padding:0.55rem 0.7rem;"
             />
             <div style="font-size:0.69rem;color:#94a3b8;">
-              Rendered on-chain alongside your 4-char account tag (<code>· ${truncAddr4(wallet.keypair.address)}</code>) next to your vessels in Phantom Fleet and orders in DEX CLOB.
+              Rendered on-chain alongside your 4-char account tag (<code>· ${truncAddr4(wallet.keypair.address)}</code>) next to your vessels, trades, ballots &amp; messages.
             </div>
           </div>
           <div id="slxIdentityCreateStatus" style="display:none;"></div>
-          <div style="display:flex;justify-content:flex-end;gap:0.5rem;">
+          <div style="display:flex;justify-content:flex-end;gap:0.5rem;flex-wrap:wrap;">
+            <button type="button" id="slxIdentityCancelBtn" class="slx-mini-btn" style="padding:0.55rem 0.9rem;font-size:0.8rem;">
+              👁️ Spectate Only
+            </button>
             <button type="submit" id="slxIdentitySubmitBtn" class="slx-mini-btn emerald" style="padding:0.55rem 1.1rem;font-size:0.82rem;">
-              🚀 Deploy Identity &amp; Nickname on Subnet 1 →
+              🚀 Deploy Identity &amp; Continue →
             </button>
           </div>
         </form>
@@ -414,7 +432,33 @@ export function openIdentityCreateModal(
     const inp = backdrop.querySelector('#slxIdentityNickInput');
     const statusEl = backdrop.querySelector('#slxIdentityCreateStatus');
     const submitBtn = backdrop.querySelector('#slxIdentitySubmitBtn');
+    const cancelBtn = backdrop.querySelector('#slxIdentityCancelBtn');
+    const closeBtn = backdrop.querySelector('#slxIdentityCloseBtn');
     const prog = createModalProgressController(statusEl);
+
+    const cancelToSpectator = () => {
+      if (isDeploying) return;
+      document.removeEventListener('keydown', onEscKey);
+      backdrop.onclick = null;
+      backdrop.classList.remove('is-open');
+      _activePromptPromise = null;
+      const cancelErr = new Error('Identity deployment canceled — continuing in Spectator Mode.');
+      cancelErr.isIdentityPromptCanceled = true;
+      reject(cancelErr);
+    };
+
+    const onEscKey = (ev) => {
+      if (ev.key === 'Escape' && backdrop.classList.contains('is-open')) {
+        cancelToSpectator();
+      }
+    };
+    document.addEventListener('keydown', onEscKey);
+    backdrop.onclick = (ev) => {
+      if (ev.target === backdrop) cancelToSpectator();
+    };
+    cancelBtn?.addEventListener('click', cancelToSpectator);
+    closeBtn?.addEventListener('click', cancelToSpectator);
+
     setTimeout(() => {
       inp?.focus();
       inp?.select();
@@ -424,9 +468,12 @@ export function openIdentityCreateModal(
       ev.preventDefault();
       const chosen = String(inp.value || '').trim();
       if (!chosen) return;
+      isDeploying = true;
       inp.disabled = true;
       submitBtn.disabled = true;
-      submitBtn.textContent = '⏳ Deploying Identity on Subnet 1…';
+      if (cancelBtn) cancelBtn.disabled = true;
+      if (closeBtn) closeBtn.disabled = true;
+      submitBtn.textContent = '⏳ Deploying Identity…';
       prog.start(
         `Deploying "${chosen}" Unified Identity…`,
         'Instantiating identity.wasm & sealing IdentityRegistry in 1 block',
@@ -444,12 +491,17 @@ export function openIdentityCreateModal(
           'Synchronized across all SuperLexicon apps'
         );
         await new Promise((r) => setTimeout(r, 260));
+        document.removeEventListener('keydown', onEscKey);
+        backdrop.onclick = null;
         backdrop.classList.remove('is-open');
         _activePromptPromise = null;
         resolve(deployed);
       } catch (err) {
+        isDeploying = false;
         inp.disabled = false;
         submitBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        if (closeBtn) closeBtn.disabled = false;
         submitBtn.textContent = '🚀 Retry Identity Deployment →';
         prog.fail(err.message || String(err));
       }
@@ -474,15 +526,17 @@ export function mountSlxWalletHeader({
   const formatPillLabel = () => {
     const rec = wallet.getIdentityRecord();
     const tag4 = truncAddr4(wallet.keypair.address);
-    return rec && rec.nickname ? `${rec.nickname} · ${tag4}` : shortHex(wallet.keypair.address);
+    return rec && rec.nickname ? `${rec.nickname} · ${tag4}` : `Spectate · ${tag4}`;
   };
+
+  const hasDeployedIdentity = () => Boolean(wallet.getIdentityRecord()?.nickname);
 
   const wrap = document.createElement('div');
   wrap.className = 'slx-wallet-pill-group';
   wrap.innerHTML = `
-    <button type="button" class="slx-wallet-btn" id="slxWalletOpenBtn" title="Inspect On-Chain Identity, Nickname & secp256k1 Keypair">
-      <span class="slx-wallet-dot"></span>
-      <span>🪪</span>
+    <button type="button" class="slx-wallet-btn ${hasDeployedIdentity() ? '' : 'spectator'}" id="slxWalletOpenBtn" title="Inspect On-Chain Identity, Nickname & secp256k1 Keypair">
+      <span class="slx-wallet-dot ${hasDeployedIdentity() ? '' : 'spectator'}" id="slxWalletDot"></span>
+      <span id="slxWalletIcon">${hasDeployedIdentity() ? '🪪' : '👁️'}</span>
       <span id="slxWalletAddrBadge">${escapeHtmlText(formatPillLabel())}</span>
     </button>
     <button type="button" class="slx-wasm-proof-pill" id="slxWasmOpenBtn" title="Inspect live signed Subnet 1 EIP-155 transactions">
@@ -544,6 +598,13 @@ export function mountSlxWalletHeader({
 
     const addrEl = wrap.querySelector('#slxWalletAddrBadge');
     if (addrEl) addrEl.textContent = formatPillLabel();
+    const openBtnEl = wrap.querySelector('#slxWalletOpenBtn');
+    const dotEl = wrap.querySelector('#slxWalletDot');
+    const iconEl = wrap.querySelector('#slxWalletIcon');
+    const deployedNow = hasDeployedIdentity();
+    openBtnEl?.classList.toggle('spectator', !deployedNow);
+    dotEl?.classList.toggle('spectator', !deployedNow);
+    if (iconEl) iconEl.textContent = deployedNow ? '🪪' : '👁️';
 
     const txBadgeEl = wrap.querySelector('#slxTxCountBadge');
     if (txBadgeEl) {
@@ -572,7 +633,7 @@ export function mountSlxWalletHeader({
           <button type="button" class="slx-mini-btn" id="slxModalCloseBtn">✕ Close</button>
         </div>
 
-        <div class="slx-modal-tabs" style="flex-wrap:wrap;">
+        <div class="slx-modal-tabs">
           <button type="button" class="slx-tab-btn ${activeTab === 'wallet' ? 'active' : ''}" data-slx-tab="wallet">
             🪪 Identity &amp; Keypair
           </button>
@@ -941,8 +1002,10 @@ export function mountSlxWalletHeader({
     });
     modal.querySelector('#slxBtnCreateIdModal')?.addEventListener('click', async () => {
       modal.classList.remove('is-open');
-      await wallet.ensureIdentityWithPrompt({ rpcUrl: cachedRpc, appName: appTitle });
-      if (onWalletSwitch) await onWalletSwitch(wallet.keypair);
+      try {
+        await wallet.ensureIdentityWithPrompt({ rpcUrl: cachedRpc, appName: appTitle });
+        if (onWalletSwitch) await onWalletSwitch(wallet.keypair);
+      } catch (_) {}
       renderModal();
     });
     modal.querySelector('#slxBtnGenNew')?.addEventListener('click', async () => {
@@ -1882,19 +1945,19 @@ export function mountSlxChainBar({
       <button type="button" class="slx-cb-chip clickable" data-cb="hash" title="Click to copy latest finalized block hash" style="display:none;">—</button>
       <span class="slx-cb-sep">│</span>
       <div class="slx-cb-phases" title="Real-Time 4-Phase BFT Consensus Pipeline">
-        <span class="slx-cb-phase" data-cb-phase="1">P1 TX</span>
-        <span class="slx-cb-phase" data-cb-phase="2">P2 VOTE</span>
-        <span class="slx-cb-phase" data-cb-phase="3">P3 PROP</span>
-        <span class="slx-cb-phase p4" data-cb-phase="4">P4 FIN</span>
+        <span class="slx-cb-phase" data-cb-phase="1">P1<span class="slx-cb-phase-sub"> TX</span></span>
+        <span class="slx-cb-phase" data-cb-phase="2">P2<span class="slx-cb-phase-sub"> VOTE</span></span>
+        <span class="slx-cb-phase" data-cb-phase="3">P3<span class="slx-cb-phase-sub"> PROP</span></span>
+        <span class="slx-cb-phase p4" data-cb-phase="4">P4<span class="slx-cb-phase-sub"> FIN</span></span>
       </div>
     </div>
 
-    <div class="slx-cb-group">
+    <div class="slx-cb-group slx-cb-secondary">
       <span class="slx-cb-chip emerald" data-cb="tps" title="Rolling finalized Subnet throughput">⚡ — tx/s</span>
       <span class="slx-cb-chip" data-cb="blkmeta" title="Transactions &amp; BFT finality latency of latest block">— txs/blk • —s</span>
       <span class="slx-cb-chip" data-cb="mempool" title="Merged Subnet mempool queue">Mempool: 0</span>
       <span class="slx-cb-chip" data-cb="totaltxs" title="Cumulative finalized transactions since Subnet genesis">∑ — txs</span>
-      <span class="slx-cb-chip emerald" title="Zero gas fees via explicit extraTargets parallel execution">$0.00 Gas</span>
+      <span class="slx-cb-chip emerald" data-cb="gas" title="Zero gas fees via explicit extraTargets parallel execution">$0.00 Gas</span>
     </div>
 
     <div class="slx-cb-group">
@@ -2333,13 +2396,13 @@ export function mountSlxSocialWidgets({
   pillWrap.innerHTML = `
     <button type="button" class="slx-social-btn" data-soc-open="network" title="Your Social Network — Friends, Connected Allies &amp; Mutual RF Handshakes">
       <span>👥</span>
-      <span>Social Network</span>
+      <span class="slx-btn-lbl">Social Network</span>
       <span class="slx-social-badge violet" data-soc="allyCount">0</span>
       <span class="slx-social-badge amber" data-soc="hsBadge" style="display:none;">+0</span>
     </button>
     <button type="button" class="slx-social-btn msgs" data-soc-open="messages" title="Direct Messages, Live #${escapeHtmlText(appId)} Lounge &amp; Subnet Wall">
       <span>💬</span>
-      <span>Messages</span>
+      <span class="slx-btn-lbl">Messages</span>
       <span class="slx-social-badge cyan" data-soc="unreadBadge" style="display:none;">0</span>
     </button>
   `;
@@ -2520,10 +2583,12 @@ export function mountSlxSocialWidgets({
         const trustStr = meMem ? ` • Trust ${meMem.trustScore}` : ' • Ready to Enroll';
         refs.myIdLine.innerHTML = `Signed as <strong style="color:#6ee7b7;">${escapeHtmlText(idRec.nickname)} · ${truncAddr4(wallet.keypair.address)}</strong>${escapeHtmlText(trustStr)}`;
       } else {
-        refs.myIdLine.innerHTML = `Keypair <code>${shortHex(wallet.keypair.address)}</code> — <button type="button" class="slx-mini-btn emerald" data-soc-act="createId" style="padding:0.1rem 0.42rem;font-size:0.62rem;">🪪 Create Identity</button>`;
+        refs.myIdLine.innerHTML = `Spectating (<code>${shortHex(wallet.keypair.address)}</code>) — <button type="button" class="slx-mini-btn emerald" data-soc-act="createId" style="padding:0.1rem 0.42rem;font-size:0.62rem;">🪪 Create Identity</button>`;
         refs.myIdLine.querySelector('[data-soc-act="createId"]')?.addEventListener('click', async () => {
-          await wallet.ensureIdentityWithPrompt({ rpcUrl: rpcUrlFn(), appName: appTitle });
-          await client.refresh(wallet);
+          try {
+            await wallet.ensureIdentityWithPrompt({ rpcUrl: rpcUrlFn(), appName: appTitle });
+            await client.refresh(wallet);
+          } catch (_) {}
         });
       }
     }
@@ -2698,7 +2763,7 @@ export function mountSlxSocialWidgets({
           await client.connectPeer(wallet, targetId, { appName: appTitle });
           setStatus('✓ Handshake broadcast! (AI personas auto-accept within ~1 block)', 'ok');
         } catch (err) {
-          setStatus(`⚠ ${err?.message || err}`, 'err');
+          setStatus(err?.isIdentityPromptCanceled ? '' : `⚠ ${err?.message || err}`, 'err');
         } finally {
           busy = false;
           renderDrawer();
@@ -2717,7 +2782,7 @@ export function mountSlxSocialWidgets({
           await client.acceptHandshake(wallet, initId, { appName: appTitle });
           setStatus('✓ Connected! Mutual relationship verified on Subnet 1.', 'ok');
         } catch (err) {
-          setStatus(`⚠ ${err?.message || err}`, 'err');
+          setStatus(err?.isIdentityPromptCanceled ? '' : `⚠ ${err?.message || err}`, 'err');
         } finally {
           busy = false;
           renderDrawer();
@@ -3039,7 +3104,7 @@ export function mountSlxSocialWidgets({
               await client.reactWallPost(wallet, pid, { appName: appTitle });
               setStatus(`✓ Liked Post #${pid} on Subnet 1!`, 'ok');
             } catch (err) {
-              setStatus(`⚠ ${err?.message || err}`, 'err');
+              setStatus(err?.isIdentityPromptCanceled ? '' : `⚠ ${err?.message || err}`, 'err');
             } finally {
               busy = false;
               renderDrawer();
@@ -3154,7 +3219,7 @@ export function mountSlxSocialWidgets({
       refs.msgInput.value = '';
       setStatus('✓ Confirmed on Subnet 1!', 'ok');
     } catch (err) {
-      setStatus(`⚠ ${err?.message || err}`, 'err');
+      setStatus(err?.isIdentityPromptCanceled ? '' : `⚠ ${err?.message || err}`, 'err');
     } finally {
       busy = false;
       renderDrawer();
