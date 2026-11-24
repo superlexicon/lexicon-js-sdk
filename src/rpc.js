@@ -159,7 +159,7 @@ export const SlxSubnetManager = {
       locationLabel:
         s1OnChain?.locationLabel ||
         meta.subnet1?.locationLabel ||
-        'Marine Crescent Sub-GHz RF Mesh, Singapore',
+        'Marine Crescent (Blks 28–35), Singapore',
       hfsRegistry: s1OnChain?.hfsRegistry || s1Meta?.hfs_registry || '',
       manifestUrl: s1OnChain?.manifestUrl || s1Meta?.manifest_url || '/contracts/subnet1-deployments.json',
       rpcUrl: isHttps ? s1PubRpcs[0] || _preferredPublicWssRpc : localHostRpc,
@@ -201,22 +201,25 @@ export const SlxSubnetManager = {
         s1OnChain?.validatorNodes?.length
           ? s1OnChain.validatorNodes.map((v) => ({
               name: v.name,
+              blk: v.blk || '',
+              lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : undefined,
+              lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : undefined,
               url: isHttps ? _httpToWs(v.url) : _httpToWs(v.lanUrl || v.url),
               lanUrl: v.lanUrl ? _httpToWs(v.lanUrl) : '',
               pubkeyPrefix: v.pubkeyPrefix || null,
             }))
           : isHttps
             ? [
-                { name: 'Validator node1', url: 'wss://node1.superlexicon.com/rpc', pubkeyPrefix: 'c8692b6e' },
-                { name: 'Validator node2', url: 'wss://node2.superlexicon.com/rpc', pubkeyPrefix: '75c9f6e5' },
-                { name: 'Validator node3', url: 'wss://node3.superlexicon.com/rpc', pubkeyPrefix: '33b12ce4' },
-                { name: 'Validator node4', url: 'wss://node4.superlexicon.com/rpc', pubkeyPrefix: 'fbfc4fee' },
+                { name: 'RF node1', blk: '28', lat: 1.30344, lon: 103.91335, url: 'wss://node1.superlexicon.com/rpc', pubkeyPrefix: 'c8692b6e' },
+                { name: 'RF node2', blk: '29', lat: 1.30285, lon: 103.91320, url: 'wss://node2.superlexicon.com/rpc', pubkeyPrefix: '75c9f6e5' },
+                { name: 'RF node3', blk: '33', lat: 1.30265, lon: 103.91218, url: 'wss://node3.superlexicon.com/rpc', pubkeyPrefix: '33b12ce4' },
+                { name: 'RF node4', blk: '35', lat: 1.30337, lon: 103.91252, url: 'wss://node4.superlexicon.com/rpc', pubkeyPrefix: 'fbfc4fee' },
               ]
             : [
-                { name: `RF Validator 1 (.91)`, url: `ws://${lanPrefix}.91:8545`, pubkeyPrefix: 'c8692b6e' },
-                { name: `RF Validator 2 (.92)`, url: `ws://${lanPrefix}.92:8555`, pubkeyPrefix: '75c9f6e5' },
-                { name: `RF Validator 3 (.93)`, url: `ws://${lanPrefix}.93:8545`, pubkeyPrefix: '33b12ce4' },
-                { name: `RF Validator 4 (.94)`, url: `ws://${lanPrefix}.94:8545`, pubkeyPrefix: 'fbfc4fee' },
+                { name: 'RF node1 (.91)', blk: '28', lat: 1.30344, lon: 103.91335, url: `ws://${lanPrefix}.91:8545`, pubkeyPrefix: 'c8692b6e' },
+                { name: 'RF node2 (.92)', blk: '29', lat: 1.30285, lon: 103.91320, url: `ws://${lanPrefix}.92:8555`, pubkeyPrefix: '75c9f6e5' },
+                { name: 'RF node3 (.93)', blk: '33', lat: 1.30265, lon: 103.91218, url: `ws://${lanPrefix}.93:8545`, pubkeyPrefix: '33b12ce4' },
+                { name: 'RF node4 (.94)', blk: '35', lat: 1.30337, lon: 103.91252, url: `ws://${lanPrefix}.94:8545`, pubkeyPrefix: 'fbfc4fee' },
               ],
       ownerEoa: s1OnChain?.ownerEoa || '',
       operatorIdentity: s1OnChain?.operatorIdentity || '',
@@ -301,8 +304,8 @@ export const SlxSubnetManager = {
         tipHeight: Number(rm?.tip_height || 0),
         validatorCount: Number(oc.validatorCount || rm?.validator_count || statsUrls.length || 3),
         channelHz: Number(oc.channelHz || rm?.last_channel_hz || (isTcp ? 1 : 915_000_000)),
-        lat: rmGpsLat ?? Number(oc.lat ?? 1.3521),
-        lon: rmGpsLon ?? Number(oc.lon ?? 103.9894),
+        lat: rmGpsLat ?? Number(oc.lat ?? 1.30322),
+        lon: rmGpsLon ?? Number(oc.lon ?? 103.91302),
         gpsDetected: rmGpsLat !== null && rmGpsLon !== null,
         locationLabel: oc.locationLabel || 'Registered in On-Chain SubnetRegistry HFS',
         hfsRegistry: oc.hfsRegistry || rm?.hfs_registry || '',
@@ -316,6 +319,9 @@ export const SlxSubnetManager = {
           Array.isArray(oc.validatorNodes) && oc.validatorNodes.length
             ? oc.validatorNodes.map((v) => ({
                 name: v.name,
+                blk: v.blk || '',
+                lat: Number.isFinite(Number(v.lat)) ? Number(v.lat) : undefined,
+                lon: Number.isFinite(Number(v.lon)) ? Number(v.lon) : undefined,
                 url: isHttps
                   ? _sanitizeSubnet2PublicUrl(v.url, true)
                   : _httpToWs(v.lanUrl || v.url),
@@ -367,9 +373,9 @@ export const SlxSubnetManager = {
             new Set([...(discWs ? [discWs] : []), ...PUBLIC_SUBNET2_PUBSUB_WS_NODES])
           );
           validatorNodesOverride = [
-            { name: 'TCP Validator node21', url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
-            { name: 'TCP Validator node22', url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
-            { name: 'TCP Validator node23', url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
+            { name: 'TCP node21', blk: '28', lat: 1.30344, lon: 103.91335, url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
+            { name: 'TCP node22', blk: '29', lat: 1.30285, lon: 103.91320, url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
+            { name: 'TCP node23', blk: '35', lat: 1.30337, lon: 103.91252, url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
           ];
         } else {
           const pubRpc = rm.public_rpc_url
@@ -429,10 +435,10 @@ export const SlxSubnetManager = {
         Number(rm.detected_lon_e7 || 0) !== 0 ? Number(rm.detected_lon_e7) / 1e7 : null;
       const defaultS2Lat = Number.isFinite(Number(meta.subnet2?.lat))
         ? Number(meta.subnet2.lat)
-        : 1.3521;
+        : 1.30322;
       const defaultS2Lon = Number.isFinite(Number(meta.subnet2?.lon))
         ? Number(meta.subnet2.lon)
-        : 103.9894;
+        : 103.91302;
       const hashSeed = parseInt(sid.slice(0, 6), 16) || (i + 1) * 97;
       const autoLat = isKnownS2 ? defaultS2Lat : ((hashSeed % 80) - 32);
       const autoLon = isKnownS2 ? defaultS2Lon : (((hashSeed * 37) % 280) - 130);
@@ -454,7 +460,7 @@ export const SlxSubnetManager = {
           rmGpsLat !== null && rmGpsLon !== null
             ? 'Live Roamer GPS Telemetry Fix'
             : isKnownS2
-              ? meta.subnet2?.locationLabel || 'Changi East Encrypted TCP Gateway, Singapore'
+              ? meta.subnet2?.locationLabel || 'Marine Crescent (Blks 28, 29 & 35), Singapore'
               : 'Auto-Discovered via SubnetWorldMap',
         hfsRegistry: rm.hfs_registry || '',
         manifestUrl:
@@ -498,26 +504,26 @@ export const SlxSubnetManager = {
         tipHeight: 0,
         validatorCount: 3,
         channelHz: 1,
-        lat: Number.isFinite(Number(meta.subnet2?.lat)) ? Number(meta.subnet2.lat) : 1.3521,
-        lon: Number.isFinite(Number(meta.subnet2?.lon)) ? Number(meta.subnet2.lon) : 103.9894,
+        lat: Number.isFinite(Number(meta.subnet2?.lat)) ? Number(meta.subnet2.lat) : 1.30322,
+        lon: Number.isFinite(Number(meta.subnet2?.lon)) ? Number(meta.subnet2.lon) : 103.91302,
         gpsDetected: false,
         locationLabel:
-          meta.subnet2?.locationLabel || 'Changi East Encrypted TCP Gateway, Singapore',
+          meta.subnet2?.locationLabel || 'Marine Crescent (Blks 28, 29 & 35), Singapore',
         hfsRegistry: '',
         manifestUrl: '/contracts/subnet2-deployments.json',
         rpcUrl: s2RpcUrls[0],
         pubsubWsUrls: s2PubsubUrls,
         validatorNodes: isHttps
           ? [
-              { name: 'TCP Validator node21', url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
-              { name: 'TCP Validator node22', url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
-              { name: 'TCP Validator node23', url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
+              { name: 'TCP node21', blk: '28', lat: 1.30344, lon: 103.91335, url: 'wss://node21.superlexicon.com/rpc', pubkeyPrefix: 'a70ed680' },
+              { name: 'TCP node22', blk: '29', lat: 1.30285, lon: 103.91320, url: 'wss://node22.superlexicon.com/rpc', pubkeyPrefix: '5d5d4c68' },
+              { name: 'TCP node23', blk: '35', lat: 1.30337, lon: 103.91252, url: 'wss://node23.superlexicon.com/rpc', pubkeyPrefix: '128e7754' },
             ]
-          : s2RpcUrls.map((u, idx) => ({
-              name: `TCP Validator #${idx + 1} (${u.replace(/^wss?:\/\//, '')})`,
-              url: u,
-              pubkeyPrefix: null,
-            })),
+          : [
+              { name: 'TCP node21 (.91)', blk: '28', lat: 1.30344, lon: 103.91335, url: s2RpcUrls[0], pubkeyPrefix: 'a70ed680' },
+              { name: 'TCP node22 (.92)', blk: '29', lat: 1.30285, lon: 103.91320, url: s2RpcUrls[1] || s2RpcUrls[0], pubkeyPrefix: '5d5d4c68' },
+              { name: 'TCP node23 (.94)', blk: '35', lat: 1.30337, lon: 103.91252, url: s2RpcUrls[2] || s2RpcUrls[0], pubkeyPrefix: '128e7754' },
+            ],
         builtin: true,
       });
     }

@@ -904,10 +904,39 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
 
 // 18. Global Subnet World Map Projection & Protocol GPS Hydration
 {
-  const { latLonToMapXY, mapXYToLatLon, formatLatLon, MAP_BASE_W, MAP_BASE_H } = await import(
-    '../src/ui/index.js'
-  );
+  const {
+    latLonToMapXY,
+    mapXYToLatLon,
+    marineCrescentLatLonToXY,
+    marineCrescentXYToLatLon,
+    formatLatLon,
+    MAP_BASE_W,
+    MAP_BASE_H,
+  } = await import('../src/ui/index.js');
   const { SlxSubnetManager } = await import('../src/rpc.js');
+
+  // Verify Singapore (1.3031N, 103.9128E) lands on the exact tip of Malay Peninsula (1251, 537.5) on 1600x900 world_map.jpg
+  const sgPx = latLonToMapXY(1.3031, 103.9128, 1600, 900);
+  assert.ok(Math.abs(sgPx.x - 1251) < 1.5);
+  assert.ok(Math.abs(sgPx.y - 537.5) < 1.5);
+
+  // Verify Marine Crescent Blks 28, 29, 33, 34, 35 project cleanly with generous separation
+  const mcBlks = [
+    [1.30344, 103.91335], // Blk 28
+    [1.30285, 103.9132], // Blk 29
+    [1.30265, 103.91218], // Blk 33
+    [1.30308, 103.91268], // Blk 34 (Repeater)
+    [1.30337, 103.91252], // Blk 35
+  ].map(([la, lo]) => marineCrescentLatLonToXY(la, lo, MAP_BASE_W, MAP_BASE_H));
+  for (let i = 0; i < mcBlks.length; i++) {
+    assert.ok(mcBlks[i].x > 200 && mcBlks[i].x < 1000);
+    assert.ok(mcBlks[i].y > 150 && mcBlks[i].y < 520);
+    for (let j = i + 1; j < mcBlks.length; j++) {
+      assert.ok(Math.hypot(mcBlks[i].x - mcBlks[j].x, mcBlks[i].y - mcBlks[j].y) > 85);
+    }
+  }
+  const mcInv = marineCrescentXYToLatLon(mcBlks[0].x, mcBlks[0].y, MAP_BASE_W, MAP_BASE_H);
+  assert.ok(Math.abs(mcInv.lat - 1.30344) < 1e-6 && Math.abs(mcInv.lon - 103.91335) < 1e-6);
 
   // Round-trip projection check for Singapore, Geneva, Tokyo, and New York
   for (const [lat, lon] of [

@@ -19,12 +19,50 @@ import { mountSlxSubnetPhaseDiagram } from './subnet-phase-diagram.js';
 export const MAP_BASE_W = 1200;
 export const MAP_BASE_H = 675; // Exact 16:9 matching /assets/hegemony/world_map.jpg (1600x900)
 
-// Calibrated to /assets/hegemony/world_map.jpg:
-// - 0° Prime Meridian sits at x = 47.22% (left edge = -170°W, right edge = +190°E; 360° span)
-// - 0° Equator sits at y = 55.20%, with 19.0% height per 30° latitude (0.63333% / deg)
-const PRIME_MERIDIAN_X_FRAC = 0.472222;
-const EQUATOR_Y_FRAC = 0.552;
-const LAT_FRAC_PER_DEG = 0.19 / 30;
+// Pixel-calibrated against /assets/hegemony/world_map.jpg (1600x900):
+// - 0° Prime Meridian at x = 48.48%, 0.28593% width per degree of longitude
+//   -> Singapore (103.913°E) = 78.19% (px 1251/1600), Gibraltar (-5.6°W) = 46.88% (px 750/1600)
+// - 0° Equator at y = 60.45%, compact Miller/Mercator curve: yFrac = 0.6045 - 0.00555*lat - 0.000016*lat*|lat|
+//   -> Singapore (1.303°N) = 59.72% (px 537.5/900), Gibraltar (36°N) = 38.4% (px 345/900), Cape Agulhas (-34.8°S) = 77.8% (px 700/900)
+const PRIME_MERIDIAN_X_FRAC = 0.4848;
+const LON_FRAC_PER_DEG = 0.0028593;
+const EQUATOR_Y_FRAC = 0.6045;
+const LAT_LIN_COEFF = 0.00555;
+const LAT_QUAD_COEFF = 0.000016;
+
+// Official Singapore SLA OneMap WGS84 bounding box & HDB blocks for Marine Crescent (440028–440035)
+const MC_LAT_NORTH = 1.3043;
+const MC_LAT_SOUTH = 1.3017;
+const MC_LON_WEST = 103.9111;
+const MC_LON_EAST = 103.91455;
+
+const MARINE_CRESCENT_HDB_BLOCKS = [
+  { blk: '28', host: '.91', lat: 1.30344, lon: 103.91335, w: 48, h: 20, angle: -12, role: 'validator' },
+  { blk: '29', host: '.92', lat: 1.30285, lon: 103.9132, w: 48, h: 20, angle: 8, role: 'validator' },
+  { blk: '33', host: '.93', lat: 1.30265, lon: 103.91218, w: 48, h: 20, angle: -8, role: 'validator' },
+  { blk: '35', host: '.94', lat: 1.30337, lon: 103.91252, w: 48, h: 20, angle: 12, role: 'validator' },
+  { blk: '34', host: '.4', lat: 1.30308, lon: 103.91268, w: 38, h: 18, angle: 0, role: 'repeater' },
+  // Neighboring Marine Crescent context slabs for authentic estate geometry
+  { blk: '27', host: '', lat: 1.30382, lon: 103.91378, w: 42, h: 16, angle: -6, role: 'context' },
+  { blk: '30', host: '', lat: 1.30238, lon: 103.91368, w: 42, h: 16, angle: 4, role: 'context' },
+  { blk: '32', host: '', lat: 1.30232, lon: 103.91165, w: 42, h: 16, angle: -4, role: 'context' },
+  { blk: '36', host: '', lat: 1.30385, lon: 103.91188, w: 42, h: 16, angle: 6, role: 'context' },
+];
+
+export function marineCrescentLatLonToXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H) {
+  const xFrac = (Number(lon) - MC_LON_WEST) / (MC_LON_EAST - MC_LON_WEST);
+  const yFrac = (MC_LAT_NORTH - Number(lat)) / (MC_LAT_NORTH - MC_LAT_SOUTH);
+  return {
+    x: xFrac * width,
+    y: yFrac * height,
+  };
+}
+
+export function marineCrescentXYToLatLon(x, y, width = MAP_BASE_W, height = MAP_BASE_H) {
+  const lon = MC_LON_WEST + (Number(x) / width) * (MC_LON_EAST - MC_LON_WEST);
+  const lat = MC_LAT_NORTH - (Number(y) / height) * (MC_LAT_NORTH - MC_LAT_SOUTH);
+  return { lat, lon };
+}
 
 function escHtml(val) {
   return String(val ?? '')
@@ -39,25 +77,28 @@ function fmtNum(n) {
   return Number.isFinite(v) ? v.toLocaleString('en-US') : '0';
 }
 
-export function formatLatLon(lat, lon) {
+export function formatLatLon(lat, lon, decimals = 2) {
   const la = Number(lat || 0);
   const lo = Number(lon || 0);
   const ns = la >= 0 ? 'N' : 'S';
   const ew = lo >= 0 ? 'E' : 'W';
-  return `${Math.abs(la).toFixed(2)}° ${ns}, ${Math.abs(lo).toFixed(2)}° ${ew}`;
+  return `${Math.abs(la).toFixed(decimals)}° ${ns}, ${Math.abs(lo).toFixed(decimals)}° ${ew}`;
 }
 
 /**
- * Convert geographic (lat, lon) in degrees to calibrated SVG coordinates on (width x height).
+ * Convert geographic (lat, lon) in degrees to pixel-calibrated SVG coordinates on (width x height).
  */
 export function latLonToMapXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H) {
-  const clampedLat = Math.max(-68, Math.min(84, Number(lat) || 0));
+  const clampedLat = Math.max(-68, Math.min(82, Number(lat) || 0));
   let normLon = Number(lon) || 0;
-  while (normLon < -170) normLon += 360;
-  while (normLon > 190) normLon -= 360;
+  while (normLon < -169) normLon += 360;
+  while (normLon > 180) normLon -= 360;
 
-  const xFrac = PRIME_MERIDIAN_X_FRAC + normLon / 360;
-  const yFrac = EQUATOR_Y_FRAC - clampedLat * LAT_FRAC_PER_DEG;
+  const xFrac = PRIME_MERIDIAN_X_FRAC + normLon * LON_FRAC_PER_DEG;
+  const yFrac =
+    EQUATOR_Y_FRAC -
+    clampedLat * LAT_LIN_COEFF -
+    clampedLat * Math.abs(clampedLat) * LAT_QUAD_COEFF;
 
   return {
     x: Math.max(12, Math.min(width - 12, xFrac * width)),
@@ -66,15 +107,23 @@ export function latLonToMapXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H)
 }
 
 /**
- * Inverse projection from SVG (x, y) back to geographic (lat, lon) degrees.
+ * Exact inverse projection from SVG (x, y) back to geographic (lat, lon) degrees.
  */
 export function mapXYToLatLon(x, y, width = MAP_BASE_W, height = MAP_BASE_H) {
   const xFrac = Number(x || 0) / width;
   const yFrac = Number(y || 0) / height;
-  let lon = (xFrac - PRIME_MERIDIAN_X_FRAC) * 360;
+  let lon = (xFrac - PRIME_MERIDIAN_X_FRAC) / LON_FRAC_PER_DEG;
   if (lon > 180) lon -= 360;
   if (lon < -180) lon += 360;
-  const lat = (EQUATOR_Y_FRAC - yFrac) / LAT_FRAC_PER_DEG;
+
+  const delta = EQUATOR_Y_FRAC - yFrac;
+  const sign = delta >= 0 ? 1 : -1;
+  const absD = Math.abs(delta);
+  const absLat =
+    (-LAT_LIN_COEFF + Math.sqrt(LAT_LIN_COEFF * LAT_LIN_COEFF + 4 * LAT_QUAD_COEFF * absD)) /
+    (2 * LAT_QUAD_COEFF);
+  const lat = sign * absLat;
+
   return {
     lat: Math.max(-85, Math.min(85, lat)),
     lon: Math.max(-180, Math.min(180, lon)),
@@ -529,7 +578,10 @@ export function mountSlxSubnetWorldMap({
     zoom: 1,
     cx: MAP_BASE_W / 2,
     cy: MAP_BASE_H / 2,
-    mode: initialMode,
+    mode: 'global', // 'global' | 'marine' | 'custom'
+    mcBlend: 0, // 0 = World Map, 1 = Marine Crescent Singapore Neighborhood Map
+    autoFlyDone: false,
+    userInterruptedAutoFly: false,
     selectedKey: SlxSubnetManager.getActiveSubnetKey(),
     bgFailed: false,
     heightsByKey: new Map(),
@@ -543,6 +595,7 @@ export function mountSlxSubnetWorldMap({
       repeaterLabel: 'Hybrid Repeater (.4)',
     },
     animFrame: 0,
+    autoFlyTimer: 0,
     destroyed: false,
   };
 
@@ -551,19 +604,18 @@ export function mountSlxSubnetWorldMap({
       <div class="slx-swm-hdr">
         <div class="slx-swm-title-wrap">
           <div class="slx-swm-seg" role="tablist" aria-label="Subnet Visualization View">
-            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. World Map</button>
+            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. World &amp; Marine Crescent Map</button>
             <button type="button" class="slx-swm-seg-btn" data-swm-view="phase" role="tab" aria-selected="false">⚡ 2. Phase &amp; Bridge Live</button>
           </div>
           <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetRegistry HFS…</span>
           <button type="button" class="slx-swm-btn" data-swm="hfs-badge" title="Click to copy On-Chain SubnetRegistry HFS contract address" style="padding:2px 8px;font-size:0.63rem;color:#7dd3fc;border-color:rgba(56,189,248,0.45);">⛓️ HFS Registry</button>
         </div>
         <div class="slx-swm-controls">
-          <span class="slx-swm-coords" data-swm="coords">1.30° N, 103.91° E</span>
+          <span class="slx-swm-coords" data-swm="coords">1.3031° N, 103.9128° E</span>
           <span data-swm="map-tools" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
-            <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Full Earth Equirectangular View">🌍 Global</button>
-            <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Active Subnet Mesh Cluster">📍 Cluster Zoom</button>
-            <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
-            <button type="button" class="slx-swm-btn" data-swm-act="zoom-out" title="Zoom Out">➖</button>
+            <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Zoom out to Full World Map">🌍 World</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Marine Crescent, Singapore (Blks 28–35)">🇸🇬 Marine Crescent</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="replay-fly" title="Replay World Map → Marine Crescent Orbital Fly-In">🎬 Fly-In</button>
           </span>
           <button type="button" class="slx-swm-btn cta" data-swm-act="register-hfs" title="Register a new subnet &amp; validator stats URLs on-chain in SubnetRegistry HFS ($0.00 gas)">⛓️ + Register Subnet</button>
           ${
@@ -575,17 +627,19 @@ export function mountSlxSubnetWorldMap({
       </div>
 
       <div class="slx-swm-stage" data-swm="stage">
-        <button type="button" class="slx-swm-swipe-pill" data-swm="swipe-toggle" title="Swipe or click to switch between World Map and Live Phase Sync &amp; Bridge Diagram">
+        <button type="button" class="slx-swm-swipe-pill" data-swm="swipe-toggle" title="Swipe or click to switch between Map and Live Phase Sync &amp; Bridge Diagram">
           ● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›
         </button>
         <div class="slx-swm-track" data-swm="track">
           <div class="slx-swm-pane" data-swm="pane-map">
             <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"></svg>
-            <div class="slx-swm-hud-bl">
-              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>915 MHz LR2021 RF Subnet</span>
-              <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP Subnet</span>
-              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Hybrid Roamer Arc</span>
-              <span style="color:#94a3b8;">Swipe ⇄ for Phase Diagram • Scroll / ➕➖ to zoom</span>
+            <svg class="slx-swm-svg" data-swm="mc-svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"
+              style="position:absolute;inset:0;opacity:0;pointer-events:none;transform-origin:center center;will-change:opacity,transform;"></svg>
+            <div class="slx-swm-hud-bl" data-swm="map-hud-bl">
+              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>915 MHz LR2021 RF (Subnet 1)</span>
+              <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP (Subnet 2)</span>
+              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Blk 34 Hybrid Repeater (.4)</span>
+              <span style="color:#94a3b8;">🌍 World ⇄ 🇸🇬 Marine Crescent • Swipe ⇄ for Phase Diagram</span>
             </div>
           </div>
           <div class="slx-swm-pane" data-swm="pane-phase">
@@ -595,7 +649,7 @@ export function mountSlxSubnetWorldMap({
               <span><i class="slx-swm-legend-dot" style="background:#fbbf24;"></i>P2 VOTE</span>
               <span><i class="slx-swm-legend-dot" style="background:#c084fc;"></i>P3 PROP</span>
               <span><i class="slx-swm-legend-dot" style="background:#34d399;"></i>P4 FINALIZE</span>
-              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Global World Map</span>
+              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Map</span>
             </div>
           </div>
         </div>
@@ -615,6 +669,7 @@ export function mountSlxSubnetWorldMap({
   const elSwipeToggle = mountContainer.querySelector('[data-swm="swipe-toggle"]');
   const elPhaseMount = mountContainer.querySelector('[data-swm="phase-mount"]');
   const elSvg = mountContainer.querySelector('[data-swm="svg"]');
+  const elMcSvg = mountContainer.querySelector('[data-swm="mc-svg"]');
   const elStrip = mountContainer.querySelector('[data-swm="strip"]');
   const elInspector = mountContainer.querySelector('[data-swm="inspector"]');
   const btnGlobal = mountContainer.querySelector('[data-swm-act="global"]');
@@ -683,7 +738,7 @@ export function mountSlxSubnetWorldMap({
   }
 
   function clampCamera(cx, cy, zoom) {
-    const z = Math.max(1, Math.min(6, zoom));
+    const z = Math.max(1, Math.min(12, zoom));
     const vw = MAP_BASE_W / z;
     const vh = MAP_BASE_H / z;
     const clampedX = Math.max(vw / 2, Math.min(MAP_BASE_W - vw / 2, cx));
@@ -699,9 +754,121 @@ export function mountSlxSubnetWorldMap({
     const vx = (cam.cx - cam.vw / 2).toFixed(2);
     const vy = (cam.cy - cam.vh / 2).toFixed(2);
     elSvg?.setAttribute('viewBox', `${vx} ${vy} ${cam.vw.toFixed(2)} ${cam.vh.toFixed(2)}`);
+    if (elMcSvg) {
+      const b = Math.max(0, Math.min(1, state.mcBlend));
+      elMcSvg.style.opacity = b.toFixed(3);
+      elMcSvg.style.pointerEvents = b > 0.65 ? 'auto' : 'none';
+      const sc = 0.88 + 0.12 * b;
+      elMcSvg.style.transform = `scale(${sc.toFixed(4)})`;
+    }
+    if (elSvg) {
+      elSvg.style.opacity = (1 - Math.max(0, Math.min(1, state.mcBlend)) * 0.92).toFixed(3);
+    }
     btnGlobal?.classList.toggle('active', state.mode === 'global');
-    btnCluster?.classList.toggle('active', state.mode === 'cluster');
-    elStage?.classList.toggle('zoomed', state.view === 'map' && state.zoom > 1.03);
+    btnCluster?.classList.toggle('active', state.mode === 'marine' || state.mode === 'cluster');
+    elStage?.classList.toggle(
+      'zoomed',
+      state.view === 'map' && state.mode === 'custom' && state.zoom > 1.05 && state.mcBlend < 0.5
+    );
+  }
+
+  function flyIntoMarineCrescent(animate = true, durMs = 1750) {
+    if (state.animFrame) cancelAnimationFrame(state.animFrame);
+    const sgWorld = latLonToMapXY(1.30308, 103.9128);
+    const targetZ = 11.5;
+
+    if (!animate) {
+      state.cx = sgWorld.x;
+      state.cy = sgWorld.y;
+      state.zoom = targetZ;
+      state.mcBlend = 1;
+      state.mode = 'marine';
+      applyViewBoxImmediate();
+      renderMarineCrescentSvg();
+      return;
+    }
+
+    state.mode = 'marine';
+    renderMarineCrescentSvg();
+    const startCx = state.cx;
+    const startCy = state.cy;
+    const startZ = state.zoom;
+    const startBlend = state.mcBlend;
+    const dest = clampCamera(sgWorld.x, sgWorld.y, targetZ);
+    const startMs = performance.now();
+
+    const tick = (now) => {
+      if (state.destroyed) return;
+      const t = Math.min(1, (now - startMs) / durMs);
+      // Smooth easeInOutCubic orbital dive
+      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      // Exponential zoom feel so global -> regional -> street glides naturally
+      state.zoom = startZ * Math.pow(dest.zoom / Math.max(1, startZ), ease);
+      const panEase = 1 - Math.pow(1 - t, 2.6);
+      state.cx = startCx + (dest.cx - startCx) * panEase;
+      state.cy = startCy + (dest.cy - startCy) * panEase;
+      // Cross-fade into high-res Marine Crescent tactical estate layer over second half of dive
+      const blendRaw = t <= 0.44 ? 0 : (t - 0.44) / 0.56;
+      const blendEase = blendRaw * blendRaw * (3 - 2 * blendRaw);
+      state.mcBlend = startBlend + (1 - startBlend) * blendEase;
+
+      applyViewBoxImmediate();
+      if (state.mcBlend < 0.98) {
+        renderSvgContent();
+      }
+      if (t < 1) {
+        state.animFrame = requestAnimationFrame(tick);
+      } else {
+        state.animFrame = 0;
+        state.mcBlend = 1;
+        applyViewBoxImmediate();
+        renderMarineCrescentSvg();
+      }
+    };
+    state.animFrame = requestAnimationFrame(tick);
+  }
+
+  function flyOutToGlobal(animate = true, durMs = 920) {
+    if (state.animFrame) cancelAnimationFrame(state.animFrame);
+    state.mode = 'global';
+    if (!animate) {
+      state.cx = MAP_BASE_W / 2;
+      state.cy = MAP_BASE_H / 2;
+      state.zoom = 1;
+      state.mcBlend = 0;
+      applyViewBoxImmediate();
+      renderSvgContent();
+      return;
+    }
+
+    renderSvgContent();
+    const startCx = state.cx;
+    const startCy = state.cy;
+    const startZ = state.zoom;
+    const startBlend = state.mcBlend;
+    const startMs = performance.now();
+
+    const tick = (now) => {
+      if (state.destroyed) return;
+      const t = Math.min(1, (now - startMs) / durMs);
+      const ease = 1 - Math.pow(1 - t, 3);
+      state.mcBlend = startBlend * Math.max(0, 1 - t * 2.3);
+      state.zoom = startZ + (1 - startZ) * ease;
+      state.cx = startCx + (MAP_BASE_W / 2 - startCx) * ease;
+      state.cy = startCy + (MAP_BASE_H / 2 - startCy) * ease;
+      applyViewBoxImmediate();
+      renderSvgContent();
+      if (t < 1) {
+        state.animFrame = requestAnimationFrame(tick);
+      } else {
+        state.animFrame = 0;
+        state.mcBlend = 0;
+        state.zoom = 1;
+        applyViewBoxImmediate();
+        renderSvgContent();
+      }
+    };
+    state.animFrame = requestAnimationFrame(tick);
   }
 
   function animateCameraTo(targetCx, targetCy, targetZoom, modeLabel = 'custom') {
@@ -710,9 +877,10 @@ export function mountSlxSubnetWorldMap({
     const startCx = state.cx;
     const startCy = state.cy;
     const startZ = state.zoom;
+    const startBlend = state.mcBlend;
     const dest = clampCamera(targetCx, targetCy, targetZoom);
     const startMs = performance.now();
-    const durMs = 340;
+    const durMs = 420;
 
     const tick = (now) => {
       if (state.destroyed) return;
@@ -721,6 +889,7 @@ export function mountSlxSubnetWorldMap({
       state.cx = startCx + (dest.cx - startCx) * ease;
       state.cy = startCy + (dest.cy - startCy) * ease;
       state.zoom = startZ + (dest.zoom - startZ) * ease;
+      state.mcBlend = startBlend * (1 - ease);
       applyViewBoxImmediate();
       renderSvgContent();
       if (t < 1) {
@@ -739,33 +908,314 @@ export function mountSlxSubnetWorldMap({
       return {
         ...s,
         liveHeight: liveH,
-        lat: Number.isFinite(Number(s.lat)) ? Number(s.lat) : 1.3031,
+        lat: Number.isFinite(Number(s.lat)) ? Number(s.lat) : 1.30308,
         lon: Number.isFinite(Number(s.lon)) ? Number(s.lon) : 103.9128,
       };
     });
   }
 
   function focusActiveCluster(animate = true) {
+    flyIntoMarineCrescent(animate);
+  }
+
+  function replayFlyIn() {
+    if (state.autoFlyTimer) clearTimeout(state.autoFlyTimer);
+    applyActiveView('map');
+    flyOutToGlobal(false);
+    state.autoFlyTimer = setTimeout(() => {
+      if (!state.destroyed && state.view === 'map') {
+        flyIntoMarineCrescent(true, 1850);
+      }
+    }, 550);
+  }
+
+  function renderMarineCrescentSvg() {
+    if (!elMcSvg) return;
     const subs = getEnrichedSubnets();
-    if (!subs.length) return;
-    const pts = subs.map((s) => latLonToMapXY(s.lat, s.lon));
-    const minX = Math.min(...pts.map((p) => p.x));
-    const maxX = Math.max(...pts.map((p) => p.x));
-    const minY = Math.min(...pts.map((p) => p.y));
-    const maxY = Math.max(...pts.map((p) => p.y));
-    const spanX = Math.max(180, (maxX - minX) * 2.4);
-    const spanY = Math.max(110, (maxY - minY) * 2.4);
-    const targetZ = Math.max(1.8, Math.min(3.8, Math.min(MAP_BASE_W / spanX, MAP_BASE_H / spanY)));
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    if (animate) animateCameraTo(cx, cy, targetZ, 'cluster');
-    else {
-      state.cx = cx;
-      state.cy = cy;
-      state.zoom = targetZ;
-      state.mode = 'cluster';
-      applyViewBoxImmediate();
+    const activeKey = SlxSubnetManager.getActiveSubnetKey();
+    const s1 = subs.find((s) => s.key === 'subnet1') || subs[0];
+    const s2 = subs.find((s) => s.key === 'subnet2') || subs[1];
+    const s1Probe = s1 ? state.nodeStatsByKey.get(s1.key) : null;
+    const s2Probe = s2 ? state.nodeStatsByKey.get(s2.key) : null;
+
+    // Map block number -> node badges hosted at that physical HDB block
+    const nodesByBlk = new Map();
+    const addNodeToBlk = (blk, entry) => {
+      if (!nodesByBlk.has(blk)) nodesByBlk.set(blk, []);
+      nodesByBlk.get(blk).push(entry);
+    };
+
+    const defaultBlkOrderS1 = ['28', '29', '33', '35'];
+    (s1?.validatorNodes || []).forEach((vn, i) => {
+      const blk = String(vn.blk || defaultBlkOrderS1[i] || '28');
+      const pr = s1Probe?.nodes?.[i] || null;
+      addNodeToBlk(blk, {
+        subnetKey: s1.key,
+        transport: 'flrc',
+        icon: '📡',
+        label: (vn.name || `node${i + 1}`).replace(/^(RF |Validator )/i, ''),
+        online: pr ? pr.online : true,
+        height: pr?.blockHeight || s1?.liveHeight || 0,
+        rttMs: pr?.rttMs || 0,
+      });
+    });
+
+    const defaultBlkOrderS2 = ['28', '29', '35'];
+    (s2?.validatorNodes || []).forEach((vn, i) => {
+      const blk = String(vn.blk || defaultBlkOrderS2[i] || '28');
+      const pr = s2Probe?.nodes?.[i] || null;
+      addNodeToBlk(blk, {
+        subnetKey: s2.key,
+        transport: 'tcp',
+        icon: '🔌',
+        label: (vn.name || `node2${i + 1}`).replace(/^(TCP |Validator )/i, ''),
+        online: pr ? pr.online : true,
+        height: pr?.blockHeight || s2?.liveHeight || 0,
+        rttMs: pr?.rttMs || 0,
+      });
+    });
+
+    // Project all HDB blocks onto (1200 x 675)
+    const blkPos = new Map();
+    for (const b of MARINE_CRESCENT_HDB_BLOCKS) {
+      blkPos.set(b.blk, { ...b, ...marineCrescentLatLonToXY(b.lat, b.lon) });
     }
+
+    // Subtle WGS84 tactical gridlines
+    let gridSvg = '';
+    for (const la of [1.304, 1.3035, 1.303, 1.3025, 1.302]) {
+      const { y } = marineCrescentLatLonToXY(la, MC_LON_WEST);
+      gridSvg += `
+        <line x1="0" y1="${y.toFixed(1)}" x2="${MAP_BASE_W}" y2="${y.toFixed(1)}" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
+        <text x="14" y="${(y - 4).toFixed(1)}" fill="rgba(148,163,184,0.45)" font-size="9" font-family="JetBrains Mono, monospace">${la.toFixed(4)}°N</text>
+      `;
+    }
+    for (const lo of [103.9115, 103.9125, 103.9135, 103.9142]) {
+      const { x } = marineCrescentLatLonToXY(MC_LAT_NORTH, lo);
+      gridSvg += `
+        <line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${MAP_BASE_H}" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
+        <text x="${(x + 4).toFixed(1)}" y="18" fill="rgba(148,163,184,0.42)" font-size="8.8" font-family="JetBrains Mono, monospace">${lo.toFixed(4)}°E</text>
+      `;
+    }
+
+    // Authentic Marine Crescent roads, ECP expressway, East Coast Park & Singapore Strait coastline
+    const yMarineParade = marineCrescentLatLonToXY(1.30414, MC_LON_WEST).y;
+    const yEcp = marineCrescentLatLonToXY(1.30203, MC_LON_WEST).y;
+    const yCoast = marineCrescentLatLonToXY(1.30184, MC_LON_WEST).y;
+    const mcLoopPts = [
+      marineCrescentLatLonToXY(1.30414, 103.91195),
+      marineCrescentLatLonToXY(1.30252, 103.91188),
+      marineCrescentLatLonToXY(1.30242, 103.91278),
+      marineCrescentLatLonToXY(1.30255, 103.91368),
+      marineCrescentLatLonToXY(1.30414, 103.91376),
+    ];
+    const loopPath = `M ${mcLoopPts[0].x.toFixed(1)} ${mcLoopPts[0].y.toFixed(1)} Q ${mcLoopPts[1].x.toFixed(1)} ${mcLoopPts[1].y.toFixed(1)} ${mcLoopPts[2].x.toFixed(1)} ${mcLoopPts[2].y.toFixed(1)} Q ${mcLoopPts[3].x.toFixed(1)} ${mcLoopPts[3].y.toFixed(1)} ${mcLoopPts[4].x.toFixed(1)} ${mcLoopPts[4].y.toFixed(1)}`;
+
+    const roadsAndCoastSvg = `
+      <!-- East Coast Park Greenbelt & Singapore Strait Water -->
+      <rect x="0" y="${yEcp.toFixed(1)}" width="${MAP_BASE_W}" height="${(yCoast - yEcp).toFixed(1)}" fill="rgba(16, 48, 44, 0.42)" />
+      <rect x="0" y="${yCoast.toFixed(1)}" width="${MAP_BASE_W}" height="${(MAP_BASE_H - yCoast).toFixed(1)}" fill="#040d1d" />
+      <line x1="0" y1="${yCoast.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yCoast.toFixed(1)}" stroke="#22d3ee" stroke-width="2" opacity="0.68" />
+      <text x="600" y="${(yCoast + 24).toFixed(1)}" text-anchor="middle" fill="rgba(56,189,248,0.55)" font-size="10.5" font-weight="800" letter-spacing="3" font-family="JetBrains Mono, monospace">SINGAPORE STRAIT  •  EAST COAST BEACH</text>
+
+      <!-- Marine Parade Road (North) -->
+      <line x1="0" y1="${yMarineParade.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yMarineParade.toFixed(1)}" stroke="#1e293b" stroke-width="18" />
+      <line x1="0" y1="${yMarineParade.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yMarineParade.toFixed(1)}" stroke="rgba(148,163,184,0.35)" stroke-width="1" stroke-dasharray="8 6" />
+      <text x="220" y="${(yMarineParade + 3.5).toFixed(1)}" fill="rgba(203,213,225,0.65)" font-size="9.2" font-weight="700" letter-spacing="1.5" font-family="JetBrains Mono, monospace">MARINE PARADE ROAD</text>
+
+      <!-- Marine Crescent Loop Road -->
+      <path d="${loopPath}" fill="none" stroke="#17243a" stroke-width="14" stroke-linecap="round" />
+      <path d="${loopPath}" fill="none" stroke="rgba(125,211,252,0.28)" stroke-width="1.1" stroke-dasharray="5 5" />
+      <text x="${mcLoopPts[2].x.toFixed(1)}" y="${(mcLoopPts[2].y + 22).toFixed(1)}" text-anchor="middle" fill="rgba(186,230,253,0.62)" font-size="9" font-weight="700" letter-spacing="1.4" font-family="JetBrains Mono, monospace">MARINE CRESCENT</text>
+
+      <!-- East Coast Parkway (ECP) -->
+      <line x1="0" y1="${yEcp.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yEcp.toFixed(1)}" stroke="#1e293b" stroke-width="20" />
+      <line x1="0" y1="${yEcp.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yEcp.toFixed(1)}" stroke="rgba(251,191,36,0.35)" stroke-width="1.2" stroke-dasharray="10 6" />
+      <text x="930" y="${(yEcp + 3.5).toFixed(1)}" fill="rgba(253,230,138,0.68)" font-size="9.2" font-weight="700" letter-spacing="1.5" font-family="JetBrains Mono, monospace">EAST COAST PARKWAY (ECP)</text>
+    `;
+
+    // RF Subnet 1 Mesh Links (Blks 35 - 28 - 29 - 33 - 35 + diagonals) & TCP Subnet 2 Mesh Links (Blks 35 - 28 - 29)
+    const b28 = blkPos.get('28');
+    const b29 = blkPos.get('29');
+    const b33 = blkPos.get('33');
+    const b34 = blkPos.get('34');
+    const b35 = blkPos.get('35');
+
+    const rfPairs = [
+      [b35, b28],
+      [b28, b29],
+      [b29, b33],
+      [b33, b35],
+      [b35, b29],
+      [b28, b33],
+    ];
+    const tcpPairs = [
+      [b35, b28],
+      [b28, b29],
+      [b29, b35],
+    ];
+
+    const s1Sel = state.selectedKey === 'subnet1';
+    const s2Sel = state.selectedKey === 'subnet2';
+
+    let meshLinksSvg = '';
+    rfPairs.forEach(([a, b], idx) => {
+      if (!a || !b) return;
+      const pid = `mcRfLink_${idx}`;
+      meshLinksSvg += `
+        <path id="${pid}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}"
+          stroke="#38bdf8" stroke-width="${s1Sel ? '2.4' : '1.5'}" opacity="${s2Sel ? '0.28' : '0.62'}" stroke-dasharray="6 4" />
+        ${
+          idx < 4
+            ? `<circle r="3.2" fill="#38bdf8" filter="url(#mcGlow)"><animateMotion dur="${(2.1 + idx * 0.35).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>`
+            : ''
+        }
+      `;
+    });
+
+    tcpPairs.forEach(([a, b], idx) => {
+      if (!a || !b) return;
+      // Slight 6px offset so parallel RF & TCP links between Blk 28/29/35 are both distinctly visible!
+      const pid = `mcTcpLink_${idx}`;
+      meshLinksSvg += `
+        <path id="${pid}" d="M ${(a.x + 6).toFixed(1)} ${(a.y + 6).toFixed(1)} L ${(b.x + 6).toFixed(1)} ${(b.y + 6).toFixed(1)}"
+          stroke="#c084fc" stroke-width="${s2Sel ? '2.5' : '1.7'}" opacity="${s1Sel ? '0.35' : '0.78'}" />
+        <circle r="3.2" fill="#c084fc" filter="url(#mcGlow)"><animateMotion dur="${(1.7 + idx * 0.3).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>
+      `;
+    });
+
+    // Hybrid Repeater (Blk 34) cross-subnet relay beams to Blk 28, 29, 33, 35
+    if (b34) {
+      [b28, b29, b33, b35].forEach((target, idx) => {
+        if (!target) return;
+        const pid = `mcRepBeam_${idx}`;
+        meshLinksSvg += `
+          <path id="${pid}" d="M ${b34.x.toFixed(1)} ${b34.y.toFixed(1)} L ${target.x.toFixed(1)} ${target.y.toFixed(1)}"
+            stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="3 4" opacity="0.58" />
+          <circle r="2.8" fill="#fbbf24"><animateMotion dur="${(1.9 + idx * 0.25).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>
+        `;
+      });
+    }
+
+    // Draw HDB buildings & per-block live validator callout cards
+    let blocksSvg = '';
+    for (const b of blkPos.values()) {
+      if (b.role === 'context') {
+        blocksSvg += `
+          <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)}) rotate(${b.angle})">
+            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="3"
+              fill="#0f1b2e" stroke="rgba(71,85,105,0.45)" stroke-width="1" />
+            <text x="0" y="3.5" text-anchor="middle" fill="rgba(148,163,184,0.5)" font-size="8" font-weight="700" font-family="JetBrains Mono, monospace">BLK ${b.blk}</text>
+          </g>
+        `;
+        continue;
+      }
+
+      if (b.role === 'repeater') {
+        blocksSvg += `
+          <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)})">
+            <circle class="slx-swm-rf-ring" cx="0" cy="0" r="18" fill="none" stroke="#fbbf24" stroke-width="1.3" />
+            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="4"
+              fill="#171524" stroke="#fbbf24" stroke-width="2" />
+            <polygon points="0,-13 13,0 0,13 -13,0" fill="#0f172a" stroke="#fbbf24" stroke-width="1.8" />
+            <circle r="3.5" fill="#fbbf24" />
+            <g transform="translate(-88, 17)">
+              <rect width="176" height="34" rx="7" fill="rgba(4,9,20,0.94)" stroke="rgba(251,191,36,0.75)" stroke-width="1.3" />
+              <text x="88" y="13.5" text-anchor="middle" fill="#fde68a" font-size="9.4" font-weight="800" font-family="JetBrains Mono, monospace">🛰️ BLK 34 (${b.host}) • REPEATER</text>
+              <text x="88" y="26.5" text-anchor="middle" fill="#cbd5e1" font-size="8.2" font-family="JetBrains Mono, monospace">Bridges 915 MHz RF ⇄ TCP/IP</text>
+            </g>
+          </g>
+        `;
+        continue;
+      }
+
+      const hosted = nodesByBlk.get(b.blk) || [];
+      const hasRf = hosted.some((h) => h.transport !== 'tcp');
+      const hasTcp = hosted.some((h) => h.transport === 'tcp');
+      const strokeCol = hasRf && hasTcp ? '#38bdf8' : hasTcp ? '#c084fc' : '#38bdf8';
+
+      // Place callout above northern blocks (28, 35) and below southern blocks (29, 33) for zero overlap!
+      const isNorth = b.blk === '28' || b.blk === '35';
+      const cardW = 192;
+      const cardH = 18 + hosted.length * 15;
+      const cardY = isNorth ? -b.h / 2 - cardH - 12 : b.h / 2 + 12;
+
+      const rowsSvg = hosted
+        .map((nd, rIdx) => {
+          const ry = 28 + rIdx * 14.5;
+          const col = nd.transport === 'tcp' ? '#e9d5ff' : '#bae6fd';
+          const isSubActive = nd.subnetKey === activeKey;
+          const statTxt = nd.height > 0 ? `#${fmtNum(nd.height)}${nd.rttMs ? ` • ${nd.rttMs}ms` : ''}` : 'ONLINE';
+          return `
+            <g class="slx-swm-pin-group" data-mc-sub="${escHtml(nd.subnetKey)}">
+              <text x="8" y="${ry}" fill="${col}" font-size="8.6" font-weight="800" font-family="JetBrains Mono, monospace">${escHtml(nd.icon)} ${escHtml(nd.label)}${isSubActive ? ' ★' : ''}</text>
+              <text x="${cardW - 8}" y="${ry}" text-anchor="end" fill="#6ee7b7" font-size="8.3" font-weight="700" font-family="JetBrains Mono, monospace">${escHtml(statTxt)}</text>
+            </g>
+          `;
+        })
+        .join('');
+
+      blocksSvg += `
+        <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)})">
+          ${hasRf ? `<circle class="slx-swm-rf-ring" cx="0" cy="0" r="16" fill="none" stroke="#38bdf8" stroke-width="1.3" />` : ''}
+          ${hasTcp ? `<circle cx="0" cy="0" r="20" fill="none" stroke="#c084fc" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.85" />` : ''}
+          <g transform="rotate(${b.angle})">
+            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="4"
+              fill="#0d213a" stroke="${strokeCol}" stroke-width="2" />
+          </g>
+          <circle r="4.2" fill="#34d399" />
+
+          <g transform="translate(${-cardW / 2}, ${cardY})">
+            <rect width="${cardW}" height="${cardH}" rx="7" fill="rgba(4,10,22,0.94)" stroke="${strokeCol}" stroke-width="1.35" />
+            <text x="8" y="13.5" fill="#f8fafc" font-size="9.2" font-weight="800" font-family="JetBrains Mono, monospace">🏢 BLK ${b.blk} MARINE CRES (${b.host})</text>
+            <line x1="6" y1="17.5" x2="${cardW - 6}" y2="17.5" stroke="rgba(71,85,105,0.55)" stroke-width="0.8" />
+            ${rowsSvg}
+          </g>
+        </g>
+      `;
+    }
+
+    // Top-left Location Cartouche & 50m Scale Bar
+    const pxPer50m = ((50 / 111_320) / (MC_LON_EAST - MC_LON_WEST)) * MAP_BASE_W;
+    const hudOverlaySvg = `
+      <g transform="translate(16, 42)">
+        <rect width="346" height="40" rx="8" fill="rgba(3,8,18,0.9)" stroke="rgba(56,189,248,0.55)" stroke-width="1.2" />
+        <text x="12" y="16.5" fill="#f8fafc" font-size="10.5" font-weight="800" font-family="JetBrains Mono, monospace">🇸🇬 MARINE CRESCENT, SINGAPORE (S440028–35)</text>
+        <text x="12" y="31" fill="#7dd3fc" font-size="8.6" font-family="JetBrains Mono, monospace">Closely Co-Located RF Subnet 1 + TCP Subnet 2 + Repeater</text>
+      </g>
+      <g transform="translate(${(MAP_BASE_W - pxPer50m - 26).toFixed(1)}, ${(yEcp - 22).toFixed(1)})">
+        <line x1="0" y1="0" x2="${pxPer50m.toFixed(1)}" y2="0" stroke="#cbd5e1" stroke-width="2" />
+        <line x1="0" y1="-4" x2="0" y2="4" stroke="#cbd5e1" stroke-width="2" />
+        <line x1="${pxPer50m.toFixed(1)}" y1="-4" x2="${pxPer50m.toFixed(1)}" y2="4" stroke="#cbd5e1" stroke-width="2" />
+        <text x="${(pxPer50m / 2).toFixed(1)}" y="-6" text-anchor="middle" fill="#cbd5e1" font-size="8.8" font-weight="700" font-family="JetBrains Mono, monospace">50 m</text>
+      </g>
+    `;
+
+    elMcSvg.innerHTML = `
+      <defs>
+        <filter id="mcGlow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="2.5" result="b" />
+          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <rect x="0" y="0" width="${MAP_BASE_W}" height="${MAP_BASE_H}" fill="#071120" />
+      ${gridSvg}
+      ${roadsAndCoastSvg}
+      ${meshLinksSvg}
+      ${blocksSvg}
+      ${hudOverlaySvg}
+    `;
+
+    elMcSvg.querySelectorAll('[data-mc-sub]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const k = el.getAttribute('data-mc-sub');
+        if (k) {
+          state.selectedKey = k;
+          renderAll();
+        }
+      });
+    });
   }
 
   function renderSvgContent() {
@@ -1107,8 +1557,15 @@ export function mountSlxSubnetWorldMap({
       `;
 
       elInspector.querySelector('[data-swm-focus]')?.addEventListener('click', () => {
-        const pt = latLonToMapXY(sel.lat, sel.lon);
-        animateCameraTo(pt.x, pt.y, 3.4, 'cluster');
+        state.userInterruptedAutoFly = true;
+        applyActiveView('map');
+        const isSg = Math.abs(sel.lat - 1.303) < 0.25 && Math.abs(sel.lon - 103.913) < 0.25;
+        if (isSg) {
+          flyIntoMarineCrescent(true);
+        } else {
+          const pt = latLonToMapXY(sel.lat, sel.lon);
+          animateCameraTo(pt.x, pt.y, 3.6, 'custom');
+        }
       });
 
       elInspector.querySelector('[data-swm-edit-hfs]')?.addEventListener('click', () => {
@@ -1133,24 +1590,23 @@ export function mountSlxSubnetWorldMap({
   function renderAll() {
     if (state.destroyed) return;
     applyViewBoxImmediate();
-    renderSvgContent();
+    if (state.mcBlend < 1) renderSvgContent();
+    if (state.mcBlend > 0) renderMarineCrescentSvg();
     renderCardsAndInspector();
   }
 
   // Toolbar buttons
   mountContainer.querySelector('[data-swm-act="global"]')?.addEventListener('click', () => {
-    animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global');
+    state.userInterruptedAutoFly = true;
+    flyOutToGlobal(true);
   });
   mountContainer.querySelector('[data-swm-act="cluster"]')?.addEventListener('click', () => {
-    focusActiveCluster(true);
+    state.userInterruptedAutoFly = true;
+    flyIntoMarineCrescent(true);
   });
-  mountContainer.querySelector('[data-swm-act="zoom-in"]')?.addEventListener('click', () => {
-    animateCameraTo(state.cx, state.cy, Math.min(6, state.zoom * 1.45), 'custom');
-  });
-  mountContainer.querySelector('[data-swm-act="zoom-out"]')?.addEventListener('click', () => {
-    const nextZ = Math.max(1, state.zoom / 1.45);
-    if (nextZ <= 1.05) animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global');
-    else animateCameraTo(state.cx, state.cy, nextZ, 'custom');
+  mountContainer.querySelector('[data-swm-act="replay-fly"]')?.addEventListener('click', () => {
+    state.userInterruptedAutoFly = true;
+    replayFlyIn();
   });
   elHfsBadge?.addEventListener('click', () => {
     const addr =
@@ -1177,17 +1633,19 @@ export function mountSlxSubnetWorldMap({
     if (typeof onClose === 'function') onClose();
   });
 
-  // Pointer drag-to-pan (when zoomed in on Map) OR horizontal swipe between View 1 (Map) & View 2 (Phase & Bridge Diagram)
+  // Pointer drag-to-pan (when custom-zoomed on World Map) OR horizontal swipe between View 1 (Map) & View 2 (Phase & Bridge Diagram)
   let drag = null;
   elStage?.addEventListener('pointerdown', (ev) => {
     if (
       ev.target.closest('[data-swm-pin]') ||
+      ev.target.closest('[data-mc-sub]') ||
       ev.target.closest('[data-swm="swipe-toggle"]') ||
       ev.target.closest('[data-spd-send]')
     ) {
       return;
     }
-    const isSwipeMode = state.view === 'phase' || state.zoom <= 1.03;
+    const isSwipeMode =
+      state.view === 'phase' || state.mode === 'marine' || state.zoom <= 1.03;
     drag = {
       pointerId: ev.pointerId,
       mode: isSwipeMode ? 'swipe' : 'pan',
@@ -1201,6 +1659,7 @@ export function mountSlxSubnetWorldMap({
       abortedVert: false,
     };
     if (!isSwipeMode) {
+      state.userInterruptedAutoFly = true;
       elStage.classList.add('dragging');
       try {
         elStage.setPointerCapture(ev.pointerId);
@@ -1212,20 +1671,27 @@ export function mountSlxSubnetWorldMap({
     const rect = elStage.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
       if (state.view === 'map') {
-        const cam = clampCamera(state.cx, state.cy, state.zoom);
-        const svgX = cam.cx - cam.vw / 2 + ((ev.clientX - rect.left) / rect.width) * cam.vw;
-        const svgY = cam.cy - cam.vh / 2 + ((ev.clientY - rect.top) / rect.height) * cam.vh;
-        const geo = mapXYToLatLon(svgX, svgY);
-        if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon);
+        if (state.mcBlend > 0.6) {
+          const mx = ((ev.clientX - rect.left) / rect.width) * MAP_BASE_W;
+          const my = ((ev.clientY - rect.top) / rect.height) * MAP_BASE_H;
+          const geo = marineCrescentXYToLatLon(mx, my);
+          if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon, 4);
+        } else {
+          const cam = clampCamera(state.cx, state.cy, state.zoom);
+          const svgX = cam.cx - cam.vw / 2 + ((ev.clientX - rect.left) / rect.width) * cam.vw;
+          const svgY = cam.cy - cam.vh / 2 + ((ev.clientY - rect.top) / rect.height) * cam.vh;
+          const geo = mapXYToLatLon(svgX, svgY);
+          if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon, 2);
 
-        if (drag && ev.pointerId === drag.pointerId && drag.mode === 'pan') {
-          const dxSvg = ((ev.clientX - drag.startX) / rect.width) * cam.vw;
-          const dySvg = ((ev.clientY - drag.startY) / rect.height) * cam.vh;
-          state.cx = drag.startCx - dxSvg;
-          state.cy = drag.startCy - dySvg;
-          if (state.zoom > 1.02) state.mode = 'custom';
-          applyViewBoxImmediate();
-          return;
+          if (drag && ev.pointerId === drag.pointerId && drag.mode === 'pan') {
+            const dxSvg = ((ev.clientX - drag.startX) / rect.width) * cam.vw;
+            const dySvg = ((ev.clientY - drag.startY) / rect.height) * cam.vh;
+            state.cx = drag.startCx - dxSvg;
+            state.cy = drag.startCy - dySvg;
+            if (state.zoom > 1.02) state.mode = 'custom';
+            applyViewBoxImmediate();
+            return;
+          }
         }
       }
 
@@ -1241,6 +1707,7 @@ export function mountSlxSubnetWorldMap({
           }
           if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.2) {
             drag.lockedHoriz = true;
+            state.userInterruptedAutoFly = true;
             elTrack?.classList.add('swiping');
             try {
               elStage.setPointerCapture(ev.pointerId);
@@ -1264,7 +1731,6 @@ export function mountSlxSubnetWorldMap({
         const dx = (ev?.clientX ?? drag.lastX) - drag.startX;
         const dy = (ev?.clientY ?? drag.lastY) - drag.startY;
         if (!drag.abortedVert && Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-          // Toggle cleanly on horizontal swipe in either direction so both natural & inverted swipes work intuitively!
           applyActiveView(state.view === 'map' ? 'phase' : 'map');
         } else {
           applyActiveView(state.view);
@@ -1281,20 +1747,15 @@ export function mountSlxSubnetWorldMap({
     'wheel',
     (ev) => {
       if (state.view !== 'map') return;
-      // Allow normal page scroll unless zoomed in or Ctrl/Meta held, or inside modal
-      if (!showCloseButton && state.zoom <= 1.01 && !ev.ctrlKey && !ev.metaKey) return;
+      if (!showCloseButton && state.mode === 'global' && !ev.ctrlKey && !ev.metaKey) return;
+      if (state.mode === 'marine' && !ev.ctrlKey && !ev.metaKey && !showCloseButton) return;
       ev.preventDefault();
-      const factor = ev.deltaY < 0 ? 1.22 : 1 / 1.22;
-      const nextZ = Math.max(1, Math.min(6, state.zoom * factor));
-      state.zoom = nextZ;
-      if (nextZ <= 1.02) {
-        state.cx = MAP_BASE_W / 2;
-        state.cy = MAP_BASE_H / 2;
-        state.mode = 'global';
-      } else {
-        state.mode = 'custom';
+      state.userInterruptedAutoFly = true;
+      if (ev.deltaY > 0 && state.mcBlend > 0.5) {
+        flyOutToGlobal(true);
+      } else if (ev.deltaY < 0 && state.mcBlend < 0.5) {
+        flyIntoMarineCrescent(true);
       }
-      renderAll();
     },
     { passive: false }
   );
@@ -1323,9 +1784,41 @@ export function mountSlxSubnetWorldMap({
     window.addEventListener('slx:subnet-changed', onSubnetsUpdated);
   }
 
-  if (initialMode === 'cluster') {
-    focusActiveCluster(false);
+  let io = null;
+  function scheduleInitialAutoZoom() {
+    if (state.autoFlyDone || state.userInterruptedAutoFly || state.view !== 'map') return;
+    state.autoFlyDone = true;
+    state.autoFlyTimer = setTimeout(() => {
+      if (!state.destroyed && !state.userInterruptedAutoFly && state.view === 'map') {
+        flyIntoMarineCrescent(true, 1850);
+      }
+    }, 950);
   }
+
+  if (initialMode === 'cluster' || initialMode === 'marine') {
+    flyIntoMarineCrescent(false);
+    state.autoFlyDone = true;
+  } else if (initialMode !== 'global-only') {
+    if (typeof IntersectionObserver !== 'undefined' && elStage) {
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting && e.intersectionRatio >= 0.25) {
+              io?.disconnect();
+              io = null;
+              scheduleInitialAutoZoom();
+              break;
+            }
+          }
+        },
+        { threshold: [0.25] }
+      );
+      io.observe(elStage);
+    } else {
+      scheduleInitialAutoZoom();
+    }
+  }
+
   applyActiveView(state.view);
   renderAll();
   SlxSubnetManager.refreshDiscoveryMetadata().catch(() => {});
@@ -1355,15 +1848,18 @@ export function mountSlxSubnetWorldMap({
     setView: (v) => applyActiveView(v),
     focusCluster: () => {
       applyActiveView('map');
-      focusActiveCluster(true);
+      flyIntoMarineCrescent(true);
     },
     resetGlobal: () => {
       applyActiveView('map');
-      animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global');
+      flyOutToGlobal(true);
     },
+    replayFlyIn,
     destroy() {
       state.destroyed = true;
       if (state.animFrame) cancelAnimationFrame(state.animFrame);
+      if (state.autoFlyTimer) clearTimeout(state.autoFlyTimer);
+      io?.disconnect();
       clearInterval(pollTimer);
       phaseDiagramInst?.destroy();
       if (typeof window !== 'undefined') {
