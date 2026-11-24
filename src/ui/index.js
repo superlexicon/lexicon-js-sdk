@@ -46,6 +46,7 @@ import {
   openSlxSubnetWorldMapModal,
   openSlxSubnetRegistryModal,
 } from './subnet-world-map.js';
+import { mountSlxSubnetPhaseDiagram } from './subnet-phase-diagram.js';
 
 export {
   USECASE_DESCRIPTIONS,
@@ -61,6 +62,7 @@ export {
   mountSlxSubnetWorldMap,
   openSlxSubnetWorldMapModal,
   openSlxSubnetRegistryModal,
+  mountSlxSubnetPhaseDiagram,
 };
 
 function escapeHtmlText(s) {
@@ -2064,9 +2066,14 @@ export function mountSlxChainBar({
           .join('')}
       </div>
       <div style="padding:0.4rem 0.55rem;border-top:1px solid rgba(51,65,85,0.55);display:flex;flex-direction:column;gap:0.35rem;">
-        <button type="button" data-sm-open-map class="slx-mini-btn" style="width:100%;justify-content:center;padding:0.38rem 0.6rem;font-size:0.7rem;border-color:rgba(56,189,248,0.65);background:rgba(14,165,233,0.18);color:#bae6fd;">
-          🌍 Open Interactive Subnet World Map
-        </button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem;">
+          <button type="button" data-sm-open-map class="slx-mini-btn" style="justify-content:center;padding:0.38rem 0.5rem;font-size:0.68rem;border-color:rgba(56,189,248,0.65);background:rgba(14,165,233,0.18);color:#bae6fd;">
+            🌍 World Map
+          </button>
+          <button type="button" data-sm-open-phase class="slx-mini-btn" style="justify-content:center;padding:0.38rem 0.5rem;font-size:0.68rem;border-color:rgba(192,132,252,0.65);background:rgba(168,85,247,0.18);color:#e9d5ff;">
+            ⚡ Phase &amp; Bridge
+          </button>
+        </div>
         <button type="button" data-sm-reg-hfs class="slx-mini-btn emerald" style="width:100%;justify-content:center;padding:0.36rem 0.6rem;font-size:0.69rem;">
           ⛓️ + Register Subnet &amp; Stats URLs On-Chain (HFS)
         </button>
@@ -2089,7 +2096,13 @@ export function mountSlxChainBar({
     subnetMenu.querySelector('[data-sm-open-map]')?.addEventListener('click', (ev) => {
       ev.stopPropagation();
       closeSubnetMenu();
-      openSlxSubnetWorldMapModal();
+      openSlxSubnetWorldMapModal({ initialView: 'map' });
+    });
+
+    subnetMenu.querySelector('[data-sm-open-phase]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeSubnetMenu();
+      openSlxSubnetWorldMapModal({ initialView: 'phase' });
     });
 
     subnetMenu.querySelector('[data-sm-reg-hfs]')?.addEventListener('click', (ev) => {

@@ -164,6 +164,7 @@ export function mountSlxSubnetWorldMap(opts: {
   mountContainer: HTMLElement | null;
   backgroundImgUrl?: string;
   initialMode?: 'global' | 'cluster';
+  initialView?: 'map' | 'phase';
   showCloseButton?: boolean;
   onClose?: (() => void) | null;
   onSelectSubnet?: ((subnetProfile: any) => void) | null;
@@ -174,7 +175,9 @@ export function mountSlxSubnetWorldMap(opts: {
     confirmedCrossTxns?: number;
     inFlightCrossTxns?: number;
     lane?: string;
+    rows?: any[];
   }) => void;
+  setView: (view: 'map' | 'phase') => void;
   focusCluster: () => void;
   resetGlobal: () => void;
   destroy: () => void;
@@ -182,10 +185,20 @@ export function mountSlxSubnetWorldMap(opts: {
 
 export function openSlxSubnetWorldMapModal(opts?: {
   initialMode?: 'global' | 'cluster';
+  initialView?: 'map' | 'phase';
 }): {
   backdrop: HTMLElement;
   close: () => void;
   mapInst: ReturnType<typeof mountSlxSubnetWorldMap>;
+} | null;
+
+export function mountSlxSubnetPhaseDiagram(opts: {
+  mountContainer: HTMLElement | null;
+  isVisibleFn?: () => boolean;
+}): {
+  ingestExternalBridgeData: (data?: Record<string, any>) => void;
+  refreshTopology: () => void;
+  destroy: () => void;
 } | null;
 
 export function openSlxSubnetRegistryModal(opts?: {

@@ -14,6 +14,7 @@ import {
   probeSubnetNodeStats,
   SUBNET1_SUBNET_REGISTRY_ADDRESS,
 } from '../subnet-registry.js';
+import { mountSlxSubnetPhaseDiagram } from './subnet-phase-diagram.js';
 
 export const MAP_BASE_W = 1200;
 export const MAP_BASE_H = 675; // Exact 16:9 matching /assets/hegemony/world_map.jpg (1600x900)
@@ -203,11 +204,86 @@ function injectSubnetWorldMapStyles() {
       border: 1px solid rgba(56, 189, 248, 0.35);
       background: radial-gradient(ellipse at 52% 48%, #0c1d36 0%, #050b16 72%, #030712 100%);
       cursor: grab;
-      touch-action: none;
+      touch-action: pan-y;
       user-select: none;
+    }
+    .slx-swm-stage.zoomed {
+      touch-action: none;
     }
     .slx-swm-stage.dragging {
       cursor: grabbing;
+    }
+    .slx-swm-track {
+      display: flex;
+      width: 200%;
+      height: 100%;
+      transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+      will-change: transform;
+    }
+    .slx-swm-track.swiping {
+      transition: none;
+    }
+    .slx-swm-pane {
+      position: relative;
+      width: 50%;
+      height: 100%;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .slx-swm-seg {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px;
+      border-radius: 9px;
+      background: rgba(2, 6, 23, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.42);
+      gap: 2px;
+    }
+    .slx-swm-seg-btn {
+      padding: 4px 10px;
+      border-radius: 7px;
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 800;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+    }
+    .slx-swm-seg-btn:hover {
+      color: #e2e8f0;
+    }
+    .slx-swm-seg-btn.active {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.32), rgba(168, 85, 247, 0.28));
+      color: #f8fafc;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.22);
+    }
+    .slx-swm-swipe-pill {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 4;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(3, 7, 18, 0.84);
+      border: 1px solid rgba(56, 189, 248, 0.48);
+      backdrop-filter: blur(6px);
+      color: #bae6fd;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.63rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .slx-swm-swipe-pill:hover {
+      border-color: rgba(192, 132, 252, 0.8);
+      color: #f8fafc;
+      background: rgba(15, 23, 42, 0.94);
     }
     .slx-swm-svg {
       width: 100%;
@@ -440,6 +516,7 @@ export function mountSlxSubnetWorldMap({
   mountContainer,
   backgroundImgUrl = '/assets/hegemony/world_map.jpg',
   initialMode = 'global', // 'global' | 'cluster'
+  initialView = 'map', // 'map' | 'phase'
   showCloseButton = false,
   onClose = null,
   onSelectSubnet = null,
@@ -448,6 +525,7 @@ export function mountSlxSubnetWorldMap({
   injectSubnetWorldMapStyles();
 
   const state = {
+    view: initialView === 'phase' ? 'phase' : 'map',
     zoom: 1,
     cx: MAP_BASE_W / 2,
     cy: MAP_BASE_H / 2,
@@ -469,19 +547,24 @@ export function mountSlxSubnetWorldMap({
   };
 
   mountContainer.innerHTML = `
-    <div class="slx-swm-card" role="region" aria-label="Global SuperLexicon Subnet World Map">
+    <div class="slx-swm-card" role="region" aria-label="Global SuperLexicon Subnet World Map &amp; Phase Sync">
       <div class="slx-swm-hdr">
         <div class="slx-swm-title-wrap">
-          <span class="slx-swm-title">🌍 GLOBAL SUBNET WORLD MAP &amp; ROAMING MESH</span>
+          <div class="slx-swm-seg" role="tablist" aria-label="Subnet Visualization View">
+            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. World Map</button>
+            <button type="button" class="slx-swm-seg-btn" data-swm-view="phase" role="tab" aria-selected="false">⚡ 2. Phase &amp; Bridge Live</button>
+          </div>
           <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetRegistry HFS…</span>
           <button type="button" class="slx-swm-btn" data-swm="hfs-badge" title="Click to copy On-Chain SubnetRegistry HFS contract address" style="padding:2px 8px;font-size:0.63rem;color:#7dd3fc;border-color:rgba(56,189,248,0.45);">⛓️ HFS Registry</button>
         </div>
         <div class="slx-swm-controls">
           <span class="slx-swm-coords" data-swm="coords">1.30° N, 103.91° E</span>
-          <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Full Earth Equirectangular View">🌍 Global</button>
-          <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Active Subnet Mesh Cluster">📍 Cluster Zoom</button>
-          <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
-          <button type="button" class="slx-swm-btn" data-swm-act="zoom-out" title="Zoom Out">➖</button>
+          <span data-swm="map-tools" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Full Earth Equirectangular View">🌍 Global</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Active Subnet Mesh Cluster">📍 Cluster Zoom</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="zoom-out" title="Zoom Out">➖</button>
+          </span>
           <button type="button" class="slx-swm-btn cta" data-swm-act="register-hfs" title="Register a new subnet &amp; validator stats URLs on-chain in SubnetRegistry HFS ($0.00 gas)">⛓️ + Register Subnet</button>
           ${
             showCloseButton
@@ -492,12 +575,29 @@ export function mountSlxSubnetWorldMap({
       </div>
 
       <div class="slx-swm-stage" data-swm="stage">
-        <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"></svg>
-        <div class="slx-swm-hud-bl">
-          <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>915 MHz LR2021 RF Subnet</span>
-          <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP Subnet</span>
-          <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Hybrid Roamer / Repeater Arc</span>
-          <span style="color:#94a3b8;">Drag to pan • Scroll / ➕➖ to zoom • Tap node to inspect</span>
+        <button type="button" class="slx-swm-swipe-pill" data-swm="swipe-toggle" title="Swipe or click to switch between World Map and Live Phase Sync &amp; Bridge Diagram">
+          ● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›
+        </button>
+        <div class="slx-swm-track" data-swm="track">
+          <div class="slx-swm-pane" data-swm="pane-map">
+            <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="slx-swm-hud-bl">
+              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>915 MHz LR2021 RF Subnet</span>
+              <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP Subnet</span>
+              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Hybrid Roamer Arc</span>
+              <span style="color:#94a3b8;">Swipe ⇄ for Phase Diagram • Scroll / ➕➖ to zoom</span>
+            </div>
+          </div>
+          <div class="slx-swm-pane" data-swm="pane-phase">
+            <div data-swm="phase-mount" style="width:100%;height:100%;"></div>
+            <div class="slx-swm-hud-bl">
+              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;"></i>P1 TX</span>
+              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;"></i>P2 VOTE</span>
+              <span><i class="slx-swm-legend-dot" style="background:#c084fc;"></i>P3 PROP</span>
+              <span><i class="slx-swm-legend-dot" style="background:#34d399;"></i>P4 FINALIZE</span>
+              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Global World Map</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -509,12 +609,60 @@ export function mountSlxSubnetWorldMap({
   const elSummaryPill = mountContainer.querySelector('[data-swm="summary-pill"]');
   const elHfsBadge = mountContainer.querySelector('[data-swm="hfs-badge"]');
   const elCoords = mountContainer.querySelector('[data-swm="coords"]');
+  const elMapTools = mountContainer.querySelector('[data-swm="map-tools"]');
   const elStage = mountContainer.querySelector('[data-swm="stage"]');
+  const elTrack = mountContainer.querySelector('[data-swm="track"]');
+  const elSwipeToggle = mountContainer.querySelector('[data-swm="swipe-toggle"]');
+  const elPhaseMount = mountContainer.querySelector('[data-swm="phase-mount"]');
   const elSvg = mountContainer.querySelector('[data-swm="svg"]');
   const elStrip = mountContainer.querySelector('[data-swm="strip"]');
   const elInspector = mountContainer.querySelector('[data-swm="inspector"]');
   const btnGlobal = mountContainer.querySelector('[data-swm-act="global"]');
   const btnCluster = mountContainer.querySelector('[data-swm-act="cluster"]');
+  const viewTabBtns = Array.from(mountContainer.querySelectorAll('[data-swm-view]'));
+
+  const phaseDiagramInst = elPhaseMount
+    ? mountSlxSubnetPhaseDiagram({
+        mountContainer: elPhaseMount,
+        isVisibleFn: () => !state.destroyed && state.view === 'phase',
+      })
+    : null;
+
+  function applyActiveView(nextView) {
+    state.view = nextView === 'phase' ? 'phase' : 'map';
+    if (elTrack) {
+      elTrack.classList.remove('swiping');
+      elTrack.style.transform = state.view === 'phase' ? 'translate3d(-50%, 0, 0)' : 'translate3d(0%, 0, 0)';
+    }
+    viewTabBtns.forEach((b) => {
+      const act = b.getAttribute('data-swm-view') === state.view;
+      b.classList.toggle('active', act);
+      b.setAttribute('aria-selected', act ? 'true' : 'false');
+    });
+    if (elMapTools) {
+      elMapTools.style.display = state.view === 'map' ? 'inline-flex' : 'none';
+    }
+    if (elCoords) {
+      elCoords.style.display = state.view === 'map' ? '' : 'none';
+    }
+    if (elSwipeToggle) {
+      elSwipeToggle.innerHTML =
+        state.view === 'map'
+          ? '● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›'
+          : '‹ ● &nbsp;Swipe ⇄ Global World Map';
+    }
+    elStage?.classList.toggle('zoomed', state.view === 'map' && state.zoom > 1.03);
+  }
+
+  viewTabBtns.forEach((b) => {
+    b.addEventListener('click', () => {
+      applyActiveView(b.getAttribute('data-swm-view'));
+    });
+  });
+  elSwipeToggle?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    applyActiveView(state.view === 'map' ? 'phase' : 'map');
+  });
 
   // Preload check for world_map.jpg so external SDK hosts fall back cleanly if absent
   if (typeof Image !== 'undefined' && backgroundImgUrl) {
@@ -553,6 +701,7 @@ export function mountSlxSubnetWorldMap({
     elSvg?.setAttribute('viewBox', `${vx} ${vy} ${cam.vw.toFixed(2)} ${cam.vh.toFixed(2)}`);
     btnGlobal?.classList.toggle('active', state.mode === 'global');
     btnCluster?.classList.toggle('active', state.mode === 'cluster');
+    elStage?.classList.toggle('zoomed', state.view === 'map' && state.zoom > 1.03);
   }
 
   function animateCameraTo(targetCx, targetCy, targetZoom, modeLabel = 'custom') {
@@ -1028,45 +1177,99 @@ export function mountSlxSubnetWorldMap({
     if (typeof onClose === 'function') onClose();
   });
 
-  // Pointer drag-to-pan + hover coordinate readout
+  // Pointer drag-to-pan (when zoomed in on Map) OR horizontal swipe between View 1 (Map) & View 2 (Phase & Bridge Diagram)
   let drag = null;
   elStage?.addEventListener('pointerdown', (ev) => {
-    if (ev.target.closest('[data-swm-pin]')) return;
+    if (
+      ev.target.closest('[data-swm-pin]') ||
+      ev.target.closest('[data-swm="swipe-toggle"]') ||
+      ev.target.closest('[data-spd-send]')
+    ) {
+      return;
+    }
+    const isSwipeMode = state.view === 'phase' || state.zoom <= 1.03;
     drag = {
       pointerId: ev.pointerId,
+      mode: isSwipeMode ? 'swipe' : 'pan',
       startX: ev.clientX,
       startY: ev.clientY,
+      lastX: ev.clientX,
+      lastY: ev.clientY,
       startCx: state.cx,
       startCy: state.cy,
+      lockedHoriz: false,
+      abortedVert: false,
     };
-    elStage.classList.add('dragging');
-    try {
-      elStage.setPointerCapture(ev.pointerId);
-    } catch (_) {}
+    if (!isSwipeMode) {
+      elStage.classList.add('dragging');
+      try {
+        elStage.setPointerCapture(ev.pointerId);
+      } catch (_) {}
+    }
   });
 
   elStage?.addEventListener('pointermove', (ev) => {
     const rect = elStage.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      const cam = clampCamera(state.cx, state.cy, state.zoom);
-      const svgX = cam.cx - cam.vw / 2 + ((ev.clientX - rect.left) / rect.width) * cam.vw;
-      const svgY = cam.cy - cam.vh / 2 + ((ev.clientY - rect.top) / rect.height) * cam.vh;
-      const geo = mapXYToLatLon(svgX, svgY);
-      if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon);
+      if (state.view === 'map') {
+        const cam = clampCamera(state.cx, state.cy, state.zoom);
+        const svgX = cam.cx - cam.vw / 2 + ((ev.clientX - rect.left) / rect.width) * cam.vw;
+        const svgY = cam.cy - cam.vh / 2 + ((ev.clientY - rect.top) / rect.height) * cam.vh;
+        const geo = mapXYToLatLon(svgX, svgY);
+        if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon);
 
-      if (drag && ev.pointerId === drag.pointerId) {
-        const dxSvg = ((ev.clientX - drag.startX) / rect.width) * cam.vw;
-        const dySvg = ((ev.clientY - drag.startY) / rect.height) * cam.vh;
-        state.cx = drag.startCx - dxSvg;
-        state.cy = drag.startCy - dySvg;
-        if (state.zoom > 1.02) state.mode = 'custom';
-        applyViewBoxImmediate();
+        if (drag && ev.pointerId === drag.pointerId && drag.mode === 'pan') {
+          const dxSvg = ((ev.clientX - drag.startX) / rect.width) * cam.vw;
+          const dySvg = ((ev.clientY - drag.startY) / rect.height) * cam.vh;
+          state.cx = drag.startCx - dxSvg;
+          state.cy = drag.startCy - dySvg;
+          if (state.zoom > 1.02) state.mode = 'custom';
+          applyViewBoxImmediate();
+          return;
+        }
+      }
+
+      if (drag && ev.pointerId === drag.pointerId && drag.mode === 'swipe' && !drag.abortedVert) {
+        drag.lastX = ev.clientX;
+        drag.lastY = ev.clientY;
+        const dx = ev.clientX - drag.startX;
+        const dy = ev.clientY - drag.startY;
+        if (!drag.lockedHoriz) {
+          if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+            drag.abortedVert = true;
+            return;
+          }
+          if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+            drag.lockedHoriz = true;
+            elTrack?.classList.add('swiping');
+            try {
+              elStage.setPointerCapture(ev.pointerId);
+            } catch (_) {}
+          }
+        }
+        if (drag.lockedHoriz && elTrack) {
+          const basePct = state.view === 'phase' ? -50 : 0;
+          const deltaPct = (dx / rect.width) * 50;
+          const clampedPct = Math.max(-54, Math.min(4, basePct + deltaPct));
+          elTrack.style.transform = `translate3d(${clampedPct.toFixed(2)}%, 0, 0)`;
+        }
       }
     }
   });
 
   const endDrag = (ev) => {
     if (drag && (!ev || ev.pointerId === drag.pointerId)) {
+      if (drag.mode === 'swipe') {
+        elTrack?.classList.remove('swiping');
+        const dx = (ev?.clientX ?? drag.lastX) - drag.startX;
+        const dy = (ev?.clientY ?? drag.lastY) - drag.startY;
+        if (!drag.abortedVert && Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          // Toggle cleanly on horizontal swipe in either direction so both natural & inverted swipes work intuitively!
+          applyActiveView(state.view === 'map' ? 'phase' : 'map');
+        } else {
+          applyActiveView(state.view);
+        }
+      }
       drag = null;
       elStage?.classList.remove('dragging');
     }
@@ -1077,6 +1280,7 @@ export function mountSlxSubnetWorldMap({
   elStage?.addEventListener(
     'wheel',
     (ev) => {
+      if (state.view !== 'map') return;
       // Allow normal page scroll unless zoomed in or Ctrl/Meta held, or inside modal
       if (!showCloseButton && state.zoom <= 1.01 && !ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
@@ -1122,13 +1326,14 @@ export function mountSlxSubnetWorldMap({
   if (initialMode === 'cluster') {
     focusActiveCluster(false);
   }
+  applyActiveView(state.view);
   renderAll();
   SlxSubnetManager.refreshDiscoveryMetadata().catch(() => {});
   pollSubnetHeights();
   const pollTimer = setInterval(pollSubnetHeights, 4000);
 
   return {
-    updateTelemetry({ s1Tip, s2Tip, confirmedCrossTxns, inFlightCrossTxns, lane } = {}) {
+    updateTelemetry({ s1Tip, s2Tip, confirmedCrossTxns, inFlightCrossTxns, lane, rows } = {}) {
       if (state.destroyed) return;
       if (Number(s1Tip) > 0) state.heightsByKey.set('subnet1', Number(s1Tip));
       if (Number(s2Tip) > 0) state.heightsByKey.set('subnet2', Number(s2Tip));
@@ -1139,14 +1344,28 @@ export function mountSlxSubnetWorldMap({
         state.bridge.inFlightCrossTxns = Number(inFlightCrossTxns || 0);
       }
       if (lane) state.bridge.lane = String(lane);
+      phaseDiagramInst?.ingestExternalBridgeData({
+        s1Tip,
+        s2Tip,
+        confirmedCrossTxns,
+        rows,
+      });
       renderAll();
     },
-    focusCluster: () => focusActiveCluster(true),
-    resetGlobal: () => animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global'),
+    setView: (v) => applyActiveView(v),
+    focusCluster: () => {
+      applyActiveView('map');
+      focusActiveCluster(true);
+    },
+    resetGlobal: () => {
+      applyActiveView('map');
+      animateCameraTo(MAP_BASE_W / 2, MAP_BASE_H / 2, 1, 'global');
+    },
     destroy() {
       state.destroyed = true;
       if (state.animFrame) cancelAnimationFrame(state.animFrame);
       clearInterval(pollTimer);
+      phaseDiagramInst?.destroy();
       if (typeof window !== 'undefined') {
         window.removeEventListener('slx:subnets-updated', onSubnetsUpdated);
         window.removeEventListener('slx:subnet-changed', onSubnetsUpdated);
@@ -1158,9 +1377,9 @@ export function mountSlxSubnetWorldMap({
 let _activeMapModal = null;
 
 /**
- * Open a full-bleed interactive Subnet World Map modal from any page's top Chain Bar.
+ * Open a full-bleed interactive Subnet World Map & Phase Sync modal from any page's top Chain Bar.
  */
-export function openSlxSubnetWorldMapModal({ initialMode = 'global' } = {}) {
+export function openSlxSubnetWorldMapModal({ initialMode = 'global', initialView = 'map' } = {}) {
   if (typeof document === 'undefined') return null;
   injectSubnetWorldMapStyles();
 
@@ -1194,6 +1413,7 @@ export function openSlxSubnetWorldMapModal({ initialMode = 'global' } = {}) {
   mapInst = mountSlxSubnetWorldMap({
     mountContainer: box,
     initialMode,
+    initialView,
     showCloseButton: true,
     onClose: close,
   });

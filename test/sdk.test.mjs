@@ -877,6 +877,16 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
     ]);
     assert.ok(!s2PubSubCands.includes('wss://node1.superlexicon.com'));
 
+    // Also verify simultaneous multi-subnet phase subscription isolation: while Subnet 1 is active, subscribing to Subnet 2's RPC uses ONLY node21..node23!
+    globalThis.window.__SLX_ACTIVE_SUBNET__ = httpsSubs[0];
+    const simultaneousS2Cands = derivePubSubWsCandidates('wss://node21.superlexicon.com/rpc');
+    assert.deepEqual(simultaneousS2Cands, [
+      'wss://node21.superlexicon.com',
+      'wss://node22.superlexicon.com',
+      'wss://node23.superlexicon.com',
+    ]);
+    assert.ok(!simultaneousS2Cands.includes('wss://node1.superlexicon.com'));
+
     // Simulate LAN deployment (`http://192.168.50.93:5173`): all 3 subnets use LAN WS endpoints!
     globalThis.window = {
       location: { protocol: 'http:', hostname: '192.168.50.93', href: 'http://192.168.50.93:5173/' },

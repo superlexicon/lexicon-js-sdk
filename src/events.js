@@ -84,7 +84,7 @@ export function toPubSubWsUrl(inputUrl) {
   }
 }
 
-export function derivePubSubWsCandidates(rpcUrl) {
+export function derivePubSubWsCandidates(rpcUrl, explicitPubSubUrls = null) {
   const isHttpsPage =
     typeof window !== 'undefined' && window.location?.protocol === 'https:';
   const out = [];
@@ -98,9 +98,30 @@ export function derivePubSubWsCandidates(rpcUrl) {
     if (!out.includes(clean)) out.push(clean);
   };
 
+  if (Array.isArray(explicitPubSubUrls) && explicitPubSubUrls.length > 0) {
+    for (const u of explicitPubSubUrls) pushUnique(u);
+  }
+
+  const rawRpcStr = String(rpcUrl || '').trim().toLowerCase();
+  const rpcLooksS1 =
+    /node[1-5]\.superlexicon\.com/.test(rawRpcStr) || /:85[4567][56]\b/.test(rawRpcStr);
+  const rpcLooksS2 =
+    /node(6|21|22|23)\.superlexicon\.com/.test(rawRpcStr) || /:185[456][56]\b/.test(rawRpcStr);
+
   const activeSubnet =
     typeof window !== 'undefined' ? window.__SLX_ACTIVE_SUBNET__ : null;
-  if (activeSubnet && Array.isArray(activeSubnet.pubsubWsUrls)) {
+  const activeMatchesRpc =
+    !rawRpcStr ||
+    (activeSubnet &&
+      ((activeSubnet.key === 'subnet1' && rpcLooksS1 && !rpcLooksS2) ||
+        (activeSubnet.key === 'subnet2' && rpcLooksS2 && !rpcLooksS1) ||
+        String(activeSubnet.rpcUrl || '').toLowerCase() === rawRpcStr ||
+        (Array.isArray(activeSubnet.publicRpcUrls) &&
+          activeSubnet.publicRpcUrls.some((u) => String(u).toLowerCase() === rawRpcStr)) ||
+        (Array.isArray(activeSubnet.lanRpcUrls) &&
+          activeSubnet.lanRpcUrls.some((u) => String(u).toLowerCase() === rawRpcStr))));
+
+  if (activeMatchesRpc && activeSubnet && Array.isArray(activeSubnet.pubsubWsUrls)) {
     for (const u of activeSubnet.pubsubWsUrls) pushUnique(u);
   }
 
@@ -130,14 +151,14 @@ export function derivePubSubWsCandidates(rpcUrl) {
   }
   pushUnique(primary);
 
-  if (PUBLIC_SUBNET2_PUBSUB_NODES.includes(primary) || activeSubnet?.key === 'subnet2') {
+  if (PUBLIC_SUBNET2_PUBSUB_NODES.includes(primary) || rpcLooksS2 || (activeMatchesRpc && activeSubnet?.key === 'subnet2')) {
     if (isHttpsPage || primary.startsWith('wss://')) {
       for (const pub2 of PUBLIC_SUBNET2_PUBSUB_NODES) pushUnique(pub2);
     }
     return out;
   }
 
-  if (!activeSubnet || activeSubnet.key === 'subnet1') {
+  if (!rawRpcStr || rpcLooksS1 || (activeMatchesRpc && (!activeSubnet || activeSubnet.key === 'subnet1'))) {
     for (const pub of PUBLIC_PUBSUB_WS_NODES) {
       pushUnique(pub);
     }
@@ -764,9 +785,9 @@ class SlxEventHub {
   }
 }
 
-function getOrCreateHub(rpcUrlOrFn) {
+function getOrCreateHub(rpcUrlOrFn, explicitPubSubUrls = null) {
   const rpcUrl = typeof rpcUrlOrFn === 'function' ? rpcUrlOrFn() : rpcUrlOrFn;
-  const candidates = derivePubSubWsCandidates(rpcUrl);
+  const candidates = derivePubSubWsCandidates(rpcUrl, explicitPubSubUrls);
   const key = candidates[0] || PUBLIC_PUBSUB_WS_NODES[0];
   let hub = _hubsByKey.get(key);
   if (!hub) {
@@ -779,15 +800,15 @@ function getOrCreateHub(rpcUrlOrFn) {
 }
 
 export function slxSubscribeNewHeads(rpcUrlOrFn, onHead, options = {}) {
-  return getOrCreateHub(rpcUrlOrFn).addSubscription('newHeads', null, onHead, options);
+  return getOrCreateHub(rpcUrlOrFn, options?.pubsubWsUrls).addSubscription('newHeads', null, onHead, options);
 }
 
 export function slxSubscribeLogs(rpcUrlOrFn, filterOrFn, onLog, options = {}) {
-  return getOrCreateHub(rpcUrlOrFn).addSubscription('logs', filterOrFn, onLog, options);
+  return getOrCreateHub(rpcUrlOrFn, options?.pubsubWsUrls).addSubscription('logs', filterOrFn, onLog, options);
 }
 
 export function slxSubscribeStats(rpcUrlOrFn, onStats, options = {}) {
-  return getOrCreateHub(rpcUrlOrFn).addSubscription('stats', null, onStats, options);
+  return getOrCreateHub(rpcUrlOrFn, options?.pubsubWsUrls).addSubscription('stats', null, onStats, options);
 }
 
 export function slxOnAnyNewHead(listener) {
