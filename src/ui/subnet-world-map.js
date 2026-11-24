@@ -292,6 +292,21 @@ function chooseNiceScaleMeters(metersPerPx, maxBarPx = 150) {
   return { px, label };
 }
 
+export function chooseGraticuleStep(zoom = MIN_Z, width = MAP_BASE_W) {
+  const degSpanLon = (width / (256 * Math.pow(2, Number(zoom) || MIN_Z))) * 360;
+  const steps = [60, 30, 15, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005];
+  let step = steps[0]; // Always default to coarsest 60° step at wide world zoom!
+  if (degSpanLon / steps[0] <= 12) {
+    for (const st of steps) {
+      step = st;
+      if (degSpanLon / st >= 2.5) {
+        break;
+      }
+    }
+  }
+  return step;
+}
+
 let _mapStylesInjected = false;
 function injectSubnetWorldMapStyles() {
   if (_mapStylesInjected || typeof document === 'undefined') return;
@@ -783,10 +798,16 @@ export function mountSlxSubnetWorldMap({
   const btnFit = mountContainer.querySelector('[data-swm-act="fit"]');
   const viewTabBtns = Array.from(mountContainer.querySelectorAll('[data-swm-view]'));
 
+  function isStageVisible() {
+    if (state.destroyed || !elStage) return false;
+    if (showCloseButton) return true;
+    return elStage.clientWidth > 0 && elStage.clientHeight > 0;
+  }
+
   const phaseDiagramInst = elPhaseMount
     ? mountSlxSubnetPhaseDiagram({
         mountContainer: elPhaseMount,
-        isVisibleFn: () => !state.destroyed && state.view === 'phase',
+        isVisibleFn: () => !state.destroyed && state.view === 'phase' && isStageVisible(),
       })
     : null;
 
@@ -796,7 +817,7 @@ export function mountSlxSubnetWorldMap({
     p.onerror = () => {
       if (!state.destroyed) {
         state.bgFailed = true;
-        renderMap();
+        if (isStageVisible()) renderMap();
       }
     };
     p.src = backgroundImgUrl;
@@ -822,6 +843,11 @@ export function mountSlxSubnetWorldMap({
           : '‹ ● &nbsp;Swipe ⇄ Subnet Map';
     }
     elStage?.classList.toggle('pan-mode', state.view === 'map' && state.mode === 'custom');
+    if (state.view === 'phase') {
+      phaseDiagramInst?.wake?.();
+    } else if (isStageVisible()) {
+      renderMap();
+    }
   }
 
   viewTabBtns.forEach((b) => {
@@ -954,14 +980,14 @@ export function mountSlxSubnetWorldMap({
     }, 600);
   }
 
-  // Build SVG `<image>` tile grid for integer zoom `tz`
+  // Build SVG `<image>` tile grid for integer zoom `tz` in tile-pixel space + fast `<g transform>`
   let lastCoarseKey = '';
   let lastFineKey = '';
 
-  function buildTileLayerHtml(tz) {
+  function updateTileGroupLayer(gEl, tz, prevKey) {
+    if (!gEl) return '';
     const maxTile = 1 << tz;
     const scale = Math.pow(2, state.zoom - tz);
-    const tileSvgSz = 256 * scale;
     const cxTile = lonToMercX(state.lon, tz);
     const cyTile = latToMercY(state.lat, tz);
 
@@ -972,28 +998,37 @@ export function mountSlxSubnetWorldMap({
     const tyMin = Math.max(0, Math.floor((cyTile - halfH / scale) / 256));
     const tyMax = Math.min(maxTile - 1, Math.floor((cyTile + halfH / scale) / 256));
 
-    // Safety cap
-    if ((txMax - txMin + 1) * (tyMax - tyMin + 1) > 48) return { key: '', html: '', txMin: 0, tyMin: 0, scale };
-
-    let html = '';
-    for (let ty = tyMin; ty <= tyMax; ty++) {
-      for (let tx = txMin; tx <= txMax; tx++) {
-        const wrappedTx = ((tx % maxTile) + maxTile) % maxTile;
-        const sub = TILE_SUBDOMAINS[(wrappedTx + ty) & 3];
-        const url = `https://${sub}.basemaps.cartocdn.com/dark_all/${tz}/${wrappedTx}/${ty}@2x.png`;
-        const sx = halfW + (tx * 256 - cxTile) * scale;
-        const sy = halfH + (ty * 256 - cyTile) * scale;
-        // +0.6px overlap eliminates hairline subpixel seams between adjacent SVG tile images
-        html += `<image href="${url}" x="${sx.toFixed(2)}" y="${sy.toFixed(2)}" width="${(tileSvgSz + 0.6).toFixed(2)}" height="${(tileSvgSz + 0.6).toFixed(2)}" preserveAspectRatio="none" />`;
-      }
+    if ((txMax - txMin + 1) * (tyMax - tyMin + 1) > 48) {
+      if (prevKey !== '') gEl.innerHTML = '';
+      return '';
     }
-    return {
-      key: `${tz}:${txMin}..${txMax}:${tyMin}..${tyMax}:${state.lon.toFixed(5)}:${state.lat.toFixed(5)}:${state.zoom.toFixed(3)}`,
-      html,
-    };
+
+    // Update GPU/SVG transform on every frame without recreating `<image>` DOM nodes!
+    const transX = halfW - cxTile * scale;
+    const transY = halfH - cyTile * scale;
+    gEl.setAttribute(
+      'transform',
+      `translate(${transX.toFixed(2)}, ${transY.toFixed(2)}) scale(${scale.toFixed(6)})`
+    );
+
+    const nextKey = `${tz}:${txMin}..${txMax}:${tyMin}..${tyMax}`;
+    if (nextKey !== prevKey) {
+      let html = '';
+      for (let ty = tyMin; ty <= tyMax; ty++) {
+        for (let tx = txMin; tx <= txMax; tx++) {
+          const wrappedTx = ((tx % maxTile) + maxTile) % maxTile;
+          const sub = TILE_SUBDOMAINS[(wrappedTx + ty) & 3];
+          const url = `https://${sub}.basemaps.cartocdn.com/dark_all/${tz}/${wrappedTx}/${ty}@2x.png`;
+          html += `<image href="${url}" x="${tx * 256}" y="${ty * 256}" width="256.6" height="256.6" preserveAspectRatio="none" />`;
+        }
+      }
+      gEl.innerHTML = html;
+    }
+    return nextKey;
   }
 
   function renderMap() {
+    if (state.destroyed) return;
     btnGlobal?.classList.toggle('active', state.mode === 'global');
     btnFit?.classList.toggle('active', state.mode === 'fit');
     elStage?.classList.toggle('pan-mode', state.view === 'map' && state.mode === 'custom');
@@ -1012,7 +1047,7 @@ export function mountSlxSubnetWorldMap({
         const h = Math.max(60, br.y - tl.y);
         const op = state.zoom <= 2.3 ? 0.96 : Math.max(0, 1 - (state.zoom - 2.3) / 2.2);
         gBackdrop.innerHTML = `<image href="${escHtml(backgroundImgUrl)}" x="${tl.x.toFixed(1)}" y="${tl.y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" preserveAspectRatio="none" opacity="${op.toFixed(2)}" />`;
-      } else {
+      } else if (gBackdrop.innerHTML) {
         gBackdrop.innerHTML = '';
       }
     }
@@ -1022,40 +1057,25 @@ export function mountSlxSubnetWorldMap({
       const fineZ = Math.max(2, Math.min(18, Math.round(state.zoom)));
       const coarseZ = Math.max(2, fineZ - 3);
       if (gTilesCoarse && coarseZ < fineZ) {
-        const cLayer = buildTileLayerHtml(coarseZ);
-        if (cLayer.key !== lastCoarseKey) {
-          gTilesCoarse.innerHTML = cLayer.html;
-          lastCoarseKey = cLayer.key;
-        }
-      } else if (gTilesCoarse) {
+        lastCoarseKey = updateTileGroupLayer(gTilesCoarse, coarseZ, lastCoarseKey);
+      } else if (gTilesCoarse && lastCoarseKey) {
         gTilesCoarse.innerHTML = '';
         lastCoarseKey = '';
       }
       if (gTilesFine) {
-        const fLayer = buildTileLayerHtml(fineZ);
-        if (fLayer.key !== lastFineKey) {
-          gTilesFine.innerHTML = fLayer.html;
-          lastFineKey = fLayer.key;
-        }
+        lastFineKey = updateTileGroupLayer(gTilesFine, fineZ, lastFineKey);
       }
     } else {
-      if (gTilesCoarse) gTilesCoarse.innerHTML = '';
-      if (gTilesFine) gTilesFine.innerHTML = '';
+      if (gTilesCoarse && lastCoarseKey) gTilesCoarse.innerHTML = '';
+      if (gTilesFine && lastFineKey) gTilesFine.innerHTML = '';
       lastCoarseKey = '';
       lastFineKey = '';
     }
 
-    // 3. Adaptive WGS84 Tactical Graticule Lines (works at every zoom from 180° globe to 0.0005° street!)
+    // 3. Adaptive WGS84 Tactical Graticule Lines (bounded to <= 20 lines at every zoom!)
     if (gGraticule) {
       const degSpanLon = (MAP_BASE_W / (256 * Math.pow(2, state.zoom))) * 360;
-      const steps = [60, 30, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005];
-      let step = steps[steps.length - 1];
-      for (const st of steps) {
-        if (degSpanLon / st >= 2.5 && degSpanLon / st <= 8) {
-          step = st;
-          break;
-        }
-      }
+      const step = chooseGraticuleStep(state.zoom, MAP_BASE_W);
       const tlGeo = screenToGeo(0, 0);
       const brGeo = screenToGeo(MAP_BASE_W, MAP_BASE_H);
       const gDec = step < 0.01 ? 4 : step < 0.1 ? 3 : step < 1 ? 2 : 0;
@@ -1063,7 +1083,8 @@ export function mountSlxSubnetWorldMap({
       let grat = '';
       const startLat = Math.floor(Math.min(tlGeo.lat, brGeo.lat) / step) * step;
       const endLat = Math.ceil(Math.max(tlGeo.lat, brGeo.lat) / step) * step;
-      for (let la = startLat; la <= endLat + step * 0.1; la += step) {
+      let latGuards = 0;
+      for (let la = startLat; la <= endLat + step * 0.1 && latGuards < 20; la += step, latGuards++) {
         if (la < -82 || la > 82) continue;
         const { y } = geoToScreen(la, state.lon);
         if (y < 0 || y > MAP_BASE_H) continue;
@@ -1074,9 +1095,10 @@ export function mountSlxSubnetWorldMap({
           <text x="10" y="${(y - 4).toFixed(1)}" fill="rgba(148,163,184,0.48)" font-size="9" font-family="JetBrains Mono, monospace">${Math.abs(la).toFixed(gDec)}°${la >= 0 ? 'N' : 'S'}</text>
         `;
       }
-      const startLon = Math.floor((state.lon - degSpanLon * 0.6) / step) * step;
-      const endLon = Math.ceil((state.lon + degSpanLon * 0.6) / step) * step;
-      for (let lo = startLon; lo <= endLon + step * 0.1; lo += step) {
+      const startLon = Math.floor((state.lon - degSpanLon * 0.55) / step) * step;
+      const endLon = Math.ceil((state.lon + degSpanLon * 0.55) / step) * step;
+      let lonGuards = 0;
+      for (let lo = startLon; lo <= endLon + step * 0.1 && lonGuards < 20; lo += step, lonGuards++) {
         const { x } = geoToScreen(state.lat, lo);
         if (x < 0 || x > MAP_BASE_W) continue;
         grat += `
@@ -1502,7 +1524,7 @@ export function mountSlxSubnetWorldMap({
   }
 
   function renderAll() {
-    if (state.destroyed) return;
+    if (state.destroyed || !isStageVisible()) return;
     renderMap();
     renderCardsAndInspector();
   }
@@ -1678,7 +1700,7 @@ export function mountSlxSubnetWorldMap({
 
   // Live per-node stats probe using the validator RPC URLs registered in SubnetRegistry HFS
   async function pollSubnetHeights() {
-    if (state.destroyed) return;
+    if (state.destroyed || !isStageVisible()) return;
     const subs = SlxSubnetManager.listSubnets();
     await Promise.allSettled(
       subs.map(async (s) => {
@@ -1691,7 +1713,7 @@ export function mountSlxSubnetWorldMap({
         }
       })
     );
-    if (!state.destroyed) renderAll();
+    if (!state.destroyed && isStageVisible()) renderAll();
   }
 
   function syncLiveStatsSubscriptions() {
@@ -1805,12 +1827,34 @@ export function mountSlxSubnetWorldMap({
     }
   }
 
+  let wasVisible = false;
+  let ro = null;
+  if (typeof ResizeObserver !== 'undefined' && elStage) {
+    ro = new ResizeObserver(() => {
+      if (state.destroyed) return;
+      const nowVis = isStageVisible();
+      if (nowVis && !wasVisible) {
+        wasVisible = true;
+        renderAll();
+        pollSubnetHeights();
+        if (state.view === 'phase') phaseDiagramInst?.wake?.();
+        else if (initialMode !== 'global-only') scheduleInitialAutoZoom();
+      } else if (!nowVis) {
+        wasVisible = false;
+      }
+    });
+    ro.observe(elStage);
+  }
+
   applyActiveView(state.view);
-  renderAll();
+  if (isStageVisible()) {
+    wasVisible = true;
+    renderAll();
+    pollSubnetHeights();
+  }
   syncLiveStatsSubscriptions();
   SlxSubnetManager.refreshDiscoveryMetadata().catch(() => {});
-  pollSubnetHeights();
-  const pollTimer = setInterval(pollSubnetHeights, 4000);
+  const pollTimer = setInterval(pollSubnetHeights, 5000);
 
   return {
     updateTelemetry({ s1Tip, s2Tip, confirmedCrossTxns, inFlightCrossTxns, lane, rows } = {}) {
@@ -1851,6 +1895,7 @@ export function mountSlxSubnetWorldMap({
       if (state.animFrame) cancelAnimationFrame(state.animFrame);
       if (state.autoFlyTimer) clearTimeout(state.autoFlyTimer);
       io?.disconnect();
+      ro?.disconnect();
       clearInterval(pollTimer);
       for (const handle of state.statsSubsByKey.values()) {
         try {

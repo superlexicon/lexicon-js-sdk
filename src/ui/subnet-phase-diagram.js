@@ -660,11 +660,18 @@ export function mountSlxSubnetPhaseDiagram({
   let rafId = 0;
 
   function stepAnimation(now) {
-    if (state.destroyed) return;
+    if (state.destroyed) {
+      rafId = 0;
+      return;
+    }
+    if (!isVisibleFn()) {
+      rafId = 0;
+      return;
+    }
     const dt = Math.min(0.08, Math.max(0.001, (now - lastFrameMs) / 1000));
     lastFrameMs = now;
 
-    if (isVisibleFn() && domRefs.subnetNodes.length > 0) {
+    if (domRefs.subnetNodes.length > 0) {
       // 1. Update each Subnet's Independent Phase Clock, Needle, Shockwave & Readouts
       domRefs.subnetNodes.forEach((nd, idx) => {
         const s = nd.subnet;
@@ -821,13 +828,24 @@ export function mountSlxSubnetPhaseDiagram({
     window.addEventListener('slx:subnets-updated', onSubnetsUpdated);
   }
 
+  function wake() {
+    if (state.destroyed || !isVisibleFn()) return;
+    pollRoamingPools();
+    if (!rafId) {
+      lastFrameMs = performance.now();
+      rafId = requestAnimationFrame(stepAnimation);
+    }
+  }
+
   rebuildTopology();
   wireLiveSubscriptions();
-  pollRoamingPools();
-  const roamTimer = setInterval(pollRoamingPools, 2600);
-  rafId = requestAnimationFrame(stepAnimation);
+  if (isVisibleFn()) {
+    wake();
+  }
+  const roamTimer = setInterval(pollRoamingPools, 3200);
 
   return {
+    wake,
     ingestExternalBridgeData({ s1Tip, s2Tip, confirmedCrossTxns, rows } = {}) {
       if (state.destroyed) return;
       const subs = state.subnets;

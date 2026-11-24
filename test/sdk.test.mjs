@@ -912,12 +912,21 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
     mercXToLon,
     mercYToLat,
     computeAutoFitCamera,
+    chooseGraticuleStep,
     extractLiveGpsFromStats,
     formatLatLon,
     MAP_BASE_W,
     MAP_BASE_H,
   } = await import('../src/ui/index.js');
   const { SlxSubnetManager } = await import('../src/rpc.js');
+
+  // Regression guard: graticule step at wide world zoom (z = 1.0..18.0) must NEVER fall through to 0.0005°!
+  assert.equal(chooseGraticuleStep(1.55, MAP_BASE_W), 60);
+  for (let z = 1.0; z <= 18.0; z += 0.25) {
+    const step = chooseGraticuleStep(z, MAP_BASE_W);
+    const degSpan = (MAP_BASE_W / (256 * Math.pow(2, z))) * 360;
+    assert.ok(degSpan / step <= 16, `Too many graticule lines (${degSpan / step}) at z=${z}`);
+  }
 
   // Verify Singapore (1.3031N, 103.9128E) lands on the exact tip of Malay Peninsula (1251, 537.5) on 1600x900 world_map.jpg
   const sgPx = latLonToMapXY(1.3031, 103.9128, 1600, 900);
