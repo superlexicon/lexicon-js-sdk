@@ -1,14 +1,20 @@
 /**
- * @superlexicon/sdk/ui — Interactive Global Subnet World Map (`subnet-world-map.js`)
+ * @superlexicon/sdk/ui — Generic Multi-Scale Global Subnet World Map (`subnet-world-map.js`)
  *
- * Visualizes live SuperLexicon Subnets discovered via `SubnetWorldMap` (`slx_roamingStatus`)
- * and `SlxSubnetManager`, including Sub-GHz LR2021 RF propagation rings, Encrypted TCP/IP
- * validator meshes, Hybrid Roamer / Repeater cross-subnet packet arcs, smooth viewBox
- * cluster zoom + pan, and 1-click active subnet switching.
+ * 100% generic Web-Mercator multi-scale map + swipeable Phase & Bridge carousel:
+ * - Starts at Global World View, then automatically computes the exact geographic bounding box
+ *   across all active subnets & validator nodes (`computeAutoFitCamera`) and animates a smooth
+ *   orbital zoom + pan so all subnets maximally fill the viewport — whether 100 meters apart
+ *   in one neighborhood, 20 km across a city, or 10,000 km across continents.
+ * - Streams high-DPI `@2x` dark-matter slippy map tiles (`z = 2..18`) over a local world map
+ *   backdrop with parent-tile underlay (zero blank flashes during zoom and full offline fallback).
+ * - Automatically expands individual validator meshes when zoomed in and groups co-located
+ *   multi-subnet nodes cleanly with zero hardcoded locations.
  */
 
-import { SlxSubnetManager, slxNodeRpc } from '../rpc.js';
+import { SlxSubnetManager } from '../rpc.js';
 import { SlxWalletManager } from '../identity.js';
+import { slxSubscribeStats } from '../events.js';
 import {
   upsertSubnetOnChain,
   probeSubnetNodeStats,
@@ -17,52 +23,20 @@ import {
 import { mountSlxSubnetPhaseDiagram } from './subnet-phase-diagram.js';
 
 export const MAP_BASE_W = 1200;
-export const MAP_BASE_H = 675; // Exact 16:9 matching /assets/hegemony/world_map.jpg (1600x900)
+export const MAP_BASE_H = 675; // 16:9 viewport
 
-// Pixel-calibrated against /assets/hegemony/world_map.jpg (1600x900):
-// - 0° Prime Meridian at x = 48.48%, 0.28593% width per degree of longitude
-//   -> Singapore (103.913°E) = 78.19% (px 1251/1600), Gibraltar (-5.6°W) = 46.88% (px 750/1600)
-// - 0° Equator at y = 60.45%, compact Miller/Mercator curve: yFrac = 0.6045 - 0.00555*lat - 0.000016*lat*|lat|
-//   -> Singapore (1.303°N) = 59.72% (px 537.5/900), Gibraltar (36°N) = 38.4% (px 345/900), Cape Agulhas (-34.8°S) = 77.8% (px 700/900)
+const MIN_Z = 1.55;
+const MAX_Z = 17.8;
+const GLOBAL_DEFAULT_LAT = 16;
+const GLOBAL_DEFAULT_LON = 24;
+const TILE_SUBDOMAINS = ['a', 'b', 'c', 'd'];
+
+// Pixel-calibrated static world_map.jpg constants kept for `latLonToMapXY` / offline backdrop
 const PRIME_MERIDIAN_X_FRAC = 0.4848;
 const LON_FRAC_PER_DEG = 0.0028593;
 const EQUATOR_Y_FRAC = 0.6045;
 const LAT_LIN_COEFF = 0.00555;
 const LAT_QUAD_COEFF = 0.000016;
-
-// Official Singapore SLA OneMap WGS84 bounding box & HDB blocks for Marine Crescent (440028–440035)
-const MC_LAT_NORTH = 1.3043;
-const MC_LAT_SOUTH = 1.3017;
-const MC_LON_WEST = 103.9111;
-const MC_LON_EAST = 103.91455;
-
-const MARINE_CRESCENT_HDB_BLOCKS = [
-  { blk: '28', host: '.91', lat: 1.30344, lon: 103.91335, w: 48, h: 20, angle: -12, role: 'validator' },
-  { blk: '29', host: '.92', lat: 1.30285, lon: 103.9132, w: 48, h: 20, angle: 8, role: 'validator' },
-  { blk: '33', host: '.93', lat: 1.30265, lon: 103.91218, w: 48, h: 20, angle: -8, role: 'validator' },
-  { blk: '35', host: '.94', lat: 1.30337, lon: 103.91252, w: 48, h: 20, angle: 12, role: 'validator' },
-  { blk: '34', host: '.4', lat: 1.30308, lon: 103.91268, w: 38, h: 18, angle: 0, role: 'repeater' },
-  // Neighboring Marine Crescent context slabs for authentic estate geometry
-  { blk: '27', host: '', lat: 1.30382, lon: 103.91378, w: 42, h: 16, angle: -6, role: 'context' },
-  { blk: '30', host: '', lat: 1.30238, lon: 103.91368, w: 42, h: 16, angle: 4, role: 'context' },
-  { blk: '32', host: '', lat: 1.30232, lon: 103.91165, w: 42, h: 16, angle: -4, role: 'context' },
-  { blk: '36', host: '', lat: 1.30385, lon: 103.91188, w: 42, h: 16, angle: 6, role: 'context' },
-];
-
-export function marineCrescentLatLonToXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H) {
-  const xFrac = (Number(lon) - MC_LON_WEST) / (MC_LON_EAST - MC_LON_WEST);
-  const yFrac = (MC_LAT_NORTH - Number(lat)) / (MC_LAT_NORTH - MC_LAT_SOUTH);
-  return {
-    x: xFrac * width,
-    y: yFrac * height,
-  };
-}
-
-export function marineCrescentXYToLatLon(x, y, width = MAP_BASE_W, height = MAP_BASE_H) {
-  const lon = MC_LON_WEST + (Number(x) / width) * (MC_LON_EAST - MC_LON_WEST);
-  const lat = MC_LAT_NORTH - (Number(y) / height) * (MC_LAT_NORTH - MC_LAT_SOUTH);
-  return { lat, lon };
-}
 
 function escHtml(val) {
   return String(val ?? '')
@@ -86,7 +60,7 @@ export function formatLatLon(lat, lon, decimals = 2) {
 }
 
 /**
- * Convert geographic (lat, lon) in degrees to pixel-calibrated SVG coordinates on (width x height).
+ * Pixel-calibrated projection onto the static 16:9 `/assets/hegemony/world_map.jpg` asset.
  */
 export function latLonToMapXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H) {
   const clampedLat = Math.max(-68, Math.min(82, Number(lat) || 0));
@@ -106,9 +80,6 @@ export function latLonToMapXY(lat, lon, width = MAP_BASE_W, height = MAP_BASE_H)
   };
 }
 
-/**
- * Exact inverse projection from SVG (x, y) back to geographic (lat, lon) degrees.
- */
 export function mapXYToLatLon(x, y, width = MAP_BASE_W, height = MAP_BASE_H) {
   const xFrac = Number(x || 0) / width;
   const yFrac = Number(y || 0) / height;
@@ -122,12 +93,203 @@ export function mapXYToLatLon(x, y, width = MAP_BASE_W, height = MAP_BASE_H) {
   const absLat =
     (-LAT_LIN_COEFF + Math.sqrt(LAT_LIN_COEFF * LAT_LIN_COEFF + 4 * LAT_QUAD_COEFF * absD)) /
     (2 * LAT_QUAD_COEFF);
-  const lat = sign * absLat;
-
   return {
-    lat: Math.max(-85, Math.min(85, lat)),
+    lat: Math.max(-85, Math.min(85, sign * absLat)),
     lon: Math.max(-180, Math.min(180, lon)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Generic Web Mercator (EPSG:3857) Continuous Zoom Projection
+// ---------------------------------------------------------------------------
+
+export function lonToMercX(lon, z = 0) {
+  const worldPx = 256 * Math.pow(2, z);
+  return ((Number(lon || 0) + 180) / 360) * worldPx;
+}
+
+export function latToMercY(lat, z = 0) {
+  const clamped = Math.max(-85.0511, Math.min(85.0511, Number(lat || 0)));
+  const sinLat = Math.sin((clamped * Math.PI) / 180);
+  const worldPx = 256 * Math.pow(2, z);
+  return (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * worldPx;
+}
+
+export function mercXToLon(wx, z = 0) {
+  const worldPx = 256 * Math.pow(2, z);
+  let lon = (wx / worldPx) * 360 - 180;
+  while (lon > 180) lon -= 360;
+  while (lon < -180) lon += 360;
+  return lon;
+}
+
+export function mercYToLat(wy, z = 0) {
+  const worldPx = 256 * Math.pow(2, z);
+  const n = Math.PI - (2 * Math.PI * wy) / worldPx;
+  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+}
+
+/**
+ * Generic bounding-box camera solver: computes `{ lat, lon, zoom }` so ALL subnets and
+ * their validator nodes are centered and maximally fit inside `(width x height)` with clean
+ * margin for callout badges — works identically for a 100m courtyard, a 30km city, or the globe.
+ */
+export function computeAutoFitCamera(subnets, width = MAP_BASE_W, height = MAP_BASE_H) {
+  const pts = [];
+  for (const s of subnets || []) {
+    if (Array.isArray(s?.validatorNodes)) {
+      for (const v of s.validatorNodes) {
+        const vLat = Number(v?.lat);
+        const vLon = Number(v?.lon);
+        if (Number.isFinite(vLat) && Number.isFinite(vLon) && (vLat !== 0 || vLon !== 0)) {
+          pts.push({ lat: vLat, lon: vLon });
+        }
+      }
+    }
+    const sLat = Number(s?.lat);
+    const sLon = Number(s?.lon);
+    if (Number.isFinite(sLat) && Number.isFinite(sLon) && (sLat !== 0 || sLon !== 0)) {
+      pts.push({ lat: sLat, lon: sLon });
+    }
+  }
+
+  if (pts.length === 0) {
+    return { lat: GLOBAL_DEFAULT_LAT, lon: GLOBAL_DEFAULT_LON, zoom: MIN_Z };
+  }
+
+  // Project all points at z = 0 (256x256 world)
+  const xs = pts.map((p) => lonToMercX(p.lon, 0));
+  const ys = pts.map((p) => latToMercY(p.lat, 0));
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  const midX = (minX + maxX) / 2;
+  const midY = (minY + maxY) / 2;
+  const centerLat = mercYToLat(midY, 0);
+  const centerLon = mercXToLon(midX, 0);
+
+  // Leave generous margin around nodes so callout badges & RF rings fit comfortably inside the frame
+  const usableW = Math.max(240, width * 0.56);
+  const usableH = Math.max(160, height * 0.48);
+
+  // Enforce a sensible minimum span (~160m) when all nodes sit at a single point
+  const minSpanZ0 = (0.00145 / 360) * 256;
+  const dx = Math.max(maxX - minX, minSpanZ0);
+  const dy = Math.max(maxY - minY, minSpanZ0 * 0.75);
+
+  const zX = Math.log2(usableW / dx);
+  const zY = Math.log2(usableH / dy);
+  const zoom = Math.max(MIN_Z, Math.min(17.45, Math.min(zX, zY)));
+
+  return { lat: centerLat, lon: centerLon, zoom };
+}
+
+/**
+ * Extract any live non-zero GPS coordinates reported inside a validator's `eth_subscribe("stats")`
+ * `StatsNotification` payload (`roamingStatus.world_map_subnets`, `node_lat_e7`/`lat_e7`,
+ * `nodes.nodes[]`, or `linkMetrics.peers`). Zero `(0, 0)` coordinates (no GNSS fix) are ignored.
+ */
+export function extractLiveGpsFromStats(stats) {
+  const peerGpsByPrefix = new Map();
+  const subnetGpsById = new Map();
+  let ownGps = null;
+  if (!stats || typeof stats !== 'object') {
+    return { ownGps, peerGpsByPrefix, subnetGpsById };
+  }
+
+  const parsePair = (obj, latKeys, lonKeys, scale = 1) => {
+    if (!obj || typeof obj !== 'object') return null;
+    for (let i = 0; i < latKeys.length; i++) {
+      const la = Number(obj[latKeys[i]]);
+      const lo = Number(obj[lonKeys[i]]);
+      if (Number.isFinite(la) && Number.isFinite(lo) && (la !== 0 || lo !== 0)) {
+        const lat = la / scale;
+        const lon = lo / scale;
+        if (Math.abs(lat) <= 90 && Math.abs(lon) <= 180) return { lat, lon };
+      }
+    }
+    return null;
+  };
+
+  ownGps =
+    parsePair(
+      stats,
+      ['node_lat_e7', 'lat_e7', 'nodeLatE7', 'latE7'],
+      ['node_lon_e7', 'lon_e7', 'nodeLonE7', 'lonE7'],
+      1e7
+    ) ||
+    parsePair(stats, ['lat', 'latitude'], ['lon', 'longitude'], 1) ||
+    parsePair(stats.gps, ['lat', 'latitude'], ['lon', 'longitude'], 1) ||
+    parsePair(
+      stats.roamingStatus,
+      ['node_lat_e7', 'lat_e7', 'detected_lat_e7'],
+      ['node_lon_e7', 'lon_e7', 'detected_lon_e7'],
+      1e7
+    );
+
+  const wms = stats.roamingStatus?.world_map_subnets;
+  if (Array.isArray(wms)) {
+    for (const item of wms) {
+      const sid = String(item?.subnet_id || '').trim().toLowerCase();
+      const g =
+        parsePair(
+          item,
+          ['detected_lat_e7', 'origin_lat_e7', 'lat_e7'],
+          ['detected_lon_e7', 'origin_lon_e7', 'lon_e7'],
+          1e7
+        ) || parsePair(item, ['lat'], ['lon'], 1);
+      if (sid && g) subnetGpsById.set(sid, g);
+    }
+  }
+
+  const nodesArr = Array.isArray(stats.nodes?.nodes)
+    ? stats.nodes.nodes
+    : Array.isArray(stats.nodes)
+      ? stats.nodes
+      : [];
+  for (const n of nodesArr) {
+    const id = String(n?.id || '').trim().toLowerCase();
+    const g =
+      parsePair(
+        n,
+        ['lat_e7', 'peer_lat_e7', 'node_lat_e7'],
+        ['lon_e7', 'peer_lon_e7', 'node_lon_e7'],
+        1e7
+      ) ||
+      parsePair(n, ['lat', 'latitude'], ['lon', 'longitude'], 1) ||
+      parsePair(n?.gps, ['lat'], ['lon'], 1);
+    if (id && g) peerGpsByPrefix.set(id.slice(0, 8), g);
+  }
+
+  const peersObj = stats.linkMetrics?.peers;
+  if (peersObj && typeof peersObj === 'object') {
+    for (const [peerId, m] of Object.entries(peersObj)) {
+      const g =
+        parsePair(m, ['peer_lat_e7', 'lat_e7'], ['peer_lon_e7', 'lon_e7'], 1e7) ||
+        parsePair(m, ['lat'], ['lon'], 1);
+      if (peerId && g) peerGpsByPrefix.set(peerId.trim().toLowerCase().slice(0, 8), g);
+    }
+  }
+
+  return { ownGps, peerGpsByPrefix, subnetGpsById };
+}
+
+function chooseNiceScaleMeters(metersPerPx, maxBarPx = 150) {
+  const maxMeters = metersPerPx * maxBarPx;
+  const steps = [
+    20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
+    1_000_000, 2_500_000, 5_000_000,
+  ];
+  let best = steps[0];
+  for (const s of steps) {
+    if (s <= maxMeters) best = s;
+    else break;
+  }
+  const px = best / metersPerPx;
+  const label = best >= 1000 ? `${best / 1000} km` : `${best} m`;
+  return { px, label };
 }
 
 let _mapStylesInjected = false;
@@ -166,13 +328,6 @@ function injectSubnetWorldMapStyles() {
       gap: 8px;
       flex-wrap: wrap;
       min-width: 0;
-    }
-    .slx-swm-title {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.84rem;
-      font-weight: 800;
-      color: #f8fafc;
-      letter-spacing: 0.02em;
     }
     .slx-swm-pill {
       display: inline-flex;
@@ -239,7 +394,7 @@ function injectSubnetWorldMapStyles() {
       border-radius: 7px;
       background: rgba(2, 6, 23, 0.75);
       border: 1px solid rgba(51, 65, 85, 0.55);
-      min-width: 142px;
+      min-width: 152px;
       text-align: center;
     }
     .slx-swm-stage {
@@ -251,12 +406,12 @@ function injectSubnetWorldMapStyles() {
       border-radius: 12px;
       overflow: hidden;
       border: 1px solid rgba(56, 189, 248, 0.35);
-      background: radial-gradient(ellipse at 52% 48%, #0c1d36 0%, #050b16 72%, #030712 100%);
+      background: #060d1b;
       cursor: grab;
       touch-action: pan-y;
       user-select: none;
     }
-    .slx-swm-stage.zoomed {
+    .slx-swm-stage.pan-mode {
       touch-action: none;
     }
     .slx-swm-stage.dragging {
@@ -343,12 +498,13 @@ function injectSubnetWorldMapStyles() {
       position: absolute;
       left: 10px;
       bottom: 10px;
+      z-index: 3;
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       padding: 5px 10px;
       border-radius: 8px;
-      background: rgba(3, 7, 18, 0.82);
+      background: rgba(3, 7, 18, 0.84);
       border: 1px solid rgba(51, 65, 85, 0.65);
       backdrop-filter: blur(6px);
       font-family: 'JetBrains Mono', monospace;
@@ -446,15 +602,12 @@ function injectSubnetWorldMapStyles() {
         padding: 10px 11px;
         gap: 9px;
       }
-      .slx-swm-title {
-        font-size: 0.76rem;
-      }
       .slx-swm-coords {
         display: none;
       }
       .slx-swm-stage {
         aspect-ratio: 4 / 3;
-        min-height: 220px;
+        min-height: 230px;
       }
       .slx-swm-hud-bl {
         left: 6px;
@@ -485,86 +638,12 @@ function injectSubnetWorldMapStyles() {
 }
 
 /**
- * Compute spiderfied callout positions so geographically close subnets (e.g. RF Subnet 1
- * & TCP Subnet 2 in Singapore) remain crisp and legible at both Global View and Cluster Zoom.
- */
-function layoutMapNodes(subnets, zoom) {
-  const uiScale = 1 / Math.pow(Math.max(1, zoom), 0.82);
-  const raw = subnets.map((s) => {
-    const anchor = latLonToMapXY(s.lat ?? 1.3031, s.lon ?? 103.9128);
-    return {
-      subnet: s,
-      ax: anchor.x,
-      ay: anchor.y,
-      px: anchor.x,
-      py: anchor.y,
-      clustered: false,
-    };
-  });
-
-  // Group nodes within proximity threshold
-  const thresh = 68 * uiScale;
-  const visited = new Set();
-  const clusters = [];
-
-  for (let i = 0; i < raw.length; i++) {
-    if (visited.has(i)) continue;
-    const group = [raw[i]];
-    visited.add(i);
-    for (let j = i + 1; j < raw.length; j++) {
-      if (visited.has(j)) continue;
-      const dx = raw[i].ax - raw[j].ax;
-      const dy = raw[i].ay - raw[j].ay;
-      if (Math.hypot(dx, dy) < thresh) {
-        group.push(raw[j]);
-        visited.add(j);
-      }
-    }
-    clusters.push(group);
-  }
-
-  for (const group of clusters) {
-    if (group.length <= 1) continue;
-    const cx = group.reduce((acc, n) => acc + n.ax, 0) / group.length;
-    const cy = group.reduce((acc, n) => acc + n.ay, 0) / group.length;
-    const radiusX = 88 * uiScale;
-    const radiusY = 48 * uiScale;
-
-    if (group.length === 2) {
-      // Tactical diagonal fan: RF upper-left, TCP lower-right
-      group[0].px = Math.max(76 * uiScale, cx - radiusX);
-      group[0].py = Math.max(42 * uiScale, cy - radiusY);
-      group[0].clustered = true;
-
-      group[1].px = Math.min(MAP_BASE_W - 76 * uiScale, cx + radiusX);
-      group[1].py = Math.min(MAP_BASE_H - 42 * uiScale, cy + radiusY);
-      group[1].clustered = true;
-    } else {
-      group.forEach((node, idx) => {
-        const angle = -Math.PI * 0.75 + (idx * 2 * Math.PI) / group.length;
-        node.px = Math.max(
-          70 * uiScale,
-          Math.min(MAP_BASE_W - 70 * uiScale, cx + Math.cos(angle) * radiusX * 1.1)
-        );
-        node.py = Math.max(
-          40 * uiScale,
-          Math.min(MAP_BASE_H - 40 * uiScale, cy + Math.sin(angle) * radiusY * 1.15)
-        );
-        node.clustered = true;
-      });
-    }
-  }
-
-  return { nodes: raw, clusters, uiScale };
-}
-
-/**
- * Mount an interactive SuperLexicon Global Subnet World Map into `mountContainer`.
+ * Mount the generic multi-scale Global Subnet World Map + swipeable Phase & Bridge diagram.
  */
 export function mountSlxSubnetWorldMap({
   mountContainer,
   backgroundImgUrl = '/assets/hegemony/world_map.jpg',
-  initialMode = 'global', // 'global' | 'cluster'
+  initialMode = 'auto-fit', // 'auto-fit' (World -> auto-zoom to fit all subnets) | 'fit-immediate' | 'global-only'
   initialView = 'map', // 'map' | 'phase'
   showCloseButton = false,
   onClose = null,
@@ -575,24 +654,26 @@ export function mountSlxSubnetWorldMap({
 
   const state = {
     view: initialView === 'phase' ? 'phase' : 'map',
-    zoom: 1,
-    cx: MAP_BASE_W / 2,
-    cy: MAP_BASE_H / 2,
-    mode: 'global', // 'global' | 'marine' | 'custom'
-    mcBlend: 0, // 0 = World Map, 1 = Marine Crescent Singapore Neighborhood Map
+    lat: GLOBAL_DEFAULT_LAT,
+    lon: GLOBAL_DEFAULT_LON,
+    zoom: MIN_Z,
+    mode: 'global', // 'global' | 'fit' | 'custom'
     autoFlyDone: false,
     userInterruptedAutoFly: false,
     selectedKey: SlxSubnetManager.getActiveSubnetKey(),
     bgFailed: false,
+    tilesOffline: false,
     heightsByKey: new Map(),
     nodeStatsByKey: new Map(),
+    liveSubnetGpsById: new Map(),
+    livePeerGpsByPrefix: new Map(),
+    statsSubsByKey: new Map(),
     regAddrCopiedUntil: 0,
     bridge: {
       active: true,
       lane: 'hybrid-rf+tcp',
       confirmedCrossTxns: 0,
       inFlightCrossTxns: 0,
-      repeaterLabel: 'Hybrid Repeater (.4)',
     },
     animFrame: 0,
     autoFlyTimer: 0,
@@ -600,22 +681,24 @@ export function mountSlxSubnetWorldMap({
   };
 
   mountContainer.innerHTML = `
-    <div class="slx-swm-card" role="region" aria-label="Global SuperLexicon Subnet World Map &amp; Phase Sync">
+    <div class="slx-swm-card" role="region" aria-label="SuperLexicon Global Subnet Map &amp; Phase Sync">
       <div class="slx-swm-hdr">
         <div class="slx-swm-title-wrap">
           <div class="slx-swm-seg" role="tablist" aria-label="Subnet Visualization View">
-            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. World &amp; Marine Crescent Map</button>
+            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. Subnet Map</button>
             <button type="button" class="slx-swm-seg-btn" data-swm-view="phase" role="tab" aria-selected="false">⚡ 2. Phase &amp; Bridge Live</button>
           </div>
           <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetRegistry HFS…</span>
           <button type="button" class="slx-swm-btn" data-swm="hfs-badge" title="Click to copy On-Chain SubnetRegistry HFS contract address" style="padding:2px 8px;font-size:0.63rem;color:#7dd3fc;border-color:rgba(56,189,248,0.45);">⛓️ HFS Registry</button>
         </div>
         <div class="slx-swm-controls">
-          <span class="slx-swm-coords" data-swm="coords">1.3031° N, 103.9128° E</span>
-          <span data-swm="map-tools" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span class="slx-swm-coords" data-swm="coords">—</span>
+          <span data-swm="map-tools" style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;">
             <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Zoom out to Full World Map">🌍 World</button>
-            <button type="button" class="slx-swm-btn" data-swm-act="cluster" title="Zoom into Marine Crescent, Singapore (Blks 28–35)">🇸🇬 Marine Crescent</button>
-            <button type="button" class="slx-swm-btn" data-swm-act="replay-fly" title="Replay World Map → Marine Crescent Orbital Fly-In">🎬 Fly-In</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="fit" title="Auto-zoom &amp; center so all subnets maximally fill the map">🎯 Fit All Subnets</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="zoom-out" title="Zoom Out">➖</button>
+            <button type="button" class="slx-swm-btn" data-swm-act="replay-fly" title="Replay World Map → Fit Subnets Fly-In">🎬</button>
           </span>
           <button type="button" class="slx-swm-btn cta" data-swm-act="register-hfs" title="Register a new subnet &amp; validator stats URLs on-chain in SubnetRegistry HFS ($0.00 gas)">⛓️ + Register Subnet</button>
           ${
@@ -632,14 +715,34 @@ export function mountSlxSubnetWorldMap({
         </button>
         <div class="slx-swm-track" data-swm="track">
           <div class="slx-swm-pane" data-swm="pane-map">
-            <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"></svg>
-            <svg class="slx-swm-svg" data-swm="mc-svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid meet"
-              style="position:absolute;inset:0;opacity:0;pointer-events:none;transform-origin:center center;will-change:opacity,transform;"></svg>
-            <div class="slx-swm-hud-bl" data-swm="map-hud-bl">
-              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>915 MHz LR2021 RF (Subnet 1)</span>
-              <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP (Subnet 2)</span>
-              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Blk 34 Hybrid Repeater (.4)</span>
-              <span style="color:#94a3b8;">🌍 World ⇄ 🇸🇬 Marine Crescent • Swipe ⇄ for Phase Diagram</span>
+            <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid slice">
+              <defs>
+                <linearGradient id="slxSwmBridgeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stop-color="#38bdf8" />
+                  <stop offset="50%" stop-color="#fbbf24" />
+                  <stop offset="100%" stop-color="#c084fc" />
+                </linearGradient>
+                <filter id="slxSwmGlow" x="-60%" y="-60%" width="220%" height="220%">
+                  <feGaussianBlur stdDeviation="2.4" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+              <rect x="0" y="0" width="${MAP_BASE_W}" height="${MAP_BASE_H}" fill="#060d1b" />
+              <g data-swm="world-backdrop"></g>
+              <g data-swm="tiles-coarse"></g>
+              <g data-swm="tiles-fine"></g>
+              <g data-swm="graticule"></g>
+              <g data-swm="vectors"></g>
+              <g data-swm="hud-svg"></g>
+            </svg>
+            <div class="slx-swm-hud-bl">
+              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>LR2021 Sub-GHz RF</span>
+              <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP</span>
+              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Cross-Subnet Bridge</span>
+              <span style="color:#94a3b8;">🌍 World ⇄ 🎯 Auto-Fit • Swipe ⇄ Phase Diagram</span>
             </div>
           </div>
           <div class="slx-swm-pane" data-swm="pane-phase">
@@ -649,7 +752,7 @@ export function mountSlxSubnetWorldMap({
               <span><i class="slx-swm-legend-dot" style="background:#fbbf24;"></i>P2 VOTE</span>
               <span><i class="slx-swm-legend-dot" style="background:#c084fc;"></i>P3 PROP</span>
               <span><i class="slx-swm-legend-dot" style="background:#34d399;"></i>P4 FINALIZE</span>
-              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Map</span>
+              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Subnet Map</span>
             </div>
           </div>
         </div>
@@ -668,12 +771,16 @@ export function mountSlxSubnetWorldMap({
   const elTrack = mountContainer.querySelector('[data-swm="track"]');
   const elSwipeToggle = mountContainer.querySelector('[data-swm="swipe-toggle"]');
   const elPhaseMount = mountContainer.querySelector('[data-swm="phase-mount"]');
-  const elSvg = mountContainer.querySelector('[data-swm="svg"]');
-  const elMcSvg = mountContainer.querySelector('[data-swm="mc-svg"]');
+  const gBackdrop = mountContainer.querySelector('[data-swm="world-backdrop"]');
+  const gTilesCoarse = mountContainer.querySelector('[data-swm="tiles-coarse"]');
+  const gTilesFine = mountContainer.querySelector('[data-swm="tiles-fine"]');
+  const gGraticule = mountContainer.querySelector('[data-swm="graticule"]');
+  const gVectors = mountContainer.querySelector('[data-swm="vectors"]');
+  const gHudSvg = mountContainer.querySelector('[data-swm="hud-svg"]');
   const elStrip = mountContainer.querySelector('[data-swm="strip"]');
   const elInspector = mountContainer.querySelector('[data-swm="inspector"]');
   const btnGlobal = mountContainer.querySelector('[data-swm-act="global"]');
-  const btnCluster = mountContainer.querySelector('[data-swm-act="cluster"]');
+  const btnFit = mountContainer.querySelector('[data-swm-act="fit"]');
   const viewTabBtns = Array.from(mountContainer.querySelectorAll('[data-swm-view]'));
 
   const phaseDiagramInst = elPhaseMount
@@ -682,6 +789,18 @@ export function mountSlxSubnetWorldMap({
         isVisibleFn: () => !state.destroyed && state.view === 'phase',
       })
     : null;
+
+  // Probe local world_map.jpg availability
+  if (typeof Image !== 'undefined' && backgroundImgUrl) {
+    const p = new Image();
+    p.onerror = () => {
+      if (!state.destroyed) {
+        state.bgFailed = true;
+        renderMap();
+      }
+    };
+    p.src = backgroundImgUrl;
+  }
 
   function applyActiveView(nextView) {
     state.view = nextView === 'phase' ? 'phase' : 'map';
@@ -694,745 +813,548 @@ export function mountSlxSubnetWorldMap({
       b.classList.toggle('active', act);
       b.setAttribute('aria-selected', act ? 'true' : 'false');
     });
-    if (elMapTools) {
-      elMapTools.style.display = state.view === 'map' ? 'inline-flex' : 'none';
-    }
-    if (elCoords) {
-      elCoords.style.display = state.view === 'map' ? '' : 'none';
-    }
+    if (elMapTools) elMapTools.style.display = state.view === 'map' ? 'inline-flex' : 'none';
+    if (elCoords) elCoords.style.display = state.view === 'map' ? '' : 'none';
     if (elSwipeToggle) {
       elSwipeToggle.innerHTML =
         state.view === 'map'
           ? '● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›'
-          : '‹ ● &nbsp;Swipe ⇄ Global World Map';
+          : '‹ ● &nbsp;Swipe ⇄ Subnet Map';
     }
-    elStage?.classList.toggle('zoomed', state.view === 'map' && state.zoom > 1.03);
+    elStage?.classList.toggle('pan-mode', state.view === 'map' && state.mode === 'custom');
   }
 
   viewTabBtns.forEach((b) => {
-    b.addEventListener('click', () => {
-      applyActiveView(b.getAttribute('data-swm-view'));
-    });
+    b.addEventListener('click', () => applyActiveView(b.getAttribute('data-swm-view')));
   });
   elSwipeToggle?.addEventListener('click', (ev) => {
     ev.stopPropagation();
     applyActiveView(state.view === 'map' ? 'phase' : 'map');
   });
 
-  // Preload check for world_map.jpg so external SDK hosts fall back cleanly if absent
-  if (typeof Image !== 'undefined' && backgroundImgUrl) {
-    const probe = new Image();
-    probe.onload = () => {
-      if (!state.destroyed && state.bgFailed) {
-        state.bgFailed = false;
-        renderAll();
-      }
-    };
-    probe.onerror = () => {
-      if (!state.destroyed) {
-        state.bgFailed = true;
-        renderAll();
-      }
-    };
-    probe.src = backgroundImgUrl;
-  }
-
-  function clampCamera(cx, cy, zoom) {
-    const z = Math.max(1, Math.min(12, zoom));
-    const vw = MAP_BASE_W / z;
-    const vh = MAP_BASE_H / z;
-    const clampedX = Math.max(vw / 2, Math.min(MAP_BASE_W - vw / 2, cx));
-    const clampedY = Math.max(vh / 2, Math.min(MAP_BASE_H - vh / 2, cy));
-    return { cx: clampedX, cy: clampedY, zoom: z, vw, vh };
-  }
-
-  function applyViewBoxImmediate() {
-    const cam = clampCamera(state.cx, state.cy, state.zoom);
-    state.cx = cam.cx;
-    state.cy = cam.cy;
-    state.zoom = cam.zoom;
-    const vx = (cam.cx - cam.vw / 2).toFixed(2);
-    const vy = (cam.cy - cam.vh / 2).toFixed(2);
-    elSvg?.setAttribute('viewBox', `${vx} ${vy} ${cam.vw.toFixed(2)} ${cam.vh.toFixed(2)}`);
-    if (elMcSvg) {
-      const b = Math.max(0, Math.min(1, state.mcBlend));
-      elMcSvg.style.opacity = b.toFixed(3);
-      elMcSvg.style.pointerEvents = b > 0.65 ? 'auto' : 'none';
-      const sc = 0.88 + 0.12 * b;
-      elMcSvg.style.transform = `scale(${sc.toFixed(4)})`;
-    }
-    if (elSvg) {
-      elSvg.style.opacity = (1 - Math.max(0, Math.min(1, state.mcBlend)) * 0.92).toFixed(3);
-    }
-    btnGlobal?.classList.toggle('active', state.mode === 'global');
-    btnCluster?.classList.toggle('active', state.mode === 'marine' || state.mode === 'cluster');
-    elStage?.classList.toggle(
-      'zoomed',
-      state.view === 'map' && state.mode === 'custom' && state.zoom > 1.05 && state.mcBlend < 0.5
-    );
-  }
-
-  function flyIntoMarineCrescent(animate = true, durMs = 1750) {
-    if (state.animFrame) cancelAnimationFrame(state.animFrame);
-    const sgWorld = latLonToMapXY(1.30308, 103.9128);
-    const targetZ = 11.5;
-
-    if (!animate) {
-      state.cx = sgWorld.x;
-      state.cy = sgWorld.y;
-      state.zoom = targetZ;
-      state.mcBlend = 1;
-      state.mode = 'marine';
-      applyViewBoxImmediate();
-      renderMarineCrescentSvg();
-      return;
-    }
-
-    state.mode = 'marine';
-    renderMarineCrescentSvg();
-    const startCx = state.cx;
-    const startCy = state.cy;
-    const startZ = state.zoom;
-    const startBlend = state.mcBlend;
-    const dest = clampCamera(sgWorld.x, sgWorld.y, targetZ);
-    const startMs = performance.now();
-
-    const tick = (now) => {
-      if (state.destroyed) return;
-      const t = Math.min(1, (now - startMs) / durMs);
-      // Smooth easeInOutCubic orbital dive
-      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-      // Exponential zoom feel so global -> regional -> street glides naturally
-      state.zoom = startZ * Math.pow(dest.zoom / Math.max(1, startZ), ease);
-      const panEase = 1 - Math.pow(1 - t, 2.6);
-      state.cx = startCx + (dest.cx - startCx) * panEase;
-      state.cy = startCy + (dest.cy - startCy) * panEase;
-      // Cross-fade into high-res Marine Crescent tactical estate layer over second half of dive
-      const blendRaw = t <= 0.44 ? 0 : (t - 0.44) / 0.56;
-      const blendEase = blendRaw * blendRaw * (3 - 2 * blendRaw);
-      state.mcBlend = startBlend + (1 - startBlend) * blendEase;
-
-      applyViewBoxImmediate();
-      if (state.mcBlend < 0.98) {
-        renderSvgContent();
-      }
-      if (t < 1) {
-        state.animFrame = requestAnimationFrame(tick);
-      } else {
-        state.animFrame = 0;
-        state.mcBlend = 1;
-        applyViewBoxImmediate();
-        renderMarineCrescentSvg();
-      }
-    };
-    state.animFrame = requestAnimationFrame(tick);
-  }
-
-  function flyOutToGlobal(animate = true, durMs = 920) {
-    if (state.animFrame) cancelAnimationFrame(state.animFrame);
-    state.mode = 'global';
-    if (!animate) {
-      state.cx = MAP_BASE_W / 2;
-      state.cy = MAP_BASE_H / 2;
-      state.zoom = 1;
-      state.mcBlend = 0;
-      applyViewBoxImmediate();
-      renderSvgContent();
-      return;
-    }
-
-    renderSvgContent();
-    const startCx = state.cx;
-    const startCy = state.cy;
-    const startZ = state.zoom;
-    const startBlend = state.mcBlend;
-    const startMs = performance.now();
-
-    const tick = (now) => {
-      if (state.destroyed) return;
-      const t = Math.min(1, (now - startMs) / durMs);
-      const ease = 1 - Math.pow(1 - t, 3);
-      state.mcBlend = startBlend * Math.max(0, 1 - t * 2.3);
-      state.zoom = startZ + (1 - startZ) * ease;
-      state.cx = startCx + (MAP_BASE_W / 2 - startCx) * ease;
-      state.cy = startCy + (MAP_BASE_H / 2 - startCy) * ease;
-      applyViewBoxImmediate();
-      renderSvgContent();
-      if (t < 1) {
-        state.animFrame = requestAnimationFrame(tick);
-      } else {
-        state.animFrame = 0;
-        state.mcBlend = 0;
-        state.zoom = 1;
-        applyViewBoxImmediate();
-        renderSvgContent();
-      }
-    };
-    state.animFrame = requestAnimationFrame(tick);
-  }
-
-  function animateCameraTo(targetCx, targetCy, targetZoom, modeLabel = 'custom') {
-    if (state.animFrame) cancelAnimationFrame(state.animFrame);
-    state.mode = modeLabel;
-    const startCx = state.cx;
-    const startCy = state.cy;
-    const startZ = state.zoom;
-    const startBlend = state.mcBlend;
-    const dest = clampCamera(targetCx, targetCy, targetZoom);
-    const startMs = performance.now();
-    const durMs = 420;
-
-    const tick = (now) => {
-      if (state.destroyed) return;
-      const t = Math.min(1, (now - startMs) / durMs);
-      const ease = 1 - Math.pow(1 - t, 3);
-      state.cx = startCx + (dest.cx - startCx) * ease;
-      state.cy = startCy + (dest.cy - startCy) * ease;
-      state.zoom = startZ + (dest.zoom - startZ) * ease;
-      state.mcBlend = startBlend * (1 - ease);
-      applyViewBoxImmediate();
-      renderSvgContent();
-      if (t < 1) {
-        state.animFrame = requestAnimationFrame(tick);
-      } else {
-        state.animFrame = 0;
-      }
-    };
-    state.animFrame = requestAnimationFrame(tick);
-  }
-
   function getEnrichedSubnets() {
     const list = SlxSubnetManager.listSubnets();
     return list.map((s) => {
-      const liveH = state.heightsByKey.get(s.key) || Number(s.tipHeight || 0);
+      const sid = String(s.subnetId || '').trim().toLowerCase();
+      const liveSubGps = sid ? state.liveSubnetGpsById.get(sid) : null;
+      const validatorNodes = Array.isArray(s.validatorNodes)
+        ? s.validatorNodes.map((v) => {
+            const pfx = String(v?.pubkeyPrefix || '').trim().toLowerCase().slice(0, 8);
+            const livePeer = pfx ? state.livePeerGpsByPrefix.get(pfx) : null;
+            return livePeer ? { ...v, lat: livePeer.lat, lon: livePeer.lon } : v;
+          })
+        : s.validatorNodes;
       return {
         ...s,
-        liveHeight: liveH,
-        lat: Number.isFinite(Number(s.lat)) ? Number(s.lat) : 1.30308,
-        lon: Number.isFinite(Number(s.lon)) ? Number(s.lon) : 103.9128,
+        validatorNodes,
+        liveHeight: state.heightsByKey.get(s.key) || Number(s.tipHeight || 0),
+        lat: liveSubGps?.lat ?? (Number.isFinite(Number(s.lat)) ? Number(s.lat) : 1.30308),
+        lon: liveSubGps?.lon ?? (Number.isFinite(Number(s.lon)) ? Number(s.lon) : 103.9128),
       };
     });
   }
 
-  function focusActiveCluster(animate = true) {
-    flyIntoMarineCrescent(animate);
+  // Project arbitrary (lat, lon) into current camera's (1200 x 675) SVG viewport
+  function geoToScreen(lat, lon) {
+    const cxW = lonToMercX(state.lon, state.zoom);
+    const cyW = latToMercY(state.lat, state.zoom);
+    const worldW = 256 * Math.pow(2, state.zoom);
+    let dx = lonToMercX(lon, state.zoom) - cxW;
+    if (dx > worldW / 2) dx -= worldW;
+    if (dx < -worldW / 2) dx += worldW;
+    const dy = latToMercY(lat, state.zoom) - cyW;
+    return {
+      x: MAP_BASE_W / 2 + dx,
+      y: MAP_BASE_H / 2 + dy,
+    };
+  }
+
+  function screenToGeo(sx, sy) {
+    const cxW = lonToMercX(state.lon, state.zoom);
+    const cyW = latToMercY(state.lat, state.zoom);
+    const wx = cxW + (sx - MAP_BASE_W / 2);
+    const wy = cyW + (sy - MAP_BASE_H / 2);
+    return {
+      lat: mercYToLat(wy, state.zoom),
+      lon: mercXToLon(wx, state.zoom),
+    };
+  }
+
+  // Smooth Web-Mercator orbital flight between any two `(lat, lon, zoom)` states
+  function animateToCamera(targetLat, targetLon, targetZ, modeLabel = 'fit', durMs = 1550) {
+    if (state.animFrame) cancelAnimationFrame(state.animFrame);
+    state.mode = modeLabel;
+    const destZ = Math.max(MIN_Z, Math.min(MAX_Z, targetZ));
+    const destLat = Math.max(-82, Math.min(82, targetLat));
+    const destLon = targetLon;
+
+    if (durMs <= 0) {
+      state.lat = destLat;
+      state.lon = destLon;
+      state.zoom = destZ;
+      renderAll();
+      return;
+    }
+
+    // Interpolate center in z=0 Web-Mercator space so high-zoom targets don't overshoot
+    const startU = lonToMercX(state.lon, 0);
+    const startV = latToMercY(state.lat, 0);
+    let endU = lonToMercX(destLon, 0);
+    if (endU - startU > 128) endU -= 256;
+    if (endU - startU < -128) endU += 256;
+    const endV = latToMercY(destLat, 0);
+    const startZ = state.zoom;
+    const startMs = performance.now();
+    const zoomingIn = destZ >= startZ;
+
+    const tick = (now) => {
+      if (state.destroyed) return;
+      const t = Math.min(1, (now - startMs) / durMs);
+      const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      // When zooming deeply in, pan toward target early so target stays centered throughout zoom
+      const panT = zoomingIn ? 1 - Math.pow(1 - t, 3.4) : Math.pow(t, 2.2);
+      const curU = startU + (endU - startU) * panT;
+      const curV = startV + (endV - startV) * panT;
+      state.lon = mercXToLon(curU, 0);
+      state.lat = mercYToLat(curV, 0);
+      state.zoom = startZ + (destZ - startZ) * ease;
+
+      renderMap();
+      if (t < 1) {
+        state.animFrame = requestAnimationFrame(tick);
+      } else {
+        state.animFrame = 0;
+        state.lat = destLat;
+        state.lon = destLon;
+        state.zoom = destZ;
+        renderAll();
+      }
+    };
+    state.animFrame = requestAnimationFrame(tick);
+  }
+
+  function fitAllSubnets(animate = true, durMs = 1850) {
+    const subs = getEnrichedSubnets();
+    const target = computeAutoFitCamera(subs, MAP_BASE_W, MAP_BASE_H);
+    animateToCamera(target.lat, target.lon, target.zoom, 'fit', animate ? durMs : 0);
+  }
+
+  function flyToWorld(animate = true) {
+    animateToCamera(GLOBAL_DEFAULT_LAT, GLOBAL_DEFAULT_LON, MIN_Z, 'global', animate ? 950 : 0);
   }
 
   function replayFlyIn() {
     if (state.autoFlyTimer) clearTimeout(state.autoFlyTimer);
     applyActiveView('map');
-    flyOutToGlobal(false);
+    flyToWorld(false);
     state.autoFlyTimer = setTimeout(() => {
       if (!state.destroyed && state.view === 'map') {
-        flyIntoMarineCrescent(true, 1850);
+        fitAllSubnets(true, 1950);
       }
-    }, 550);
+    }, 600);
   }
 
-  function renderMarineCrescentSvg() {
-    if (!elMcSvg) return;
-    const subs = getEnrichedSubnets();
-    const activeKey = SlxSubnetManager.getActiveSubnetKey();
-    const s1 = subs.find((s) => s.key === 'subnet1') || subs[0];
-    const s2 = subs.find((s) => s.key === 'subnet2') || subs[1];
-    const s1Probe = s1 ? state.nodeStatsByKey.get(s1.key) : null;
-    const s2Probe = s2 ? state.nodeStatsByKey.get(s2.key) : null;
+  // Build SVG `<image>` tile grid for integer zoom `tz`
+  let lastCoarseKey = '';
+  let lastFineKey = '';
 
-    // Map block number -> node badges hosted at that physical HDB block
-    const nodesByBlk = new Map();
-    const addNodeToBlk = (blk, entry) => {
-      if (!nodesByBlk.has(blk)) nodesByBlk.set(blk, []);
-      nodesByBlk.get(blk).push(entry);
+  function buildTileLayerHtml(tz) {
+    const maxTile = 1 << tz;
+    const scale = Math.pow(2, state.zoom - tz);
+    const tileSvgSz = 256 * scale;
+    const cxTile = lonToMercX(state.lon, tz);
+    const cyTile = latToMercY(state.lat, tz);
+
+    const halfW = MAP_BASE_W / 2;
+    const halfH = MAP_BASE_H / 2;
+    const txMin = Math.floor((cxTile - halfW / scale) / 256);
+    const txMax = Math.floor((cxTile + halfW / scale) / 256);
+    const tyMin = Math.max(0, Math.floor((cyTile - halfH / scale) / 256));
+    const tyMax = Math.min(maxTile - 1, Math.floor((cyTile + halfH / scale) / 256));
+
+    // Safety cap
+    if ((txMax - txMin + 1) * (tyMax - tyMin + 1) > 48) return { key: '', html: '', txMin: 0, tyMin: 0, scale };
+
+    let html = '';
+    for (let ty = tyMin; ty <= tyMax; ty++) {
+      for (let tx = txMin; tx <= txMax; tx++) {
+        const wrappedTx = ((tx % maxTile) + maxTile) % maxTile;
+        const sub = TILE_SUBDOMAINS[(wrappedTx + ty) & 3];
+        const url = `https://${sub}.basemaps.cartocdn.com/dark_all/${tz}/${wrappedTx}/${ty}@2x.png`;
+        const sx = halfW + (tx * 256 - cxTile) * scale;
+        const sy = halfH + (ty * 256 - cyTile) * scale;
+        // +0.6px overlap eliminates hairline subpixel seams between adjacent SVG tile images
+        html += `<image href="${url}" x="${sx.toFixed(2)}" y="${sy.toFixed(2)}" width="${(tileSvgSz + 0.6).toFixed(2)}" height="${(tileSvgSz + 0.6).toFixed(2)}" preserveAspectRatio="none" />`;
+      }
+    }
+    return {
+      key: `${tz}:${txMin}..${txMax}:${tyMin}..${tyMax}:${state.lon.toFixed(5)}:${state.lat.toFixed(5)}:${state.zoom.toFixed(3)}`,
+      html,
     };
-
-    const defaultBlkOrderS1 = ['28', '29', '33', '35'];
-    (s1?.validatorNodes || []).forEach((vn, i) => {
-      const blk = String(vn.blk || defaultBlkOrderS1[i] || '28');
-      const pr = s1Probe?.nodes?.[i] || null;
-      addNodeToBlk(blk, {
-        subnetKey: s1.key,
-        transport: 'flrc',
-        icon: '📡',
-        label: (vn.name || `node${i + 1}`).replace(/^(RF |Validator )/i, ''),
-        online: pr ? pr.online : true,
-        height: pr?.blockHeight || s1?.liveHeight || 0,
-        rttMs: pr?.rttMs || 0,
-      });
-    });
-
-    const defaultBlkOrderS2 = ['28', '29', '35'];
-    (s2?.validatorNodes || []).forEach((vn, i) => {
-      const blk = String(vn.blk || defaultBlkOrderS2[i] || '28');
-      const pr = s2Probe?.nodes?.[i] || null;
-      addNodeToBlk(blk, {
-        subnetKey: s2.key,
-        transport: 'tcp',
-        icon: '🔌',
-        label: (vn.name || `node2${i + 1}`).replace(/^(TCP |Validator )/i, ''),
-        online: pr ? pr.online : true,
-        height: pr?.blockHeight || s2?.liveHeight || 0,
-        rttMs: pr?.rttMs || 0,
-      });
-    });
-
-    // Project all HDB blocks onto (1200 x 675)
-    const blkPos = new Map();
-    for (const b of MARINE_CRESCENT_HDB_BLOCKS) {
-      blkPos.set(b.blk, { ...b, ...marineCrescentLatLonToXY(b.lat, b.lon) });
-    }
-
-    // Subtle WGS84 tactical gridlines
-    let gridSvg = '';
-    for (const la of [1.304, 1.3035, 1.303, 1.3025, 1.302]) {
-      const { y } = marineCrescentLatLonToXY(la, MC_LON_WEST);
-      gridSvg += `
-        <line x1="0" y1="${y.toFixed(1)}" x2="${MAP_BASE_W}" y2="${y.toFixed(1)}" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
-        <text x="14" y="${(y - 4).toFixed(1)}" fill="rgba(148,163,184,0.45)" font-size="9" font-family="JetBrains Mono, monospace">${la.toFixed(4)}°N</text>
-      `;
-    }
-    for (const lo of [103.9115, 103.9125, 103.9135, 103.9142]) {
-      const { x } = marineCrescentLatLonToXY(MC_LAT_NORTH, lo);
-      gridSvg += `
-        <line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${MAP_BASE_H}" stroke="rgba(56,189,248,0.08)" stroke-width="1" />
-        <text x="${(x + 4).toFixed(1)}" y="18" fill="rgba(148,163,184,0.42)" font-size="8.8" font-family="JetBrains Mono, monospace">${lo.toFixed(4)}°E</text>
-      `;
-    }
-
-    // Authentic Marine Crescent roads, ECP expressway, East Coast Park & Singapore Strait coastline
-    const yMarineParade = marineCrescentLatLonToXY(1.30414, MC_LON_WEST).y;
-    const yEcp = marineCrescentLatLonToXY(1.30203, MC_LON_WEST).y;
-    const yCoast = marineCrescentLatLonToXY(1.30184, MC_LON_WEST).y;
-    const mcLoopPts = [
-      marineCrescentLatLonToXY(1.30414, 103.91195),
-      marineCrescentLatLonToXY(1.30252, 103.91188),
-      marineCrescentLatLonToXY(1.30242, 103.91278),
-      marineCrescentLatLonToXY(1.30255, 103.91368),
-      marineCrescentLatLonToXY(1.30414, 103.91376),
-    ];
-    const loopPath = `M ${mcLoopPts[0].x.toFixed(1)} ${mcLoopPts[0].y.toFixed(1)} Q ${mcLoopPts[1].x.toFixed(1)} ${mcLoopPts[1].y.toFixed(1)} ${mcLoopPts[2].x.toFixed(1)} ${mcLoopPts[2].y.toFixed(1)} Q ${mcLoopPts[3].x.toFixed(1)} ${mcLoopPts[3].y.toFixed(1)} ${mcLoopPts[4].x.toFixed(1)} ${mcLoopPts[4].y.toFixed(1)}`;
-
-    const roadsAndCoastSvg = `
-      <!-- East Coast Park Greenbelt & Singapore Strait Water -->
-      <rect x="0" y="${yEcp.toFixed(1)}" width="${MAP_BASE_W}" height="${(yCoast - yEcp).toFixed(1)}" fill="rgba(16, 48, 44, 0.42)" />
-      <rect x="0" y="${yCoast.toFixed(1)}" width="${MAP_BASE_W}" height="${(MAP_BASE_H - yCoast).toFixed(1)}" fill="#040d1d" />
-      <line x1="0" y1="${yCoast.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yCoast.toFixed(1)}" stroke="#22d3ee" stroke-width="2" opacity="0.68" />
-      <text x="600" y="${(yCoast + 24).toFixed(1)}" text-anchor="middle" fill="rgba(56,189,248,0.55)" font-size="10.5" font-weight="800" letter-spacing="3" font-family="JetBrains Mono, monospace">SINGAPORE STRAIT  •  EAST COAST BEACH</text>
-
-      <!-- Marine Parade Road (North) -->
-      <line x1="0" y1="${yMarineParade.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yMarineParade.toFixed(1)}" stroke="#1e293b" stroke-width="18" />
-      <line x1="0" y1="${yMarineParade.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yMarineParade.toFixed(1)}" stroke="rgba(148,163,184,0.35)" stroke-width="1" stroke-dasharray="8 6" />
-      <text x="220" y="${(yMarineParade + 3.5).toFixed(1)}" fill="rgba(203,213,225,0.65)" font-size="9.2" font-weight="700" letter-spacing="1.5" font-family="JetBrains Mono, monospace">MARINE PARADE ROAD</text>
-
-      <!-- Marine Crescent Loop Road -->
-      <path d="${loopPath}" fill="none" stroke="#17243a" stroke-width="14" stroke-linecap="round" />
-      <path d="${loopPath}" fill="none" stroke="rgba(125,211,252,0.28)" stroke-width="1.1" stroke-dasharray="5 5" />
-      <text x="${mcLoopPts[2].x.toFixed(1)}" y="${(mcLoopPts[2].y + 22).toFixed(1)}" text-anchor="middle" fill="rgba(186,230,253,0.62)" font-size="9" font-weight="700" letter-spacing="1.4" font-family="JetBrains Mono, monospace">MARINE CRESCENT</text>
-
-      <!-- East Coast Parkway (ECP) -->
-      <line x1="0" y1="${yEcp.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yEcp.toFixed(1)}" stroke="#1e293b" stroke-width="20" />
-      <line x1="0" y1="${yEcp.toFixed(1)}" x2="${MAP_BASE_W}" y2="${yEcp.toFixed(1)}" stroke="rgba(251,191,36,0.35)" stroke-width="1.2" stroke-dasharray="10 6" />
-      <text x="930" y="${(yEcp + 3.5).toFixed(1)}" fill="rgba(253,230,138,0.68)" font-size="9.2" font-weight="700" letter-spacing="1.5" font-family="JetBrains Mono, monospace">EAST COAST PARKWAY (ECP)</text>
-    `;
-
-    // RF Subnet 1 Mesh Links (Blks 35 - 28 - 29 - 33 - 35 + diagonals) & TCP Subnet 2 Mesh Links (Blks 35 - 28 - 29)
-    const b28 = blkPos.get('28');
-    const b29 = blkPos.get('29');
-    const b33 = blkPos.get('33');
-    const b34 = blkPos.get('34');
-    const b35 = blkPos.get('35');
-
-    const rfPairs = [
-      [b35, b28],
-      [b28, b29],
-      [b29, b33],
-      [b33, b35],
-      [b35, b29],
-      [b28, b33],
-    ];
-    const tcpPairs = [
-      [b35, b28],
-      [b28, b29],
-      [b29, b35],
-    ];
-
-    const s1Sel = state.selectedKey === 'subnet1';
-    const s2Sel = state.selectedKey === 'subnet2';
-
-    let meshLinksSvg = '';
-    rfPairs.forEach(([a, b], idx) => {
-      if (!a || !b) return;
-      const pid = `mcRfLink_${idx}`;
-      meshLinksSvg += `
-        <path id="${pid}" d="M ${a.x.toFixed(1)} ${a.y.toFixed(1)} L ${b.x.toFixed(1)} ${b.y.toFixed(1)}"
-          stroke="#38bdf8" stroke-width="${s1Sel ? '2.4' : '1.5'}" opacity="${s2Sel ? '0.28' : '0.62'}" stroke-dasharray="6 4" />
-        ${
-          idx < 4
-            ? `<circle r="3.2" fill="#38bdf8" filter="url(#mcGlow)"><animateMotion dur="${(2.1 + idx * 0.35).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>`
-            : ''
-        }
-      `;
-    });
-
-    tcpPairs.forEach(([a, b], idx) => {
-      if (!a || !b) return;
-      // Slight 6px offset so parallel RF & TCP links between Blk 28/29/35 are both distinctly visible!
-      const pid = `mcTcpLink_${idx}`;
-      meshLinksSvg += `
-        <path id="${pid}" d="M ${(a.x + 6).toFixed(1)} ${(a.y + 6).toFixed(1)} L ${(b.x + 6).toFixed(1)} ${(b.y + 6).toFixed(1)}"
-          stroke="#c084fc" stroke-width="${s2Sel ? '2.5' : '1.7'}" opacity="${s1Sel ? '0.35' : '0.78'}" />
-        <circle r="3.2" fill="#c084fc" filter="url(#mcGlow)"><animateMotion dur="${(1.7 + idx * 0.3).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>
-      `;
-    });
-
-    // Hybrid Repeater (Blk 34) cross-subnet relay beams to Blk 28, 29, 33, 35
-    if (b34) {
-      [b28, b29, b33, b35].forEach((target, idx) => {
-        if (!target) return;
-        const pid = `mcRepBeam_${idx}`;
-        meshLinksSvg += `
-          <path id="${pid}" d="M ${b34.x.toFixed(1)} ${b34.y.toFixed(1)} L ${target.x.toFixed(1)} ${target.y.toFixed(1)}"
-            stroke="#fbbf24" stroke-width="1.4" stroke-dasharray="3 4" opacity="0.58" />
-          <circle r="2.8" fill="#fbbf24"><animateMotion dur="${(1.9 + idx * 0.25).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>
-        `;
-      });
-    }
-
-    // Draw HDB buildings & per-block live validator callout cards
-    let blocksSvg = '';
-    for (const b of blkPos.values()) {
-      if (b.role === 'context') {
-        blocksSvg += `
-          <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)}) rotate(${b.angle})">
-            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="3"
-              fill="#0f1b2e" stroke="rgba(71,85,105,0.45)" stroke-width="1" />
-            <text x="0" y="3.5" text-anchor="middle" fill="rgba(148,163,184,0.5)" font-size="8" font-weight="700" font-family="JetBrains Mono, monospace">BLK ${b.blk}</text>
-          </g>
-        `;
-        continue;
-      }
-
-      if (b.role === 'repeater') {
-        blocksSvg += `
-          <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)})">
-            <circle class="slx-swm-rf-ring" cx="0" cy="0" r="18" fill="none" stroke="#fbbf24" stroke-width="1.3" />
-            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="4"
-              fill="#171524" stroke="#fbbf24" stroke-width="2" />
-            <polygon points="0,-13 13,0 0,13 -13,0" fill="#0f172a" stroke="#fbbf24" stroke-width="1.8" />
-            <circle r="3.5" fill="#fbbf24" />
-            <g transform="translate(-88, 17)">
-              <rect width="176" height="34" rx="7" fill="rgba(4,9,20,0.94)" stroke="rgba(251,191,36,0.75)" stroke-width="1.3" />
-              <text x="88" y="13.5" text-anchor="middle" fill="#fde68a" font-size="9.4" font-weight="800" font-family="JetBrains Mono, monospace">🛰️ BLK 34 (${b.host}) • REPEATER</text>
-              <text x="88" y="26.5" text-anchor="middle" fill="#cbd5e1" font-size="8.2" font-family="JetBrains Mono, monospace">Bridges 915 MHz RF ⇄ TCP/IP</text>
-            </g>
-          </g>
-        `;
-        continue;
-      }
-
-      const hosted = nodesByBlk.get(b.blk) || [];
-      const hasRf = hosted.some((h) => h.transport !== 'tcp');
-      const hasTcp = hosted.some((h) => h.transport === 'tcp');
-      const strokeCol = hasRf && hasTcp ? '#38bdf8' : hasTcp ? '#c084fc' : '#38bdf8';
-
-      // Place callout above northern blocks (28, 35) and below southern blocks (29, 33) for zero overlap!
-      const isNorth = b.blk === '28' || b.blk === '35';
-      const cardW = 192;
-      const cardH = 18 + hosted.length * 15;
-      const cardY = isNorth ? -b.h / 2 - cardH - 12 : b.h / 2 + 12;
-
-      const rowsSvg = hosted
-        .map((nd, rIdx) => {
-          const ry = 28 + rIdx * 14.5;
-          const col = nd.transport === 'tcp' ? '#e9d5ff' : '#bae6fd';
-          const isSubActive = nd.subnetKey === activeKey;
-          const statTxt = nd.height > 0 ? `#${fmtNum(nd.height)}${nd.rttMs ? ` • ${nd.rttMs}ms` : ''}` : 'ONLINE';
-          return `
-            <g class="slx-swm-pin-group" data-mc-sub="${escHtml(nd.subnetKey)}">
-              <text x="8" y="${ry}" fill="${col}" font-size="8.6" font-weight="800" font-family="JetBrains Mono, monospace">${escHtml(nd.icon)} ${escHtml(nd.label)}${isSubActive ? ' ★' : ''}</text>
-              <text x="${cardW - 8}" y="${ry}" text-anchor="end" fill="#6ee7b7" font-size="8.3" font-weight="700" font-family="JetBrains Mono, monospace">${escHtml(statTxt)}</text>
-            </g>
-          `;
-        })
-        .join('');
-
-      blocksSvg += `
-        <g transform="translate(${b.x.toFixed(1)}, ${b.y.toFixed(1)})">
-          ${hasRf ? `<circle class="slx-swm-rf-ring" cx="0" cy="0" r="16" fill="none" stroke="#38bdf8" stroke-width="1.3" />` : ''}
-          ${hasTcp ? `<circle cx="0" cy="0" r="20" fill="none" stroke="#c084fc" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.85" />` : ''}
-          <g transform="rotate(${b.angle})">
-            <rect x="${-b.w / 2}" y="${-b.h / 2}" width="${b.w}" height="${b.h}" rx="4"
-              fill="#0d213a" stroke="${strokeCol}" stroke-width="2" />
-          </g>
-          <circle r="4.2" fill="#34d399" />
-
-          <g transform="translate(${-cardW / 2}, ${cardY})">
-            <rect width="${cardW}" height="${cardH}" rx="7" fill="rgba(4,10,22,0.94)" stroke="${strokeCol}" stroke-width="1.35" />
-            <text x="8" y="13.5" fill="#f8fafc" font-size="9.2" font-weight="800" font-family="JetBrains Mono, monospace">🏢 BLK ${b.blk} MARINE CRES (${b.host})</text>
-            <line x1="6" y1="17.5" x2="${cardW - 6}" y2="17.5" stroke="rgba(71,85,105,0.55)" stroke-width="0.8" />
-            ${rowsSvg}
-          </g>
-        </g>
-      `;
-    }
-
-    // Top-left Location Cartouche & 50m Scale Bar
-    const pxPer50m = ((50 / 111_320) / (MC_LON_EAST - MC_LON_WEST)) * MAP_BASE_W;
-    const hudOverlaySvg = `
-      <g transform="translate(16, 42)">
-        <rect width="346" height="40" rx="8" fill="rgba(3,8,18,0.9)" stroke="rgba(56,189,248,0.55)" stroke-width="1.2" />
-        <text x="12" y="16.5" fill="#f8fafc" font-size="10.5" font-weight="800" font-family="JetBrains Mono, monospace">🇸🇬 MARINE CRESCENT, SINGAPORE (S440028–35)</text>
-        <text x="12" y="31" fill="#7dd3fc" font-size="8.6" font-family="JetBrains Mono, monospace">Closely Co-Located RF Subnet 1 + TCP Subnet 2 + Repeater</text>
-      </g>
-      <g transform="translate(${(MAP_BASE_W - pxPer50m - 26).toFixed(1)}, ${(yEcp - 22).toFixed(1)})">
-        <line x1="0" y1="0" x2="${pxPer50m.toFixed(1)}" y2="0" stroke="#cbd5e1" stroke-width="2" />
-        <line x1="0" y1="-4" x2="0" y2="4" stroke="#cbd5e1" stroke-width="2" />
-        <line x1="${pxPer50m.toFixed(1)}" y1="-4" x2="${pxPer50m.toFixed(1)}" y2="4" stroke="#cbd5e1" stroke-width="2" />
-        <text x="${(pxPer50m / 2).toFixed(1)}" y="-6" text-anchor="middle" fill="#cbd5e1" font-size="8.8" font-weight="700" font-family="JetBrains Mono, monospace">50 m</text>
-      </g>
-    `;
-
-    elMcSvg.innerHTML = `
-      <defs>
-        <filter id="mcGlow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="2.5" result="b" />
-          <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
-        </filter>
-      </defs>
-      <rect x="0" y="0" width="${MAP_BASE_W}" height="${MAP_BASE_H}" fill="#071120" />
-      ${gridSvg}
-      ${roadsAndCoastSvg}
-      ${meshLinksSvg}
-      ${blocksSvg}
-      ${hudOverlaySvg}
-    `;
-
-    elMcSvg.querySelectorAll('[data-mc-sub]').forEach((el) => {
-      el.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        const k = el.getAttribute('data-mc-sub');
-        if (k) {
-          state.selectedKey = k;
-          renderAll();
-        }
-      });
-    });
   }
 
-  function renderSvgContent() {
-    if (!elSvg) return;
+  function renderMap() {
+    btnGlobal?.classList.toggle('active', state.mode === 'global');
+    btnFit?.classList.toggle('active', state.mode === 'fit');
+    elStage?.classList.toggle('pan-mode', state.view === 'map' && state.mode === 'custom');
+
+    const dec = state.zoom >= 13 ? 4 : state.zoom >= 7 ? 3 : 2;
+    if (elCoords) {
+      elCoords.textContent = `${formatLatLon(state.lat, state.lon, dec)} • z${state.zoom.toFixed(1)}`;
+    }
+
+    // 1. Static local world_map.jpg backdrop at low zoom (and offline fallback)
+    if (gBackdrop) {
+      if (!state.bgFailed && backgroundImgUrl && state.zoom < 5.5) {
+        const tl = geoToScreen(82, -169);
+        const br = geoToScreen(-68, 180);
+        const w = Math.max(100, br.x - tl.x);
+        const h = Math.max(60, br.y - tl.y);
+        const op = state.zoom <= 2.3 ? 0.96 : Math.max(0, 1 - (state.zoom - 2.3) / 2.2);
+        gBackdrop.innerHTML = `<image href="${escHtml(backgroundImgUrl)}" x="${tl.x.toFixed(1)}" y="${tl.y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" preserveAspectRatio="none" opacity="${op.toFixed(2)}" />`;
+      } else {
+        gBackdrop.innerHTML = '';
+      }
+    }
+
+    // 2. Multi-scale Carto Dark Matter `@2x` slippy tiles (coarse underlay + sharp current zoom)
+    if (!state.tilesOffline && state.zoom > 2.05) {
+      const fineZ = Math.max(2, Math.min(18, Math.round(state.zoom)));
+      const coarseZ = Math.max(2, fineZ - 3);
+      if (gTilesCoarse && coarseZ < fineZ) {
+        const cLayer = buildTileLayerHtml(coarseZ);
+        if (cLayer.key !== lastCoarseKey) {
+          gTilesCoarse.innerHTML = cLayer.html;
+          lastCoarseKey = cLayer.key;
+        }
+      } else if (gTilesCoarse) {
+        gTilesCoarse.innerHTML = '';
+        lastCoarseKey = '';
+      }
+      if (gTilesFine) {
+        const fLayer = buildTileLayerHtml(fineZ);
+        if (fLayer.key !== lastFineKey) {
+          gTilesFine.innerHTML = fLayer.html;
+          lastFineKey = fLayer.key;
+        }
+      }
+    } else {
+      if (gTilesCoarse) gTilesCoarse.innerHTML = '';
+      if (gTilesFine) gTilesFine.innerHTML = '';
+      lastCoarseKey = '';
+      lastFineKey = '';
+    }
+
+    // 3. Adaptive WGS84 Tactical Graticule Lines (works at every zoom from 180° globe to 0.0005° street!)
+    if (gGraticule) {
+      const degSpanLon = (MAP_BASE_W / (256 * Math.pow(2, state.zoom))) * 360;
+      const steps = [60, 30, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005];
+      let step = steps[steps.length - 1];
+      for (const st of steps) {
+        if (degSpanLon / st >= 2.5 && degSpanLon / st <= 8) {
+          step = st;
+          break;
+        }
+      }
+      const tlGeo = screenToGeo(0, 0);
+      const brGeo = screenToGeo(MAP_BASE_W, MAP_BASE_H);
+      const gDec = step < 0.01 ? 4 : step < 0.1 ? 3 : step < 1 ? 2 : 0;
+
+      let grat = '';
+      const startLat = Math.floor(Math.min(tlGeo.lat, brGeo.lat) / step) * step;
+      const endLat = Math.ceil(Math.max(tlGeo.lat, brGeo.lat) / step) * step;
+      for (let la = startLat; la <= endLat + step * 0.1; la += step) {
+        if (la < -82 || la > 82) continue;
+        const { y } = geoToScreen(la, state.lon);
+        if (y < 0 || y > MAP_BASE_H) continue;
+        const isEq = Math.abs(la) < 1e-7;
+        grat += `
+          <line x1="0" y1="${y.toFixed(1)}" x2="${MAP_BASE_W}" y2="${y.toFixed(1)}"
+            stroke="${isEq ? 'rgba(56,189,248,0.28)' : 'rgba(56,189,248,0.08)'}" stroke-width="${isEq ? '1.2' : '0.8'}" />
+          <text x="10" y="${(y - 4).toFixed(1)}" fill="rgba(148,163,184,0.48)" font-size="9" font-family="JetBrains Mono, monospace">${Math.abs(la).toFixed(gDec)}°${la >= 0 ? 'N' : 'S'}</text>
+        `;
+      }
+      const startLon = Math.floor((state.lon - degSpanLon * 0.6) / step) * step;
+      const endLon = Math.ceil((state.lon + degSpanLon * 0.6) / step) * step;
+      for (let lo = startLon; lo <= endLon + step * 0.1; lo += step) {
+        const { x } = geoToScreen(state.lat, lo);
+        if (x < 0 || x > MAP_BASE_W) continue;
+        grat += `
+          <line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${MAP_BASE_H}"
+            stroke="rgba(56,189,248,0.08)" stroke-width="0.8" />
+          <text x="${(x + 4).toFixed(1)}" y="18" fill="rgba(148,163,184,0.42)" font-size="8.8" font-family="JetBrains Mono, monospace">${Math.abs(lo).toFixed(gDec)}°${lo >= 0 ? 'E' : 'W'}</text>
+        `;
+      }
+      gGraticule.innerHTML = grat;
+    }
+
+    // 4. Generic Multi-Subnet & Validator Mesh Vector Overlay
+    renderVectorsAndHud();
+  }
+
+  function renderVectorsAndHud() {
+    if (!gVectors || !gHudSvg) return;
     const subs = getEnrichedSubnets();
     const activeKey = SlxSubnetManager.getActiveSubnetKey();
     if (!subs.some((s) => s.key === state.selectedKey)) {
       state.selectedKey = activeKey || subs[0]?.key || 'subnet1';
     }
 
-    const { nodes, clusters, uiScale } = layoutMapNodes(subs, state.zoom);
+    // Decide per-subnet whether individual validator nodes are resolved at the current zoom!
+    const rawItems = []; // { kind: 'validator'|'subnet', subnet, label, blk, sx, sy, lat, lon, online, height, rttMs }
+    const subnetScreenCenters = [];
+    let meshLinksHtml = '';
 
-    // Graticule grid lines
-    const latLines = [60, 30, 0, -30, -60];
-    const lonLines = [-120, -60, 0, 60, 120];
-    let graticuleSvg = '';
+    subs.forEach((s, sIdx) => {
+      const isTcp = s.transport === 'tcp';
+      const probe = state.nodeStatsByKey.get(s.key) || null;
+      const valCoords = (s.validatorNodes || [])
+        .map((vn, i) => {
+          const la = Number(vn?.lat);
+          const lo = Number(vn?.lon);
+          if (!Number.isFinite(la) || !Number.isFinite(lo) || (la === 0 && lo === 0)) return null;
+          const scr = geoToScreen(la, lo);
+          const pr = probe?.nodes?.[i] || null;
+          return {
+            vn,
+            i,
+            lat: la,
+            lon: lo,
+            sx: scr.x,
+            sy: scr.y,
+            online: pr ? pr.online : true,
+            height: pr?.blockHeight || s.liveHeight || 0,
+            rttMs: pr?.rttMs || 0,
+          };
+        })
+        .filter(Boolean);
 
-    for (const la of latLines) {
-      const { y } = latLonToMapXY(la, 0);
-      const isEq = la === 0;
-      const lbl = la === 0 ? '0° EQUATOR' : la > 0 ? `${la}°N` : `${Math.abs(la)}°S`;
-      graticuleSvg += `
-        <line x1="0" y1="${y.toFixed(1)}" x2="${MAP_BASE_W}" y2="${y.toFixed(1)}"
-          stroke="${isEq ? 'rgba(56,189,248,0.28)' : 'rgba(148,163,184,0.12)'}"
-          stroke-width="${(isEq ? 1.2 : 0.8) * uiScale}"
-          stroke-dasharray="${isEq ? `${6 * uiScale} ${4 * uiScale}` : 'none'}" />
-        <text x="${(10 * uiScale).toFixed(1)}" y="${(y - 4 * uiScale).toFixed(1)}"
-          fill="rgba(148,163,184,0.58)" font-size="${(9.5 * uiScale).toFixed(2)}"
-          font-family="JetBrains Mono, monospace">${lbl}</text>
-      `;
-    }
-    for (const lo of lonLines) {
-      const { x } = latLonToMapXY(0, lo);
-      const isPm = lo === 0;
-      const lbl = lo === 0 ? '0° UTC' : lo > 0 ? `${lo}°E` : `${Math.abs(lo)}°W`;
-      graticuleSvg += `
-        <line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${MAP_BASE_H}"
-          stroke="${isPm ? 'rgba(56,189,248,0.2)' : 'rgba(148,163,184,0.1)'}"
-          stroke-width="${0.8 * uiScale}" />
-        <text x="${(x + 4 * uiScale).toFixed(1)}" y="${(MAP_BASE_H - 8 * uiScale).toFixed(1)}"
-          fill="rgba(148,163,184,0.5)" font-size="${(9 * uiScale).toFixed(2)}"
-          font-family="JetBrains Mono, monospace">${lbl}</text>
-      `;
-    }
+      // Measure screen spread of this subnet's validators
+      let spreadPx = 0;
+      for (let a = 0; a < valCoords.length; a++) {
+        for (let b = a + 1; b < valCoords.length; b++) {
+          spreadPx = Math.max(
+            spreadPx,
+            Math.hypot(valCoords[a].sx - valCoords[b].sx, valCoords[a].sy - valCoords[b].sy)
+          );
+        }
+      }
 
-    // Cross-Subnet Roaming / Hybrid Repeater Arcs between Subnet 1 and all other discovered/custom subnets
-    let arcsSvg = '';
-    if (nodes.length >= 2) {
-      const primary = nodes[0];
-      for (let i = 1; i < nodes.length; i++) {
-        const peer = nodes[i];
-        const mx = (primary.px + peer.px) / 2;
-        const my = (primary.py + peer.py) / 2;
-        const dist = Math.hypot(peer.px - primary.px, peer.py - primary.py);
-        // Orthogonal arc lift
-        const arcLift = Math.max(26 * uiScale, Math.min(120 * uiScale, dist * 0.28));
-        const ctrlX = mx;
-        const ctrlY = my - arcLift;
-        const pathId = `slxSwmArc_${i}`;
-        const revPathId = `slxSwmArcRev_${i}`;
-        // Quadratic Bezier midpoint at t = 0.5
-        const repX = 0.25 * primary.px + 0.5 * ctrlX + 0.25 * peer.px;
-        const repY = 0.25 * primary.py + 0.5 * ctrlY + 0.25 * peer.py;
+      if (valCoords.length >= 2 && spreadPx >= 58) {
+        // Camera is zoomed in enough to show individual validator nodes & intra-subnet mesh links!
+        const cx = valCoords.reduce((acc, v) => acc + v.sx, 0) / valCoords.length;
+        const cy = valCoords.reduce((acc, v) => acc + v.sy, 0) / valCoords.length;
+        subnetScreenCenters.push({ subnet: s, cx, cy, expanded: true });
 
-        arcsSvg += `
-          <path id="${pathId}" d="M ${primary.px.toFixed(1)} ${primary.py.toFixed(1)} Q ${ctrlX.toFixed(1)} ${ctrlY.toFixed(1)} ${peer.px.toFixed(1)} ${peer.py.toFixed(1)}"
-            fill="none" stroke="url(#slxSwmBridgeGrad)" stroke-width="${(2.3 * uiScale).toFixed(2)}"
-            stroke-dasharray="${(6 * uiScale).toFixed(1)} ${(4 * uiScale).toFixed(1)}" opacity="0.92" />
-          <path id="${revPathId}" d="M ${peer.px.toFixed(1)} ${peer.py.toFixed(1)} Q ${ctrlX.toFixed(1)} ${ctrlY.toFixed(1)} ${primary.px.toFixed(1)} ${primary.py.toFixed(1)}"
-            fill="none" stroke="transparent" />
-          <circle r="${(3.6 * uiScale).toFixed(2)}" fill="#38bdf8" filter="url(#slxSwmGlow)">
-            <animateMotion dur="2.6s" repeatCount="indefinite"><mpath href="#${pathId}" /></animateMotion>
-          </circle>
-          <circle r="${(3.4 * uiScale).toFixed(2)}" fill="#c084fc" filter="url(#slxSwmGlow)">
-            <animateMotion dur="3.1s" repeatCount="indefinite"><mpath href="#${revPathId}" /></animateMotion>
-          </circle>
-          ${
-            i === 1
-              ? `
-              <g transform="translate(${repX.toFixed(1)}, ${repY.toFixed(1)})">
-                <polygon points="0,${(-7 * uiScale).toFixed(1)} ${(7 * uiScale).toFixed(1)},0 0,${(7 * uiScale).toFixed(1)} ${(-7 * uiScale).toFixed(1)},0"
-                  fill="#0f172a" stroke="#fbbf24" stroke-width="${(1.8 * uiScale).toFixed(2)}" />
-                <circle r="${(2.4 * uiScale).toFixed(2)}" fill="#fbbf24" />
-                <rect x="${(-52 * uiScale).toFixed(1)}" y="${(-23 * uiScale).toFixed(1)}" width="${(104 * uiScale).toFixed(1)}" height="${(13.5 * uiScale).toFixed(1)}"
-                  rx="${(4 * uiScale).toFixed(1)}" fill="rgba(3,7,18,0.88)" stroke="rgba(251,191,36,0.65)" stroke-width="${(0.9 * uiScale).toFixed(2)}" />
-                <text x="0" y="${(-13.6 * uiScale).toFixed(1)}" text-anchor="middle" fill="#fde68a"
-                  font-size="${(8.2 * uiScale).toFixed(2)}" font-weight="800" font-family="JetBrains Mono, monospace">🛰️ ROAMER RF⇄TCP</text>
-              </g>
-            `
-              : ''
+        const isSel = s.key === state.selectedKey;
+        const col = isTcp ? '#c084fc' : '#38bdf8';
+        const offsetPx = sIdx * 4; // tiny parallel offset when two subnets share identical node pairs
+
+        for (let a = 0; a < valCoords.length; a++) {
+          for (let b = a + 1; b < valCoords.length; b++) {
+            const va = valCoords[a];
+            const vb = valCoords[b];
+            const pid = `swmMesh_${s.key}_${a}_${b}`;
+            meshLinksHtml += `
+              <path id="${pid}" d="M ${(va.sx + offsetPx).toFixed(1)} ${(va.sy + offsetPx).toFixed(1)} L ${(vb.sx + offsetPx).toFixed(1)} ${(vb.sy + offsetPx).toFixed(1)}"
+                stroke="${col}" stroke-width="${isSel ? '2.4' : '1.5'}" opacity="${isSel ? '0.82' : '0.48'}"
+                ${isTcp ? '' : 'stroke-dasharray="6 4"'} />
+              ${
+                b === a + 1
+                  ? `<circle r="3" fill="${col}" filter="url(#slxSwmGlow)"><animateMotion dur="${(1.8 + a * 0.35).toFixed(2)}s" repeatCount="indefinite"><mpath href="#${pid}" /></animateMotion></circle>`
+                  : ''
+              }
+            `;
           }
-        `;
+        }
+
+        for (const vc of valCoords) {
+          rawItems.push({
+            kind: 'validator',
+            subnet: s,
+            label: (vc.vn.name || `node${vc.i + 1}`).replace(/^(RF |TCP |Validator )/i, ''),
+            blk: vc.vn.blk || '',
+            sx: vc.sx,
+            sy: vc.sy,
+            lat: vc.lat,
+            lon: vc.lon,
+            online: vc.online,
+            height: vc.height,
+            rttMs: vc.rttMs,
+          });
+        }
+      } else {
+        // Subnet-level marker at regional / continental / world zoom
+        const scr = geoToScreen(s.lat, s.lon);
+        subnetScreenCenters.push({ subnet: s, cx: scr.x, cy: scr.y, expanded: false });
+        rawItems.push({
+          kind: 'subnet',
+          subnet: s,
+          label: s.shortLabel || s.name || s.subnetId,
+          blk: '',
+          sx: scr.x,
+          sy: scr.y,
+          lat: s.lat,
+          lon: s.lon,
+          online: true,
+          height: s.liveHeight,
+          rttMs: 0,
+        });
+      }
+    });
+
+    // Cross-subnet bridge arcs between subnet centers
+    let bridgeArcsHtml = '';
+    if (subnetScreenCenters.length >= 2) {
+      const p0 = subnetScreenCenters[0];
+      for (let i = 1; i < subnetScreenCenters.length; i++) {
+        const pi = subnetScreenCenters[i];
+        const dist = Math.hypot(pi.cx - p0.cx, pi.cy - p0.cy);
+        if (dist > 36) {
+          const mx = (p0.cx + pi.cx) / 2;
+          const my = (p0.cy + pi.cy) / 2 - Math.min(110, Math.max(28, dist * 0.25));
+          const aid = `swmBrArc_${i}`;
+          bridgeArcsHtml += `
+            <path id="${aid}" d="M ${p0.cx.toFixed(1)} ${p0.cy.toFixed(1)} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${pi.cx.toFixed(1)} ${pi.cy.toFixed(1)}"
+              fill="none" stroke="url(#slxSwmBridgeGrad)" stroke-width="2.2" stroke-dasharray="6 4" opacity="0.9" />
+            <circle r="3.6" fill="#fbbf24" filter="url(#slxSwmGlow)">
+              <animateMotion dur="2.4s" repeatCount="indefinite"><mpath href="#${aid}" /></animateMotion>
+            </circle>
+          `;
+        } else if (i === 1 && p0.expanded) {
+          // Co-located expanded subnets: place the Roamer / Bridge beacon cleanly at their shared centroid!
+          bridgeArcsHtml += `
+            <g transform="translate(${p0.cx.toFixed(1)}, ${p0.cy.toFixed(1)})">
+              <circle class="slx-swm-rf-ring" cx="0" cy="0" r="16" fill="none" stroke="#fbbf24" stroke-width="1.3" />
+              <polygon points="0,-12 12,0 0,12 -12,0" fill="#0f172a" stroke="#fbbf24" stroke-width="2" />
+              <circle r="3" fill="#fbbf24" />
+              <rect x="-76" y="15" width="152" height="20" rx="6" fill="rgba(3,7,18,0.92)" stroke="rgba(251,191,36,0.72)" stroke-width="1.1" />
+              <text x="0" y="28.5" text-anchor="middle" fill="#fde68a" font-size="8.6" font-weight="800" font-family="JetBrains Mono, monospace">🛰️ ROAMER BRIDGE (RF⇄TCP)</text>
+            </g>
+          `;
+        }
       }
     }
 
-    // Cluster geographic anchor beacons (when multiple subnets share a metro cluster like Singapore)
-    let clusterBeaconsSvg = '';
-    for (const group of clusters) {
-      if (group.length <= 1) continue;
-      const gx = group.reduce((a, n) => a + n.ax, 0) / group.length;
-      const gy = group.reduce((a, n) => a + n.ay, 0) / group.length;
-      clusterBeaconsSvg += `
-        <g>
-          <circle cx="${gx.toFixed(1)}" cy="${gy.toFixed(1)}" r="${(5.2 * uiScale).toFixed(2)}"
-            fill="rgba(16,185,129,0.28)" stroke="#34d399" stroke-width="${(1.5 * uiScale).toFixed(2)}" />
-          <circle cx="${gx.toFixed(1)}" cy="${gy.toFixed(1)}" r="${(2.2 * uiScale).toFixed(2)}" fill="#ecfdf5" />
-        </g>
-      `;
+    // Group co-located items within 28px into unified multi-node host sites (zero overlap!)
+    const sites = [];
+    const used = new Set();
+    for (let i = 0; i < rawItems.length; i++) {
+      if (used.has(i)) continue;
+      const members = [rawItems[i]];
+      used.add(i);
+      for (let j = i + 1; j < rawItems.length; j++) {
+        if (used.has(j)) continue;
+        if (Math.hypot(rawItems[i].sx - rawItems[j].sx, rawItems[i].sy - rawItems[j].sy) < 28) {
+          members.push(rawItems[j]);
+          used.add(j);
+        }
+      }
+      const sx = members.reduce((a, m) => a + m.sx, 0) / members.length;
+      const sy = members.reduce((a, m) => a + m.sy, 0) / members.length;
+      sites.push({ sx, sy, lat: members[0].lat, lon: members[0].lon, members });
     }
 
-    // Individual Subnet Pins & Callout Pills
-    let pinsSvg = '';
-    for (const item of nodes) {
-      const s = item.subnet;
-      const isTcp = s.transport === 'tcp';
-      const isSelected = s.key === state.selectedKey;
-      const isActive = s.key === activeKey;
-      const mainCol = isTcp ? '#c084fc' : '#38bdf8';
-      const glowCol = isTcp ? 'rgba(192,132,252,0.32)' : 'rgba(56,189,248,0.32)';
-      const badgeW = 136 * uiScale;
-      const badgeH = 33 * uiScale;
-      const blkTxt = s.liveHeight > 0 ? `#${fmtNum(s.liveHeight)}` : 'LIVE';
-      const titleShort =
-        s.key === 'subnet1'
-          ? 'SUBNET 1 • RF'
-          : s.key === 'subnet2'
-            ? 'SUBNET 2 • TCP'
-            : (s.shortLabel || s.name || 'SUBNET').slice(0, 15);
+    // Compute overall centroid of visible sites so callout cards fan outward away from the middle!
+    const allCx = sites.length ? sites.reduce((a, s) => a + s.sx, 0) / sites.length : MAP_BASE_W / 2;
+    const allCy = sites.length ? sites.reduce((a, s) => a + s.sy, 0) / sites.length : MAP_BASE_H / 2;
 
-      // Leader line from true GPS anchor (ax, ay) to spiderfied node (px, py)
-      const leaderSvg = item.clustered
-        ? `
-          <line x1="${item.ax.toFixed(1)}" y1="${item.ay.toFixed(1)}" x2="${item.px.toFixed(1)}" y2="${item.py.toFixed(1)}"
-            stroke="${mainCol}" stroke-width="${(1.35 * uiScale).toFixed(2)}" stroke-dasharray="${(3.5 * uiScale).toFixed(1)} ${(2.5 * uiScale).toFixed(1)}" opacity="0.88" />
-        `
-        : '';
+    let pinsHtml = '';
+    for (const site of sites) {
+      const hasRf = site.members.some((m) => m.subnet.transport !== 'tcp');
+      const hasTcp = site.members.some((m) => m.subnet.transport === 'tcp');
+      const isSelected = site.members.some((m) => m.subnet.key === state.selectedKey);
+      const mainCol = hasRf ? '#38bdf8' : '#c084fc';
 
-      // Propagation waves (RF concentric circles vs TCP hex ring)
-      const waveSvg = !isTcp
-        ? `
-          <circle class="slx-swm-rf-ring" cx="${item.px.toFixed(1)}" cy="${item.py.toFixed(1)}" r="${(13 * uiScale).toFixed(2)}"
-            fill="none" stroke="#38bdf8" stroke-width="${(1.4 * uiScale).toFixed(2)}" />
-          <circle class="slx-swm-rf-ring delay" cx="${item.px.toFixed(1)}" cy="${item.py.toFixed(1)}" r="${(13 * uiScale).toFixed(2)}"
-            fill="none" stroke="#38bdf8" stroke-width="${(1.1 * uiScale).toFixed(2)}" />
-        `
-        : `
-          <circle cx="${item.px.toFixed(1)}" cy="${item.py.toFixed(1)}" r="${(15 * uiScale).toFixed(2)}"
-            fill="none" stroke="#c084fc" stroke-width="${(1.2 * uiScale).toFixed(2)}"
-            stroke-dasharray="${(4 * uiScale).toFixed(1)} ${(3 * uiScale).toFixed(1)}" opacity="0.8" />
-        `;
+      const cardW = 186;
+      const hdrLine =
+        site.members[0].kind === 'validator'
+          ? site.members[0].blk
+            ? `📍 BLK ${site.members[0].blk} (${formatLatLon(site.lat, site.lon, 4)})`
+            : `📍 ${formatLatLon(site.lat, site.lon, 4)}`
+          : `📍 ${formatLatLon(site.lat, site.lon, 2)}`;
+      const cardH = 19 + site.members.length * 15.5;
 
-      const pillY = item.py < MAP_BASE_H * 0.22 ? item.py + 14 * uiScale : item.py - badgeH - 13 * uiScale;
+      // Push callout outward from cluster centroid (above if site is in upper half, below if in lower half)
+      const placeAbove = sites.length === 1 ? site.sy > 140 : site.sy <= allCy + 4;
+      const rawCardX =
+        sites.length > 1
+          ? site.sx + (site.sx >= allCx ? 14 : -cardW - 14)
+          : site.sx - cardW / 2;
+      const cardX = Math.max(12, Math.min(MAP_BASE_W - cardW - 12, rawCardX));
+      const cardY = Math.max(
+        14,
+        Math.min(MAP_BASE_H - cardH - 46, placeAbove ? site.sy - cardH - 16 : site.sy + 16)
+      );
+      const cardAnchorX = Math.max(cardX + 12, Math.min(cardX + cardW - 12, site.sx));
+      const cardAnchorY = placeAbove ? cardY + cardH : cardY;
 
-      pinsSvg += `
-        ${leaderSvg}
-        <g class="slx-swm-pin-group" data-swm-pin="${escHtml(s.key)}">
-          ${waveSvg}
-          <circle cx="${item.px.toFixed(1)}" cy="${item.py.toFixed(1)}" r="${((isSelected ? 11.5 : 9) * uiScale).toFixed(2)}"
-            fill="${glowCol}" stroke="${isSelected ? '#f8fafc' : mainCol}" stroke-width="${((isSelected ? 2.2 : 1.6) * uiScale).toFixed(2)}" />
-          <circle cx="${item.px.toFixed(1)}" cy="${item.py.toFixed(1)}" r="${(4.3 * uiScale).toFixed(2)}"
-            fill="${isActive ? '#34d399' : mainCol}" />
+      const rowsSvg = site.members
+        .map((m, idx) => {
+          const ry = 30 + idx * 15;
+          const mTcp = m.subnet.transport === 'tcp';
+          const rowCol = mTcp ? '#e9d5ff' : '#bae6fd';
+          const isAct = m.subnet.key === activeKey;
+          const rTxt =
+            m.height > 0
+              ? `#${fmtNum(m.height)}${m.rttMs ? ` • ${m.rttMs}ms` : ''}`
+              : `${fmtNum(m.subnet.validatorCount || 3)} Val`;
+          return `
+            <g class="slx-swm-pin-group" data-swm-pin="${escHtml(m.subnet.key)}">
+              <text x="8" y="${ry}" fill="${rowCol}" font-size="8.6" font-weight="800" font-family="JetBrains Mono, monospace">${escHtml(m.subnet.icon || (mTcp ? '🔌' : '📡'))} ${escHtml(String(m.label).slice(0, 16))}${isAct ? ' ★' : ''}</text>
+              <text x="${cardW - 8}" y="${ry}" text-anchor="end" fill="#6ee7b7" font-size="8.3" font-weight="700" font-family="JetBrains Mono, monospace">${escHtml(rTxt)}</text>
+            </g>
+          `;
+        })
+        .join('');
 
-          <g transform="translate(${(item.px - badgeW / 2).toFixed(1)}, ${pillY.toFixed(1)})">
-            <rect width="${badgeW.toFixed(1)}" height="${badgeH.toFixed(1)}" rx="${(6.5 * uiScale).toFixed(1)}"
-              fill="rgba(4, 10, 22, 0.93)"
-              stroke="${isSelected ? '#f8fafc' : mainCol}"
-              stroke-width="${((isSelected ? 1.8 : 1.15) * uiScale).toFixed(2)}" />
-            <text x="${(7 * uiScale).toFixed(1)}" y="${(13.2 * uiScale).toFixed(1)}"
-              fill="${isTcp ? '#e9d5ff' : '#bae6fd'}" font-size="${(8.8 * uiScale).toFixed(2)}"
-              font-weight="800" font-family="JetBrains Mono, monospace">${escHtml(s.icon || (isTcp ? '🔌' : '📡'))} ${escHtml(titleShort)}</text>
-            <text x="${(badgeW - 7 * uiScale).toFixed(1)}" y="${(13.2 * uiScale).toFixed(1)}" text-anchor="end"
-              fill="#6ee7b7" font-size="${(8.4 * uiScale).toFixed(2)}"
-              font-weight="800" font-family="JetBrains Mono, monospace">${escHtml(blkTxt)}</text>
-            <text x="${(7 * uiScale).toFixed(1)}" y="${(25.8 * uiScale).toFixed(1)}"
-              fill="#94a3b8" font-size="${(7.7 * uiScale).toFixed(2)}"
-              font-family="JetBrains Mono, monospace">ID:${escHtml(s.subnetId || '—')} • ${fmtNum(s.validatorCount || s.validatorNodes?.length || 1)} Val${isActive ? ' • ★' : ''}</text>
+      pinsHtml += `
+        <g>
+          <line x1="${site.sx.toFixed(1)}" y1="${site.sy.toFixed(1)}" x2="${cardAnchorX.toFixed(1)}" y2="${cardAnchorY.toFixed(1)}"
+            stroke="${mainCol}" stroke-width="1.3" stroke-dasharray="3 2.5" opacity="0.82" />
+          ${hasRf ? `<circle class="slx-swm-rf-ring" cx="${site.sx.toFixed(1)}" cy="${site.sy.toFixed(1)}" r="15" fill="none" stroke="#38bdf8" stroke-width="1.4" />` : ''}
+          ${hasTcp ? `<circle cx="${site.sx.toFixed(1)}" cy="${site.sy.toFixed(1)}" r="19" fill="none" stroke="#c084fc" stroke-width="1.3" stroke-dasharray="4 3" opacity="0.88" />` : ''}
+          <circle class="slx-swm-pin-group" data-swm-pin="${escHtml(site.members[0].subnet.key)}"
+            cx="${site.sx.toFixed(1)}" cy="${site.sy.toFixed(1)}" r="${isSelected ? '9.5' : '8'}"
+            fill="rgba(15,23,42,0.9)" stroke="${isSelected ? '#f8fafc' : mainCol}" stroke-width="2" />
+          <circle cx="${site.sx.toFixed(1)}" cy="${site.sy.toFixed(1)}" r="3.8" fill="#34d399" pointer-events="none" />
+
+          <g transform="translate(${cardX.toFixed(1)}, ${cardY.toFixed(1)})">
+            <rect width="${cardW}" height="${cardH}" rx="7" fill="rgba(4,10,22,0.93)"
+              stroke="${isSelected ? '#f8fafc' : mainCol}" stroke-width="${isSelected ? '1.8' : '1.25'}" />
+            <text x="8" y="13" fill="#94a3b8" font-size="7.9" font-weight="700" font-family="JetBrains Mono, monospace">${escHtml(hdrLine)}</text>
+            <line x1="6" y1="17" x2="${cardW - 6}" y2="17" stroke="rgba(71,85,105,0.55)" stroke-width="0.8" />
+            ${rowsSvg}
           </g>
         </g>
       `;
     }
 
-    elSvg.innerHTML = `
-      <defs>
-        <linearGradient id="slxSwmBridgeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" stop-color="#38bdf8" />
-          <stop offset="50%" stop-color="#fbbf24" />
-          <stop offset="100%" stop-color="#c084fc" />
-        </linearGradient>
-        <filter id="slxSwmGlow" x="-60%" y="-60%" width="220%" height="220%">
-          <feGaussianBlur stdDeviation="2.2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      ${
-        !state.bgFailed && backgroundImgUrl
-          ? `<image href="${escHtml(backgroundImgUrl)}" x="0" y="0" width="${MAP_BASE_W}" height="${MAP_BASE_H}" preserveAspectRatio="none" opacity="0.96" />`
-          : `<rect x="0" y="0" width="${MAP_BASE_W}" height="${MAP_BASE_H}" fill="#061021" />`
-      }
-      ${graticuleSvg}
-      ${clusterBeaconsSvg}
-      ${arcsSvg}
-      ${pinsSvg}
-    `;
-
-    elSvg.querySelectorAll('[data-swm-pin]').forEach((g) => {
-      g.addEventListener('click', (ev) => {
+    gVectors.innerHTML = `${meshLinksHtml}${bridgeArcsHtml}${pinsHtml}`;
+    gVectors.querySelectorAll('[data-swm-pin]').forEach((el) => {
+      el.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        const k = g.getAttribute('data-swm-pin');
+        const k = el.getAttribute('data-swm-pin');
         if (k) {
           state.selectedKey = k;
           renderAll();
         }
       });
     });
+
+    // Dynamic ground-truth scale bar (bottom-right)
+    const metersPerPx =
+      (156543.03392 * Math.cos((state.lat * Math.PI) / 180)) / Math.pow(2, state.zoom);
+    const scaleBar = chooseNiceScaleMeters(metersPerPx, 130);
+    gHudSvg.innerHTML = `
+      <g transform="translate(${(MAP_BASE_W - scaleBar.px - 20).toFixed(1)}, ${(MAP_BASE_H - 22).toFixed(1)})">
+        <rect x="-8" y="-18" width="${(scaleBar.px + 16).toFixed(1)}" height="24" rx="5" fill="rgba(3,7,18,0.78)" stroke="rgba(71,85,105,0.55)" stroke-width="0.9" />
+        <line x1="0" y1="0" x2="${scaleBar.px.toFixed(1)}" y2="0" stroke="#e2e8f0" stroke-width="2" />
+        <line x1="0" y1="-4" x2="0" y2="3" stroke="#e2e8f0" stroke-width="2" />
+        <line x1="${scaleBar.px.toFixed(1)}" y1="-4" x2="${scaleBar.px.toFixed(1)}" y2="3" stroke="#e2e8f0" stroke-width="2" />
+        <text x="${(scaleBar.px / 2).toFixed(1)}" y="-5" text-anchor="middle" fill="#e2e8f0" font-size="8.5" font-weight="700" font-family="JetBrains Mono, monospace">${escHtml(scaleBar.label)}</text>
+      </g>
+    `;
   }
 
   function renderCardsAndInspector() {
@@ -1473,7 +1395,7 @@ export function mountSlxSubnetWorldMap({
                 <span style="color:#6ee7b7;">${s.liveHeight > 0 ? `Blk #${fmtNum(s.liveHeight)}` : `${fmtNum(s.validatorCount || 3)} Validators`}</span>
               </div>
               <div style="font-family:'JetBrains Mono',monospace;font-size:0.63rem;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                📍 ${escHtml(formatLatLon(s.lat, s.lon))} — ${escHtml(s.locationLabel || 'SuperLexicon Mesh Node')}
+                📍 ${escHtml(formatLatLon(s.lat, s.lon, 4))} — ${escHtml(s.locationLabel || 'SuperLexicon Mesh Node')}
               </div>
             </div>
           `;
@@ -1485,13 +1407,7 @@ export function mountSlxSubnetWorldMap({
           const k = card.getAttribute('data-swm-card');
           if (!k) return;
           state.selectedKey = k;
-          const target = subs.find((x) => x.key === k);
-          if (target && state.zoom > 1.35) {
-            const pt = latLonToMapXY(target.lat, target.lon);
-            animateCameraTo(pt.x, pt.y, state.zoom, state.mode);
-          } else {
-            renderAll();
-          }
+          renderAll();
         });
       });
     }
@@ -1541,12 +1457,12 @@ export function mountSlxSubnetWorldMap({
             ${sel.onChainRegistered ? `<span style="font-size:0.6rem;padding:1px 6px;border-radius:999px;background:rgba(56,189,248,0.16);border:1px solid rgba(56,189,248,0.45);color:#bae6fd;">⛓️ Stored in SubnetRegistry HFS</span>` : ''}
           </div>
           <div style="color:#94a3b8;font-size:0.66rem;word-break:break-all;">
-            📍 ${escHtml(formatLatLon(sel.lat, sel.lon))} (${escHtml(sel.locationLabel || 'Mesh Cluster')}) • Stats Nodes: <code style="color:#bae6fd;">${escHtml((sel.statsRpcUrls || [sel.rpcUrl]).filter(Boolean).join(', ') || 'Auto-Discovered')}</code>
+            📍 ${escHtml(formatLatLon(sel.lat, sel.lon, 4))} (${escHtml(sel.locationLabel || 'Mesh Cluster')}) • Stats Nodes: <code style="color:#bae6fd;">${escHtml((sel.statsRpcUrls || [sel.rpcUrl]).filter(Boolean).join(', ') || 'Auto-Discovered')}</code>
           </div>
           ${nodePillsHtml}
         </div>
         <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;flex-shrink:0;">
-          <button type="button" class="slx-swm-btn" data-swm-focus="${escHtml(sel.key)}">🎯 Zoom Here</button>
+          <button type="button" class="slx-swm-btn" data-swm-focus="${escHtml(sel.key)}">🎯 Fit Subnet</button>
           <button type="button" class="slx-swm-btn" data-swm-edit-hfs="${escHtml(sel.key)}" title="Update node URLs &amp; metadata on-chain (requires subnet owner wallet)">✎ Edit Nodes</button>
           ${
             isAct
@@ -1559,20 +1475,18 @@ export function mountSlxSubnetWorldMap({
       elInspector.querySelector('[data-swm-focus]')?.addEventListener('click', () => {
         state.userInterruptedAutoFly = true;
         applyActiveView('map');
-        const isSg = Math.abs(sel.lat - 1.303) < 0.25 && Math.abs(sel.lon - 103.913) < 0.25;
-        if (isSg) {
-          flyIntoMarineCrescent(true);
-        } else {
-          const pt = latLonToMapXY(sel.lat, sel.lon);
-          animateCameraTo(pt.x, pt.y, 3.6, 'custom');
-        }
+        const fitOne = computeAutoFitCamera([sel], MAP_BASE_W, MAP_BASE_H);
+        animateToCamera(fitOne.lat, fitOne.lon, fitOne.zoom, 'custom', 950);
       });
 
       elInspector.querySelector('[data-swm-edit-hfs]')?.addEventListener('click', () => {
         openSlxSubnetRegistryModal({
           initialSubnet: sel,
           onSaved: () => {
-            SlxSubnetManager.refreshDiscoveryMetadata().then(() => pollSubnetHeights());
+            SlxSubnetManager.refreshDiscoveryMetadata().then(() => {
+              pollSubnetHeights();
+              fitAllSubnets(true, 1100);
+            });
           },
         });
       });
@@ -1589,20 +1503,28 @@ export function mountSlxSubnetWorldMap({
 
   function renderAll() {
     if (state.destroyed) return;
-    applyViewBoxImmediate();
-    if (state.mcBlend < 1) renderSvgContent();
-    if (state.mcBlend > 0) renderMarineCrescentSvg();
+    renderMap();
     renderCardsAndInspector();
   }
 
   // Toolbar buttons
   mountContainer.querySelector('[data-swm-act="global"]')?.addEventListener('click', () => {
     state.userInterruptedAutoFly = true;
-    flyOutToGlobal(true);
+    flyToWorld(true);
   });
-  mountContainer.querySelector('[data-swm-act="cluster"]')?.addEventListener('click', () => {
+  mountContainer.querySelector('[data-swm-act="fit"]')?.addEventListener('click', () => {
     state.userInterruptedAutoFly = true;
-    flyIntoMarineCrescent(true);
+    fitAllSubnets(true, 1300);
+  });
+  mountContainer.querySelector('[data-swm-act="zoom-in"]')?.addEventListener('click', () => {
+    state.userInterruptedAutoFly = true;
+    animateToCamera(state.lat, state.lon, Math.min(MAX_Z, state.zoom + 1.4), 'custom', 320);
+  });
+  mountContainer.querySelector('[data-swm-act="zoom-out"]')?.addEventListener('click', () => {
+    state.userInterruptedAutoFly = true;
+    const nextZ = Math.max(MIN_Z, state.zoom - 1.4);
+    if (nextZ <= MIN_Z + 0.1) flyToWorld(true);
+    else animateToCamera(state.lat, state.lon, nextZ, 'custom', 320);
   });
   mountContainer.querySelector('[data-swm-act="replay-fly"]')?.addEventListener('click', () => {
     state.userInterruptedAutoFly = true;
@@ -1625,7 +1547,10 @@ export function mountSlxSubnetWorldMap({
   mountContainer.querySelector('[data-swm-act="register-hfs"]')?.addEventListener('click', () => {
     openSlxSubnetRegistryModal({
       onSaved: () => {
-        SlxSubnetManager.refreshDiscoveryMetadata().then(() => pollSubnetHeights());
+        SlxSubnetManager.refreshDiscoveryMetadata().then(() => {
+          pollSubnetHeights();
+          fitAllSubnets(true, 1200);
+        });
       },
     });
   });
@@ -1633,32 +1558,32 @@ export function mountSlxSubnetWorldMap({
     if (typeof onClose === 'function') onClose();
   });
 
-  // Pointer drag-to-pan (when custom-zoomed on World Map) OR horizontal swipe between View 1 (Map) & View 2 (Phase & Bridge Diagram)
+  // Pointer gestures:
+  // - In `global` or `fit` preset (or `phase` view), horizontal swipe switches cleanly between Map & Phase Diagram!
+  // - In `custom` zoom mode (`➕` / `➖` / wheel), dragging pans the map anywhere on Earth!
   let drag = null;
   elStage?.addEventListener('pointerdown', (ev) => {
     if (
       ev.target.closest('[data-swm-pin]') ||
-      ev.target.closest('[data-mc-sub]') ||
       ev.target.closest('[data-swm="swipe-toggle"]') ||
       ev.target.closest('[data-spd-send]')
     ) {
       return;
     }
-    const isSwipeMode =
-      state.view === 'phase' || state.mode === 'marine' || state.zoom <= 1.03;
+    const isPanMode = state.view === 'map' && state.mode === 'custom';
     drag = {
       pointerId: ev.pointerId,
-      mode: isSwipeMode ? 'swipe' : 'pan',
+      mode: isPanMode ? 'pan' : 'swipe',
       startX: ev.clientX,
       startY: ev.clientY,
       lastX: ev.clientX,
       lastY: ev.clientY,
-      startCx: state.cx,
-      startCy: state.cy,
+      startMercX: lonToMercX(state.lon, state.zoom),
+      startMercY: latToMercY(state.lat, state.zoom),
       lockedHoriz: false,
       abortedVert: false,
     };
-    if (!isSwipeMode) {
+    if (isPanMode) {
       state.userInterruptedAutoFly = true;
       elStage.classList.add('dragging');
       try {
@@ -1669,57 +1594,49 @@ export function mountSlxSubnetWorldMap({
 
   elStage?.addEventListener('pointermove', (ev) => {
     const rect = elStage.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      if (state.view === 'map') {
-        if (state.mcBlend > 0.6) {
-          const mx = ((ev.clientX - rect.left) / rect.width) * MAP_BASE_W;
-          const my = ((ev.clientY - rect.top) / rect.height) * MAP_BASE_H;
-          const geo = marineCrescentXYToLatLon(mx, my);
-          if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon, 4);
-        } else {
-          const cam = clampCamera(state.cx, state.cy, state.zoom);
-          const svgX = cam.cx - cam.vw / 2 + ((ev.clientX - rect.left) / rect.width) * cam.vw;
-          const svgY = cam.cy - cam.vh / 2 + ((ev.clientY - rect.top) / rect.height) * cam.vh;
-          const geo = mapXYToLatLon(svgX, svgY);
-          if (elCoords) elCoords.textContent = formatLatLon(geo.lat, geo.lon, 2);
+    if (rect.width <= 0 || rect.height <= 0) return;
 
-          if (drag && ev.pointerId === drag.pointerId && drag.mode === 'pan') {
-            const dxSvg = ((ev.clientX - drag.startX) / rect.width) * cam.vw;
-            const dySvg = ((ev.clientY - drag.startY) / rect.height) * cam.vh;
-            state.cx = drag.startCx - dxSvg;
-            state.cy = drag.startCy - dySvg;
-            if (state.zoom > 1.02) state.mode = 'custom';
-            applyViewBoxImmediate();
-            return;
-          }
+    if (state.view === 'map') {
+      const svgX = ((ev.clientX - rect.left) / rect.width) * MAP_BASE_W;
+      const svgY = ((ev.clientY - rect.top) / rect.height) * MAP_BASE_H;
+      const g = screenToGeo(svgX, svgY);
+      const dec = state.zoom >= 13 ? 4 : state.zoom >= 7 ? 3 : 2;
+      if (elCoords) elCoords.textContent = `${formatLatLon(g.lat, g.lon, dec)} • z${state.zoom.toFixed(1)}`;
+
+      if (drag && ev.pointerId === drag.pointerId && drag.mode === 'pan') {
+        const dxSvg = ((ev.clientX - drag.startX) / rect.width) * MAP_BASE_W;
+        const dySvg = ((ev.clientY - drag.startY) / rect.height) * MAP_BASE_H;
+        state.lon = mercXToLon(drag.startMercX - dxSvg, state.zoom);
+        state.lat = Math.max(-82, Math.min(82, mercYToLat(drag.startMercY - dySvg, state.zoom)));
+        renderMap();
+        return;
+      }
+    }
+
+    if (drag && ev.pointerId === drag.pointerId && drag.mode === 'swipe' && !drag.abortedVert) {
+      drag.lastX = ev.clientX;
+      drag.lastY = ev.clientY;
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      if (!drag.lockedHoriz) {
+        if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+          drag.abortedVert = true;
+          return;
+        }
+        if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          drag.lockedHoriz = true;
+          state.userInterruptedAutoFly = true;
+          elTrack?.classList.add('swiping');
+          try {
+            elStage.setPointerCapture(ev.pointerId);
+          } catch (_) {}
         }
       }
-
-      if (drag && ev.pointerId === drag.pointerId && drag.mode === 'swipe' && !drag.abortedVert) {
-        drag.lastX = ev.clientX;
-        drag.lastY = ev.clientY;
-        const dx = ev.clientX - drag.startX;
-        const dy = ev.clientY - drag.startY;
-        if (!drag.lockedHoriz) {
-          if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
-            drag.abortedVert = true;
-            return;
-          }
-          if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-            drag.lockedHoriz = true;
-            state.userInterruptedAutoFly = true;
-            elTrack?.classList.add('swiping');
-            try {
-              elStage.setPointerCapture(ev.pointerId);
-            } catch (_) {}
-          }
-        }
-        if (drag.lockedHoriz && elTrack) {
-          const basePct = state.view === 'phase' ? -50 : 0;
-          const deltaPct = (dx / rect.width) * 50;
-          const clampedPct = Math.max(-54, Math.min(4, basePct + deltaPct));
-          elTrack.style.transform = `translate3d(${clampedPct.toFixed(2)}%, 0, 0)`;
-        }
+      if (drag.lockedHoriz && elTrack) {
+        const basePct = state.view === 'phase' ? -50 : 0;
+        const deltaPct = (dx / rect.width) * 50;
+        const clampedPct = Math.max(-54, Math.min(4, basePct + deltaPct));
+        elTrack.style.transform = `translate3d(${clampedPct.toFixed(2)}%, 0, 0)`;
       }
     }
   });
@@ -1747,15 +1664,14 @@ export function mountSlxSubnetWorldMap({
     'wheel',
     (ev) => {
       if (state.view !== 'map') return;
-      if (!showCloseButton && state.mode === 'global' && !ev.ctrlKey && !ev.metaKey) return;
-      if (state.mode === 'marine' && !ev.ctrlKey && !ev.metaKey && !showCloseButton) return;
+      if (!showCloseButton && state.mode !== 'custom' && !ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
       state.userInterruptedAutoFly = true;
-      if (ev.deltaY > 0 && state.mcBlend > 0.5) {
-        flyOutToGlobal(true);
-      } else if (ev.deltaY < 0 && state.mcBlend < 0.5) {
-        flyIntoMarineCrescent(true);
-      }
+      const step = ev.deltaY < 0 ? 0.65 : -0.65;
+      const nextZ = Math.max(MIN_Z, Math.min(MAX_Z, state.zoom + step));
+      state.zoom = nextZ;
+      state.mode = nextZ <= MIN_Z + 0.08 ? 'global' : 'custom';
+      renderMap();
     },
     { passive: false }
   );
@@ -1778,25 +1694,95 @@ export function mountSlxSubnetWorldMap({
     if (!state.destroyed) renderAll();
   }
 
-  const onSubnetsUpdated = () => renderAll();
+  function syncLiveStatsSubscriptions() {
+    if (state.destroyed || typeof WebSocket === 'undefined') return;
+    const subs = SlxSubnetManager.listSubnets();
+    const activeKeys = new Set(subs.map((s) => s.key));
+    for (const [k, handle] of state.statsSubsByKey.entries()) {
+      if (!activeKeys.has(k)) {
+        try {
+          handle?.unsubscribe?.();
+        } catch (_) {}
+        state.statsSubsByKey.delete(k);
+      }
+    }
+    for (const s of subs) {
+      if (state.statsSubsByKey.has(s.key) || !s.rpcUrl) continue;
+      try {
+        const handle = slxSubscribeStats(
+          s.rpcUrl,
+          (stats) => {
+            if (state.destroyed || !stats) return;
+            let changed = false;
+            const h = Number(stats.height || stats.nodes?.height || 0);
+            if (h > 0 && h !== state.heightsByKey.get(s.key)) {
+              state.heightsByKey.set(s.key, h);
+              changed = true;
+            }
+            const { ownGps, peerGpsByPrefix, subnetGpsById } = extractLiveGpsFromStats(stats);
+            const ownSid = String(stats.roamingStatus?.subnet_id || s.subnetId || '')
+              .trim()
+              .toLowerCase();
+            if (ownGps && ownSid) {
+              const prev = state.liveSubnetGpsById.get(ownSid);
+              if (!prev || Math.abs(prev.lat - ownGps.lat) > 1e-6 || Math.abs(prev.lon - ownGps.lon) > 1e-6) {
+                state.liveSubnetGpsById.set(ownSid, ownGps);
+                changed = true;
+              }
+            }
+            for (const [sid, g] of subnetGpsById.entries()) {
+              const prev = state.liveSubnetGpsById.get(sid);
+              if (!prev || Math.abs(prev.lat - g.lat) > 1e-6 || Math.abs(prev.lon - g.lon) > 1e-6) {
+                state.liveSubnetGpsById.set(sid, g);
+                changed = true;
+              }
+            }
+            for (const [pfx, g] of peerGpsByPrefix.entries()) {
+              const prev = state.livePeerGpsByPrefix.get(pfx);
+              if (!prev || Math.abs(prev.lat - g.lat) > 1e-6 || Math.abs(prev.lon - g.lon) > 1e-6) {
+                state.livePeerGpsByPrefix.set(pfx, g);
+                changed = true;
+              }
+            }
+            if (changed) renderAll();
+          },
+          { pubsubWsUrls: s.pubsubWsUrls }
+        );
+        state.statsSubsByKey.set(s.key, handle);
+      } catch (_) {}
+    }
+  }
+
+  const onSubnetsUpdated = () => {
+    if (state.destroyed) return;
+    syncLiveStatsSubscriptions();
+    if (state.mode === 'fit' && !state.animFrame) {
+      const target = computeAutoFitCamera(getEnrichedSubnets(), MAP_BASE_W, MAP_BASE_H);
+      state.lat = target.lat;
+      state.lon = target.lon;
+      state.zoom = target.zoom;
+    }
+    renderAll();
+  };
   if (typeof window !== 'undefined') {
     window.addEventListener('slx:subnets-updated', onSubnetsUpdated);
     window.addEventListener('slx:subnet-changed', onSubnetsUpdated);
   }
 
+  // Trigger World -> Auto-Fit Subnets orbital zoom once visible in the viewport
   let io = null;
   function scheduleInitialAutoZoom() {
     if (state.autoFlyDone || state.userInterruptedAutoFly || state.view !== 'map') return;
     state.autoFlyDone = true;
     state.autoFlyTimer = setTimeout(() => {
       if (!state.destroyed && !state.userInterruptedAutoFly && state.view === 'map') {
-        flyIntoMarineCrescent(true, 1850);
+        fitAllSubnets(true, 1950);
       }
-    }, 950);
+    }, 900);
   }
 
-  if (initialMode === 'cluster' || initialMode === 'marine') {
-    flyIntoMarineCrescent(false);
+  if (initialMode === 'fit-immediate' || initialMode === 'cluster') {
+    fitAllSubnets(false);
     state.autoFlyDone = true;
   } else if (initialMode !== 'global-only') {
     if (typeof IntersectionObserver !== 'undefined' && elStage) {
@@ -1821,6 +1807,7 @@ export function mountSlxSubnetWorldMap({
 
   applyActiveView(state.view);
   renderAll();
+  syncLiveStatsSubscriptions();
   SlxSubnetManager.refreshDiscoveryMetadata().catch(() => {});
   pollSubnetHeights();
   const pollTimer = setInterval(pollSubnetHeights, 4000);
@@ -1848,11 +1835,15 @@ export function mountSlxSubnetWorldMap({
     setView: (v) => applyActiveView(v),
     focusCluster: () => {
       applyActiveView('map');
-      flyIntoMarineCrescent(true);
+      fitAllSubnets(true, 1300);
+    },
+    fitAllSubnets: () => {
+      applyActiveView('map');
+      fitAllSubnets(true, 1300);
     },
     resetGlobal: () => {
       applyActiveView('map');
-      flyOutToGlobal(true);
+      flyToWorld(true);
     },
     replayFlyIn,
     destroy() {
@@ -1861,6 +1852,12 @@ export function mountSlxSubnetWorldMap({
       if (state.autoFlyTimer) clearTimeout(state.autoFlyTimer);
       io?.disconnect();
       clearInterval(pollTimer);
+      for (const handle of state.statsSubsByKey.values()) {
+        try {
+          handle?.unsubscribe?.();
+        } catch (_) {}
+      }
+      state.statsSubsByKey.clear();
       phaseDiagramInst?.destroy();
       if (typeof window !== 'undefined') {
         window.removeEventListener('slx:subnets-updated', onSubnetsUpdated);
@@ -1875,7 +1872,7 @@ let _activeMapModal = null;
 /**
  * Open a full-bleed interactive Subnet World Map & Phase Sync modal from any page's top Chain Bar.
  */
-export function openSlxSubnetWorldMapModal({ initialMode = 'global', initialView = 'map' } = {}) {
+export function openSlxSubnetWorldMapModal({ initialMode = 'auto-fit', initialView = 'map' } = {}) {
   if (typeof document === 'undefined') return null;
   injectSubnetWorldMapStyles();
 
@@ -2109,11 +2106,15 @@ export function openSlxSubnetRegistryModal({
 
     if (!pubList.length) return;
     const transport = String(fd.get('transport') || 'tcp');
+    const baseLat = Number(fd.get('lat') || 0);
+    const baseLon = Number(fd.get('lon') || 0);
     const pubWsUrls = pubList.map(derivePubSubFromRpcUrl).filter(Boolean);
     const lanWsUrls = lanList.map(derivePubSubFromRpcUrl).filter(Boolean);
     const validatorNodes = pubList.map((u, idx) => ({
       name: `${transport === 'flrc' ? 'RF' : 'TCP'} Validator #${idx + 1}`,
       url: u,
+      lat: baseLat,
+      lon: baseLon,
       ...(lanList[idx] ? { lanUrl: lanList[idx] } : {}),
     }));
 
@@ -2139,8 +2140,8 @@ export function openSlxSubnetRegistryModal({
           transport,
           channelHz: transport === 'flrc' ? 915_000_000 : 1,
           validatorCount: Number(fd.get('validatorCount') || pubList.length || 3),
-          lat: Number(fd.get('lat') || 0),
-          lon: Number(fd.get('lon') || 0),
+          lat: baseLat,
+          lon: baseLon,
           hfsRegistry: String(fd.get('hfsRegistry') || '').trim(),
           endpoints: {
             shortLabel: String(fd.get('shortLabel') || '').trim(),

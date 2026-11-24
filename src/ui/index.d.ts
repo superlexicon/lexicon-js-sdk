@@ -146,7 +146,7 @@ export function mountSlxUseCaseHeaderDocs(opts: {
   extraContainer: HTMLElement | null;
 }): { descBtn: HTMLButtonElement; instBtn: HTMLButtonElement | null } | null;
 
-export function formatLatLon(lat: number, lon: number): string;
+export function formatLatLon(lat: number, lon: number, decimals?: number): string;
 export function latLonToMapXY(
   lat: number,
   lon: number,
@@ -159,11 +159,25 @@ export function mapXYToLatLon(
   width?: number,
   height?: number
 ): { lat: number; lon: number };
+export function lonToMercX(lon: number, z?: number): number;
+export function latToMercY(lat: number, z?: number): number;
+export function mercXToLon(wx: number, z?: number): number;
+export function mercYToLat(wy: number, z?: number): number;
+export function computeAutoFitCamera(
+  subnets: any[],
+  width?: number,
+  height?: number
+): { lat: number; lon: number; zoom: number };
+export function extractLiveGpsFromStats(stats: any): {
+  ownGps: { lat: number; lon: number } | null;
+  peerGpsByPrefix: Map<string, { lat: number; lon: number }>;
+  subnetGpsById: Map<string, { lat: number; lon: number }>;
+};
 
 export function mountSlxSubnetWorldMap(opts: {
   mountContainer: HTMLElement | null;
   backgroundImgUrl?: string;
-  initialMode?: 'global' | 'cluster';
+  initialMode?: 'auto-fit' | 'fit-immediate' | 'global-only' | 'global' | 'cluster';
   initialView?: 'map' | 'phase';
   showCloseButton?: boolean;
   onClose?: (() => void) | null;
@@ -179,12 +193,14 @@ export function mountSlxSubnetWorldMap(opts: {
   }) => void;
   setView: (view: 'map' | 'phase') => void;
   focusCluster: () => void;
+  fitAllSubnets: () => void;
   resetGlobal: () => void;
+  replayFlyIn: () => void;
   destroy: () => void;
 } | null;
 
 export function openSlxSubnetWorldMapModal(opts?: {
-  initialMode?: 'global' | 'cluster';
+  initialMode?: 'auto-fit' | 'fit-immediate' | 'global-only' | 'global' | 'cluster';
   initialView?: 'map' | 'phase';
 }): {
   backdrop: HTMLElement;

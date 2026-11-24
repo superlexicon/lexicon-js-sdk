@@ -902,13 +902,17 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   }
 }
 
-// 18. Global Subnet World Map Projection & Protocol GPS Hydration
+// 18. Generic Multi-Scale Subnet World Map Projection, Auto-Fit Camera & Protocol GPS Hydration
 {
   const {
     latLonToMapXY,
     mapXYToLatLon,
-    marineCrescentLatLonToXY,
-    marineCrescentXYToLatLon,
+    lonToMercX,
+    latToMercY,
+    mercXToLon,
+    mercYToLat,
+    computeAutoFitCamera,
+    extractLiveGpsFromStats,
     formatLatLon,
     MAP_BASE_W,
     MAP_BASE_H,
@@ -920,23 +924,87 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   assert.ok(Math.abs(sgPx.x - 1251) < 1.5);
   assert.ok(Math.abs(sgPx.y - 537.5) < 1.5);
 
-  // Verify Marine Crescent Blks 28, 29, 33, 34, 35 project cleanly with generous separation
-  const mcBlks = [
-    [1.30344, 103.91335], // Blk 28
-    [1.30285, 103.9132], // Blk 29
-    [1.30265, 103.91218], // Blk 33
-    [1.30308, 103.91268], // Blk 34 (Repeater)
-    [1.30337, 103.91252], // Blk 35
-  ].map(([la, lo]) => marineCrescentLatLonToXY(la, lo, MAP_BASE_W, MAP_BASE_H));
-  for (let i = 0; i < mcBlks.length; i++) {
-    assert.ok(mcBlks[i].x > 200 && mcBlks[i].x < 1000);
-    assert.ok(mcBlks[i].y > 150 && mcBlks[i].y < 520);
-    for (let j = i + 1; j < mcBlks.length; j++) {
-      assert.ok(Math.hypot(mcBlks[i].x - mcBlks[j].x, mcBlks[i].y - mcBlks[j].y) > 85);
-    }
-  }
-  const mcInv = marineCrescentXYToLatLon(mcBlks[0].x, mcBlks[0].y, MAP_BASE_W, MAP_BASE_H);
-  assert.ok(Math.abs(mcInv.lat - 1.30344) < 1e-6 && Math.abs(mcInv.lon - 103.91335) < 1e-6);
+  // Verify generic Web-Mercator multi-scale `computeAutoFitCamera` across 3 completely different geographic scales:
+  // Scale A — Neighborhood (~130m across Marine Crescent Blk 28/29/33/35): auto-centers on Marine Crescent & maximizes street zoom
+  const mcSubnets = [
+    {
+      lat: 1.30308,
+      lon: 103.9128,
+      validatorNodes: [
+        { lat: 1.30344, lon: 103.91335 }, // Blk 28
+        { lat: 1.30285, lon: 103.9132 }, // Blk 29
+        { lat: 1.30265, lon: 103.91218 }, // Blk 33
+        { lat: 1.30337, lon: 103.91252 }, // Blk 35
+      ],
+    },
+    {
+      lat: 1.30322,
+      lon: 103.91302,
+      validatorNodes: [
+        { lat: 1.30344, lon: 103.91335 },
+        { lat: 1.30285, lon: 103.9132 },
+        { lat: 1.30337, lon: 103.91252 },
+      ],
+    },
+  ];
+  const camNeighborhood = computeAutoFitCamera(mcSubnets, MAP_BASE_W, MAP_BASE_H);
+  assert.ok(Math.abs(camNeighborhood.lat - 1.303045) < 0.0002);
+  assert.ok(Math.abs(camNeighborhood.lon - 103.912765) < 0.0002);
+  assert.ok(camNeighborhood.zoom > 16.5 && camNeighborhood.zoom <= 17.45);
+
+  // Scale B — City (~19 km across Singapore: Marine Crescent + Jurong): auto-centers across Singapore at city zoom
+  const camCity = computeAutoFitCamera(
+    [
+      { lat: 1.3031, lon: 103.9128 },
+      { lat: 1.3331, lon: 103.7436 },
+    ],
+    MAP_BASE_W,
+    MAP_BASE_H
+  );
+  assert.ok(camCity.lat > 1.31 && camCity.lat < 1.325);
+  assert.ok(camCity.lon > 103.82 && camCity.lon < 103.84);
+  assert.ok(camCity.zoom > 11.2 && camCity.zoom < 13.2);
+
+  // Scale C — Intercontinental (~10,500 km: Singapore + Geneva): auto-centers on Eurasia at continental zoom
+  const camGlobal = computeAutoFitCamera(
+    [
+      { lat: 1.3031, lon: 103.9128 },
+      { lat: 46.2044, lon: 6.1432 },
+    ],
+    MAP_BASE_W,
+    MAP_BASE_H
+  );
+  assert.ok(camGlobal.lat > 20 && camGlobal.lat < 30);
+  assert.ok(camGlobal.lon > 50 && camGlobal.lon < 60);
+  assert.ok(camGlobal.zoom > 2.0 && camGlobal.zoom < 3.8);
+
+  // Verify Web-Mercator round-trips & `extractLiveGpsFromStats`
+  const mx = lonToMercX(103.9128, 17);
+  const my = latToMercY(1.3031, 17);
+  assert.ok(Math.abs(mercXToLon(mx, 17) - 103.9128) < 1e-6);
+  assert.ok(Math.abs(mercYToLat(my, 17) - 1.3031) < 1e-6);
+
+  const emptyGps = extractLiveGpsFromStats({
+    roamingStatus: { world_map_subnets: [{ subnet_id: '6eaa3da4', detected_lat_e7: 0, detected_lon_e7: 0 }] },
+    linkMetrics: { peers: { '33b12ce4': { gps_distance_m: null } } },
+  });
+  assert.equal(emptyGps.ownGps, null);
+  assert.equal(emptyGps.subnetGpsById.size, 0);
+  assert.equal(emptyGps.peerGpsByPrefix.size, 0);
+
+  const liveGps = extractLiveGpsFromStats({
+    node_lat_e7: 13_034_400,
+    node_lon_e7: 1_039_133_500,
+    roamingStatus: {
+      world_map_subnets: [{ subnet_id: '6eaa3da4', detected_lat_e7: 462_044_000, detected_lon_e7: 61_432_000 }],
+    },
+    linkMetrics: {
+      peers: { '75c9f6e58d72957a': { peer_lat_e7: 13_028_500, peer_lon_e7: 1_039_132_000 } },
+    },
+  });
+  assert.ok(Math.abs(liveGps.ownGps.lat - 1.30344) < 1e-6);
+  assert.ok(Math.abs(liveGps.subnetGpsById.get('6eaa3da4').lat - 46.2044) < 1e-6);
+  assert.ok(Math.abs(liveGps.peerGpsByPrefix.get('75c9f6e5').lon - 103.9132) < 1e-6);
 
   // Round-trip projection check for Singapore, Geneva, Tokyo, and New York
   for (const [lat, lon] of [
