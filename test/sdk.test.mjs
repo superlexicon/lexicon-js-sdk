@@ -892,5 +892,83 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   }
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (17/17 test groups)!');
+// 18. Global Subnet World Map Projection & Protocol GPS Hydration
+{
+  const { latLonToMapXY, mapXYToLatLon, formatLatLon, MAP_BASE_W, MAP_BASE_H } = await import(
+    '../src/ui/index.js'
+  );
+  const { SlxSubnetManager } = await import('../src/rpc.js');
+
+  // Round-trip projection check for Singapore, Geneva, Tokyo, and New York
+  for (const [lat, lon] of [
+    [1.3031, 103.9128],
+    [46.2044, 6.1432],
+    [35.6762, 139.6503],
+    [40.7128, -74.006],
+  ]) {
+    const pt = latLonToMapXY(lat, lon, MAP_BASE_W, MAP_BASE_H);
+    assert.ok(pt.x >= 12 && pt.x <= MAP_BASE_W - 12);
+    assert.ok(pt.y >= 12 && pt.y <= MAP_BASE_H - 12);
+    const inv = mapXYToLatLon(pt.x, pt.y, MAP_BASE_W, MAP_BASE_H);
+    assert.ok(Math.abs(inv.lat - lat) < 0.05);
+    assert.ok(Math.abs(inv.lon - lon) < 0.05);
+  }
+  assert.equal(formatLatLon(1.3031, 103.9128), '1.30° N, 103.91° E');
+  assert.equal(formatLatLon(-33.8688, -70.6693), '33.87° S, 70.67° W');
+
+  // Verify live `detected_lat_e7` / `detected_lon_e7` override static defaults & custom lat/lon roundtrips
+  const prevLs = globalThis.localStorage;
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  try {
+    store.set(
+      'slx_discovered_subnets_meta_v1',
+      JSON.stringify({
+        thisSubnet: {
+          subnet_id: 'e40af3dd',
+          tip_height: 6510,
+          validator_count: 4,
+          detected_lat_e7: 13_031_000,
+          detected_lon_e7: 1_039_128_000,
+        },
+        roamingSubnets: [
+          {
+            subnet_id: 'f9e8d7c6',
+            tip_height: 240,
+            validator_count: 4,
+            transport: 'flrc',
+            detected_lat_e7: 462_044_000,
+            detected_lon_e7: 61_432_000,
+            name: 'Geneva Alpine RF Mesh',
+          },
+        ],
+      })
+    );
+    const customKey = SlxSubnetManager.addCustomSubnet({
+      name: 'Tokyo Shinkansen Subnet',
+      rpcUrl: 'wss://tokyo.superlexicon.com/rpc',
+      lat: 35.68,
+      lon: 139.69,
+    });
+    const subs = SlxSubnetManager.listSubnets();
+    const s1 = subs.find((s) => s.key === 'subnet1');
+    const geneva = subs.find((s) => s.subnetId === 'f9e8d7c6');
+    const tokyo = subs.find((s) => s.key === customKey);
+    assert.equal(s1.gpsDetected, true);
+    assert.ok(Math.abs(s1.lat - 1.3031) < 1e-4);
+    assert.equal(geneva.gpsDetected, true);
+    assert.ok(Math.abs(geneva.lat - 46.2044) < 1e-4);
+    assert.ok(Math.abs(geneva.lon - 6.1432) < 1e-4);
+    assert.ok(Math.abs(tokyo.lat - 35.68) < 1e-4);
+    assert.ok(Math.abs(tokyo.lon - 139.69) < 1e-4);
+  } finally {
+    globalThis.localStorage = prevLs;
+  }
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (18/18 test groups)!');
 process.exit(0);

@@ -36,6 +36,15 @@ import {
   createIdentitySecurityTabController,
   renderEciesSubtabBarHtml,
 } from './identity-security-ui.js';
+import {
+  MAP_BASE_W,
+  MAP_BASE_H,
+  formatLatLon,
+  latLonToMapXY,
+  mapXYToLatLon,
+  mountSlxSubnetWorldMap,
+  openSlxSubnetWorldMapModal,
+} from './subnet-world-map.js';
 
 export {
   USECASE_DESCRIPTIONS,
@@ -43,6 +52,13 @@ export {
   openSlxUseCaseDescription,
   openSlxUseCaseInstructions,
   mountSlxUseCaseHeaderDocs,
+  MAP_BASE_W,
+  MAP_BASE_H,
+  formatLatLon,
+  latLonToMapXY,
+  mapXYToLatLon,
+  mountSlxSubnetWorldMap,
+  openSlxSubnetWorldMapModal,
 };
 
 function escapeHtmlText(s) {
@@ -1967,6 +1983,7 @@ export function mountSlxChainBar({
           ? `<button type="button" class="slx-cb-chip clickable" data-cb="nodebtn" title="Toggle RPC Node &amp; Deployment Inspector">⚙ Node</button>`
           : ''
       }
+      <button type="button" class="slx-cb-chip cyan clickable" data-cb="worldmap" title="Open Interactive Global Subnet World Map">🗺️ Map</button>
       <a class="slx-cb-link" data-cb="explorer" href="${escapeHtmlText(effectiveExplorerHref)}" title="Open Multi-Subnet Cryptographic Block Explorer &amp; HFS Inspector">📊 Explorer ↗</a>
     </div>
   `;
@@ -1990,6 +2007,7 @@ export function mountSlxChainBar({
     totaltxs: bar.querySelector('[data-cb="totaltxs"]'),
     hfs: bar.querySelector('[data-cb="hfs"]'),
     nodebtn: bar.querySelector('[data-cb="nodebtn"]'),
+    worldmap: bar.querySelector('[data-cb="worldmap"]'),
     explorer: bar.querySelector('[data-cb="explorer"]'),
     phases: Array.from(bar.querySelectorAll('[data-cb-phase]')),
   };
@@ -2037,16 +2055,31 @@ export function mountSlxChainBar({
           })
           .join('')}
       </div>
+      <div style="padding:0.4rem 0.55rem;border-top:1px solid rgba(51,65,85,0.55);">
+        <button type="button" data-sm-open-map class="slx-mini-btn" style="width:100%;justify-content:center;padding:0.38rem 0.6rem;font-size:0.7rem;border-color:rgba(56,189,248,0.65);background:rgba(14,165,233,0.18);color:#bae6fd;">
+          🌍 Open Interactive Subnet World Map
+        </button>
+      </div>
       <details class="slx-cb-sm-add">
         <summary>+ Connect Custom Subnet RPC…</summary>
         <form data-sm-form style="display:flex;flex-direction:column;gap:0.38rem;margin-top:0.45rem;">
-          <input type="text" name="name" placeholder="Subnet Name (e.g. LAN Subnet 3)" required class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          <input type="text" name="name" placeholder="Subnet Name (e.g. Geneva Subnet 3)" required class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
           <input type="text" name="rpcUrl" placeholder="JSON-RPC URL (e.g. ws://192.168.1.10:8545)" required class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.35rem;">
+            <input type="number" step="any" name="lat" placeholder="Lat (e.g. 46.20)" class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+            <input type="number" step="any" name="lon" placeholder="Lon (e.g. 6.14)" class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
+          </div>
           <input type="text" name="manifestUrl" placeholder="Optional Manifest URL (/contracts/...)" class="slx-input-field" style="padding:0.3rem 0.5rem;font-size:0.68rem;" />
           <button type="submit" class="slx-mini-btn emerald" style="justify-content:center;padding:0.32rem 0.6rem;font-size:0.68rem;">Connect &amp; Switch Subnet →</button>
         </form>
       </details>
     `;
+
+    subnetMenu.querySelector('[data-sm-open-map]')?.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      closeSubnetMenu();
+      openSlxSubnetWorldMapModal();
+    });
 
     subnetMenu.querySelectorAll('[data-sm-select]').forEach((row) => {
       row.addEventListener('click', (ev) => {
@@ -2077,11 +2110,19 @@ export function mountSlxChainBar({
         name: fd.get('name'),
         rpcUrl: fd.get('rpcUrl'),
         manifestUrl: fd.get('manifestUrl'),
+        lat: fd.get('lat'),
+        lon: fd.get('lon'),
       });
       closeSubnetMenu();
       SlxSubnetManager.setActiveSubnetKey(key, { reload: true });
     });
   }
+
+  refs.worldmap?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    closeSubnetMenu();
+    openSlxSubnetWorldMapModal();
+  });
 
   refs.subnetbtn?.addEventListener('click', (ev) => {
     ev.stopPropagation();

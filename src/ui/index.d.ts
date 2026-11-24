@@ -145,3 +145,45 @@ export function mountSlxUseCaseHeaderDocs(opts: {
   activeAppId: string;
   extraContainer: HTMLElement | null;
 }): { descBtn: HTMLButtonElement; instBtn: HTMLButtonElement | null } | null;
+
+export function formatLatLon(lat: number, lon: number): string;
+export function latLonToMapXY(
+  lat: number,
+  lon: number,
+  width?: number,
+  height?: number
+): { x: number; y: number };
+export function mapXYToLatLon(
+  x: number,
+  y: number,
+  width?: number,
+  height?: number
+): { lat: number; lon: number };
+
+export function mountSlxSubnetWorldMap(opts: {
+  mountContainer: HTMLElement | null;
+  backgroundImgUrl?: string;
+  initialMode?: 'global' | 'cluster';
+  showCloseButton?: boolean;
+  onClose?: (() => void) | null;
+  onSelectSubnet?: ((subnetProfile: any) => void) | null;
+}): {
+  updateTelemetry: (stats?: {
+    s1Tip?: number;
+    s2Tip?: number;
+    confirmedCrossTxns?: number;
+    inFlightCrossTxns?: number;
+    lane?: string;
+  }) => void;
+  focusCluster: () => void;
+  resetGlobal: () => void;
+  destroy: () => void;
+} | null;
+
+export function openSlxSubnetWorldMapModal(opts?: {
+  initialMode?: 'global' | 'cluster';
+}): {
+  backdrop: HTMLElement;
+  close: () => void;
+  mapInst: ReturnType<typeof mountSlxSubnetWorldMap>;
+} | null;

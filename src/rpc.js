@@ -95,6 +95,12 @@ export const SlxSubnetManager = {
 
     const s1Meta = meta.thisSubnet || null;
     const s1DefaultId = 'e40af3dd';
+    const s1GpsLat = Number(s1Meta?.detected_lat_e7 || 0) !== 0 ? Number(s1Meta.detected_lat_e7) / 1e7 : null;
+    const s1GpsLon = Number(s1Meta?.detected_lon_e7 || 0) !== 0 ? Number(s1Meta.detected_lon_e7) / 1e7 : null;
+    const s1Lat =
+      s1GpsLat ?? (Number.isFinite(Number(meta.subnet1?.lat)) ? Number(meta.subnet1.lat) : 1.3031);
+    const s1Lon =
+      s1GpsLon ?? (Number.isFinite(Number(meta.subnet1?.lon)) ? Number(meta.subnet1.lon) : 103.9128);
 
     const s1 = {
       key: 'subnet1',
@@ -109,6 +115,12 @@ export const SlxSubnetManager = {
           : s1DefaultId),
       tipHeight: Number(s1Meta?.tip_height || 0),
       validatorCount: Number(s1Meta?.validator_count || 4),
+      channelHz: Number(s1Meta?.last_channel_hz || 915_000_000),
+      lat: s1Lat,
+      lon: s1Lon,
+      gpsDetected: s1GpsLat !== null && s1GpsLon !== null,
+      locationLabel:
+        meta.subnet1?.locationLabel || 'Marine Crescent Sub-GHz RF Mesh, Singapore',
       hfsRegistry: s1Meta?.hfs_registry || '',
       manifestUrl: s1Meta?.manifest_url || '/contracts/subnet1-deployments.json',
       rpcUrl: isHttps
@@ -236,6 +248,20 @@ export const SlxSubnetManager = {
         ? `SUBNET 2 • ${isTcp ? 'TCP' : 'RF'}`
         : `SUBNET ${sid.slice(0, 4).toUpperCase()} • ${isTcp ? 'TCP' : 'RF'}`;
 
+      const rmGpsLat =
+        Number(rm.detected_lat_e7 || 0) !== 0 ? Number(rm.detected_lat_e7) / 1e7 : null;
+      const rmGpsLon =
+        Number(rm.detected_lon_e7 || 0) !== 0 ? Number(rm.detected_lon_e7) / 1e7 : null;
+      const defaultS2Lat = Number.isFinite(Number(meta.subnet2?.lat))
+        ? Number(meta.subnet2.lat)
+        : 1.3521;
+      const defaultS2Lon = Number.isFinite(Number(meta.subnet2?.lon))
+        ? Number(meta.subnet2.lon)
+        : 103.9894;
+      const hashSeed = parseInt(sid.slice(0, 6), 16) || (i + 1) * 97;
+      const autoLat = isKnownS2 ? defaultS2Lat : ((hashSeed % 80) - 32);
+      const autoLon = isKnownS2 ? defaultS2Lon : (((hashSeed * 37) % 280) - 130);
+
       result.push({
         key,
         name: displayName,
@@ -245,6 +271,16 @@ export const SlxSubnetManager = {
         subnetId: sid,
         tipHeight: Number(rm.tip_height || 0),
         validatorCount: Number(rm.validator_count || 0),
+        channelHz: Number(rm.last_channel_hz || (isTcp ? 1 : 915_000_000)),
+        lat: rmGpsLat ?? autoLat,
+        lon: rmGpsLon ?? autoLon,
+        gpsDetected: rmGpsLat !== null && rmGpsLon !== null,
+        locationLabel:
+          rmGpsLat !== null && rmGpsLon !== null
+            ? 'Live Roamer GPS Telemetry Fix'
+            : isKnownS2
+              ? meta.subnet2?.locationLabel || 'Changi East Encrypted TCP Gateway, Singapore'
+              : 'Auto-Discovered via SubnetWorldMap',
         hfsRegistry: rm.hfs_registry || '',
         manifestUrl:
           rm.manifest_url || (isKnownS2 ? '/contracts/subnet2-deployments.json' : ''),
@@ -286,6 +322,12 @@ export const SlxSubnetManager = {
         subnetId: defaultS2Id,
         tipHeight: 0,
         validatorCount: 3,
+        channelHz: 1,
+        lat: Number.isFinite(Number(meta.subnet2?.lat)) ? Number(meta.subnet2.lat) : 1.3521,
+        lon: Number.isFinite(Number(meta.subnet2?.lon)) ? Number(meta.subnet2.lon) : 103.9894,
+        gpsDetected: false,
+        locationLabel:
+          meta.subnet2?.locationLabel || 'Changi East Encrypted TCP Gateway, Singapore',
         hfsRegistry: '',
         manifestUrl: '/contracts/subnet2-deployments.json',
         rpcUrl: s2RpcUrls[0],
@@ -347,6 +389,10 @@ export const SlxSubnetManager = {
         icon: c.transport === 'flrc' ? '📡' : '🌐',
         transport: c.transport || 'tcp',
         subnetId: c.subnetId || 'custom',
+        lat: Number.isFinite(Number(c.lat)) ? Number(c.lat) : 46.2044,
+        lon: Number.isFinite(Number(c.lon)) ? Number(c.lon) : 6.1432,
+        gpsDetected: false,
+        locationLabel: c.locationLabel || 'Custom Connected Subnet Gateway',
         manifestUrl: c.manifestUrl || '',
         rpcUrl: wsRpc,
         pubsubWsUrls: pubsub,
@@ -416,11 +462,23 @@ export const SlxSubnetManager = {
     return target;
   },
 
-  addCustomSubnet({ name, rpcUrl, pubsubWsUrl = '', manifestUrl = '', transport = 'tcp', subnetId = '' }) {
+  addCustomSubnet({
+    name,
+    rpcUrl,
+    pubsubWsUrl = '',
+    manifestUrl = '',
+    transport = 'tcp',
+    subnetId = '',
+    lat = undefined,
+    lon = undefined,
+    locationLabel = '',
+  }) {
     const cleanRpc = _httpToWs(rpcUrl);
     if (!cleanRpc) throw new Error('RPC URL is required');
     const key = `custom_${Date.now().toString(36)}`;
     const list = this.getCustomSubnets();
+    const parsedLat = lat !== undefined && lat !== '' && Number.isFinite(Number(lat)) ? Number(lat) : undefined;
+    const parsedLon = lon !== undefined && lon !== '' && Number.isFinite(Number(lon)) ? Number(lon) : undefined;
     list.push({
       key,
       name: String(name || cleanRpc).trim(),
@@ -430,6 +488,9 @@ export const SlxSubnetManager = {
       manifestUrl: String(manifestUrl || '').trim(),
       transport,
       subnetId: String(subnetId || '').trim(),
+      ...(parsedLat !== undefined ? { lat: parsedLat } : {}),
+      ...(parsedLon !== undefined ? { lon: parsedLon } : {}),
+      ...(locationLabel ? { locationLabel: String(locationLabel).trim() } : {}),
     });
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_KEY_CUSTOM_SUBNETS, JSON.stringify(list));
@@ -503,6 +564,9 @@ export const SlxSubnetManager = {
                   last_channel_hz: Number(item.last_channel_hz ?? prev.last_channel_hz ?? 0),
                   tip_height: Number(item.tip_height ?? prev.tip_height ?? 0),
                   validator_count: Number(item.validator_count ?? prev.validator_count ?? 0),
+                  detected_lat_e7: Number(item.detected_lat_e7 ?? prev.detected_lat_e7 ?? 0),
+                  detected_lon_e7: Number(item.detected_lon_e7 ?? prev.detected_lon_e7 ?? 0),
+                  phases_observed_mask: Number(item.phases_observed_mask ?? prev.phases_observed_mask ?? 0),
                   name: item.name || prev.name || '',
                   transport: item.transport || prev.transport || '',
                   public_rpc_url: item.public_rpc_url || prev.public_rpc_url || '',
@@ -532,9 +596,19 @@ export const SlxSubnetManager = {
               transport: j2.transport || 'tcp',
               rpcUrls: j2.rpcUrls || [],
               wsUrls: j2.wsUrls || [],
+              ...(Number.isFinite(Number(j2.lat)) ? { lat: Number(j2.lat) } : {}),
+              ...(Number.isFinite(Number(j2.lon)) ? { lon: Number(j2.lon) } : {}),
+              ...(j2.locationLabel ? { locationLabel: String(j2.locationLabel) } : {}),
             };
             if (j2.subnet1Id) {
-              meta.subnet1 = { subnetId: j2.subnet1Id };
+              meta.subnet1 = {
+                subnetId: j2.subnet1Id,
+                ...(Number.isFinite(Number(j2.subnet1Lat)) ? { lat: Number(j2.subnet1Lat) } : {}),
+                ...(Number.isFinite(Number(j2.subnet1Lon)) ? { lon: Number(j2.subnet1Lon) } : {}),
+                ...(j2.subnet1LocationLabel
+                  ? { locationLabel: String(j2.subnet1LocationLabel) }
+                  : {}),
+              };
             }
           })
           .catch(() => {})
@@ -554,6 +628,9 @@ export const SlxSubnetManager = {
                   icon: x.transport === 'flrc' ? '📡' : '🔌',
                   transport: x.transport || 'tcp',
                   subnetId: x.subnetId || '',
+                  lat: Number.isFinite(Number(x.lat)) ? Number(x.lat) : 51.5074,
+                  lon: Number.isFinite(Number(x.lon)) ? Number(x.lon) : -0.1278,
+                  locationLabel: x.locationLabel || 'Configured Regional Subnet',
                   manifestUrl: x.manifestUrl || '',
                   rpcUrl: _httpToWs(x.rpcUrl),
                   pubsubWsUrls: Array.isArray(x.pubsubWsUrls) ? x.pubsubWsUrls.map(_httpToWs) : [],
