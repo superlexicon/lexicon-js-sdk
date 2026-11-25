@@ -45,6 +45,59 @@ export function setDefaultSubnetRegistryAddresses({ subnet1 = '', subnet2 = '' }
 const FIXED_REC_HDR = 102;
 const MAX_ENDPOINTS_BYTES = 1536;
 
+export const SUBNET_STATUS = Object.freeze({
+  ACTIVE: 1,
+  ARCHIVED: 2,
+  FORMING: 3,
+});
+
+/**
+ * Format an RF frequency in Hz (or TCP placeholder `1`) into a crisp human-readable label.
+ */
+export function formatChannelFrequencyHz(channelHz, transport = 'flrc') {
+  const hz = Number(channelHz || 0);
+  if (String(transport || '').toLowerCase() === 'tcp' || hz <= 1) {
+    return 'Encrypted TCP/IP';
+  }
+  if (hz >= 1_000_000) {
+    const mhz = hz / 1_000_000;
+    const fixed = mhz % 1 === 0 ? mhz.toFixed(1) : mhz.toFixed(3).replace(/0+$/, '').replace(/\.$/, '.0');
+    return `${fixed} MHz`;
+  }
+  if (hz >= 1_000) {
+    return `${(hz / 1_000).toFixed(1)} kHz`;
+  }
+  return `${hz} Hz`;
+}
+
+/**
+ * Round `(lat, lon)` to a neighborhood grid of `fuzzyMeters` (matching Rust `apply_gps_fuzzy_e7`)
+ * so waiting operators can advertise approximate RF coverage without exposing exact home coordinates.
+ */
+export function applyGpsPrivacyRounding(lat, lon, fuzzyMeters = 0) {
+  const rawLat = Math.max(-90, Math.min(90, Number(lat || 0)));
+  const rawLon = Math.max(-180, Math.min(180, Number(lon || 0)));
+  const fm = Math.max(0, Math.round(Number(fuzzyMeters || 0)));
+  if (!fm || (rawLat === 0 && rawLon === 0)) {
+    return { lat: rawLat, lon: rawLon };
+  }
+  const latE7 = Math.round(rawLat * 1e7);
+  const lonE7 = Math.round(rawLon * 1e7);
+  const latStepE7 = Math.max(1, Math.round(fm * (1e7 / 111_320.0)));
+  const cosLat = Math.max(0.1, Math.abs(Math.cos((rawLat * Math.PI) / 180)));
+  const lonStepE7 = Math.max(1, Math.round(fm * (1e7 / (111_320.0 * cosLat))));
+
+  const roundGrid = (v, step) => {
+    const half = Math.floor(step / 2);
+    const shifted = v >= 0 ? v + half : v - half;
+    return Math.trunc(shifted / step) * step;
+  };
+  return {
+    lat: Math.max(-90, Math.min(90, roundGrid(latE7, latStepE7) / 1e7)),
+    lon: Math.max(-180, Math.min(180, roundGrid(lonE7, lonStepE7) / 1e7)),
+  };
+}
+
 export function degToE7UnsignedBits(deg) {
   const n = Number(deg || 0);
   const clamped = Math.max(-180, Math.min(180, Number.isFinite(n) ? n : 0));
@@ -222,6 +275,13 @@ function parseRecordAt(b, startPos) {
       hfsRegistry,
       shortLabel: endpoints.shortLabel || '',
       locationLabel: endpoints.locationLabel || '',
+      forming: status === SUBNET_STATUS.FORMING || Boolean(endpoints.forming),
+      minValidators: Math.max(1, Number(endpoints.minValidators || 3)),
+      haveValidators: Math.max(1, Number(endpoints.haveValidators || validatorCount || 1)),
+      callingChannelHz: Number(endpoints.callingChannelHz || 0),
+      fuzzyRadiusM: Math.max(0, Number(endpoints.fuzzyRadiusM || 0)),
+      waitingNodePubkey: String(endpoints.waitingNodePubkey || ''),
+      frequencyLabel: formatChannelFrequencyHz(channelHz, transport),
       manifestUrl: endpoints.manifestUrl || '',
       publicRpcUrls: Array.isArray(endpoints.publicRpcUrls) ? endpoints.publicRpcUrls : [],
       publicWsUrls: Array.isArray(endpoints.publicWsUrls) ? endpoints.publicWsUrls : [],
@@ -351,7 +411,9 @@ export async function fetchOnChainSubnets({
     offset += 16;
   }
 
-  const subnets = includeArchived ? all : all.filter((s) => s.status === 1);
+  const subnets = includeArchived
+    ? all
+    : all.filter((s) => s.status === SUBNET_STATUS.ACTIVE || s.status === SUBNET_STATUS.FORMING);
   return { registryAddr: reg, subnets };
 }
 
@@ -457,6 +519,63 @@ export async function upsertSubnetOnChain({
   }
 
   return { txHash, receipt: rcpt, registryAddr: reg };
+}
+
+/**
+ * Convenience helper for a solo or partial node (`1/3` or `2/3`) waiting for peers (`--wait-for-peers`)
+ * to advertise its privacy-rounded GPS coordinates & RF frequency on the Global Subnet World Map ($0.00 gas).
+ */
+export async function advertiseFormingNodeOnChain({
+  wallet = null,
+  privateKey = '',
+  rpcUrl = getDefaultNodeWsUrl(),
+  registryAddr = '',
+  chainId = 1337n,
+  beacon = {},
+}) {
+  const transport = beacon.transport === 'tcp' ? 'tcp' : 'flrc';
+  const fuzzyRadiusM = Math.max(0, Math.round(Number(beacon.fuzzyRadiusM ?? 500)));
+  const rounded = applyGpsPrivacyRounding(beacon.lat ?? 0, beacon.lon ?? 0, fuzzyRadiusM);
+  const minValidators = Math.max(3, Math.round(Number(beacon.minValidators || 3)));
+  const haveValidators = Math.max(1, Math.min(minValidators - 1, Math.round(Number(beacon.haveValidators || 1))));
+  const channelHz =
+    transport === 'tcp' ? 1 : Math.max(150_000_000, Math.round(Number(beacon.channelHz || 915_000_000)));
+  const callingChannelHz = Math.max(0, Math.round(Number(beacon.callingChannelHz || 0)));
+  const pubkey = String(beacon.waitingNodePubkey || '').trim();
+  const autoSid =
+    String(beacon.subnetId || '').trim() ||
+    `wait-${pubkey ? pubkey.slice(0, 8).toLowerCase() : Date.now().toString(36).slice(-6)}`;
+
+  return upsertSubnetOnChain({
+    wallet,
+    privateKey,
+    rpcUrl,
+    registryAddr,
+    chainId,
+    subnet: {
+      subnetId: autoSid,
+      name:
+        String(beacon.name || '').trim() ||
+        `Forming Mesh (${formatChannelFrequencyHz(channelHz, transport)})`,
+      transport,
+      channelHz,
+      validatorCount: haveValidators,
+      lat: rounded.lat,
+      lon: rounded.lon,
+      endpoints: {
+        forming: true,
+        minValidators,
+        haveValidators,
+        callingChannelHz,
+        fuzzyRadiusM,
+        waitingNodePubkey: pubkey,
+        shortLabel: String(beacon.shortLabel || '').trim() || `FORMING ${haveValidators}/${minValidators}`,
+        locationLabel: String(beacon.locationLabel || '').trim(),
+        publicRpcUrls: Array.isArray(beacon.publicRpcUrls) ? beacon.publicRpcUrls : [],
+        lanRpcUrls: Array.isArray(beacon.lanRpcUrls) ? beacon.lanRpcUrls : [],
+      },
+    },
+  });
 }
 
 /**

@@ -290,19 +290,31 @@ export const SlxSubnetManager = {
       const rmGpsLon =
         rm && Number(rm.detected_lon_e7 || 0) !== 0 ? Number(rm.detected_lon_e7) / 1e7 : null;
 
+      const isForming = !isKnownS2 && Boolean(oc.forming || oc.status === 3);
       result.push({
         key,
         name: oc.name || rm?.name || `Subnet ${sid}`,
         shortLabel:
           oc.shortLabel ||
-          (isKnownS2
-            ? `SUBNET 2 • ${isTcp ? 'TCP' : 'RF'}`
-            : `SUBNET ${sid.slice(0, 4).toUpperCase()} • ${isTcp ? 'TCP' : 'RF'}`),
-        icon: isTcp ? '🔌' : '📡',
+          (isForming
+            ? `FORMING ${oc.haveValidators || oc.validatorCount || 1}/${oc.minValidators || 3}`
+            : isKnownS2
+              ? `SUBNET 2 • ${isTcp ? 'TCP' : 'RF'}`
+              : `SUBNET ${sid.slice(0, 4).toUpperCase()} • ${isTcp ? 'TCP' : 'RF'}`),
+        icon: isForming ? '⏳' : isTcp ? '🔌' : '📡',
+        status: Number(oc.status || (isForming ? 3 : 1)),
+        forming: isForming,
+        minValidators: Number(oc.minValidators || 3),
+        haveValidators: Number(oc.haveValidators || oc.validatorCount || 1),
+        callingChannelHz: Number(oc.callingChannelHz || 0),
+        fuzzyRadiusM: Number(oc.fuzzyRadiusM || 0),
+        waitingNodePubkey: oc.waitingNodePubkey || '',
         transport,
         subnetId: sid,
         tipHeight: Number(rm?.tip_height || 0),
-        validatorCount: Number(oc.validatorCount || rm?.validator_count || statsUrls.length || 3),
+        validatorCount: Number(
+          oc.validatorCount || rm?.validator_count || statsUrls.length || (isForming ? 1 : 3)
+        ),
         channelHz: Number(oc.channelHz || rm?.last_channel_hz || (isTcp ? 1 : 915_000_000)),
         lat: rmGpsLat ?? Number(oc.lat ?? 1.30322),
         lon: rmGpsLon ?? Number(oc.lon ?? 103.91302),
@@ -547,8 +559,8 @@ export const SlxSubnetManager = {
     }
   },
 
-  listSubnets() {
-    const builtins = this.getBuiltInSubnets();
+  listSubnets({ includeForming = false } = {}) {
+    const builtins = this.getBuiltInSubnets().filter((s) => includeForming || !s.forming);
     const customs = this.getCustomSubnets().map((c) => {
       const wsRpc = _httpToWs(c.rpcUrl);
       let pubsub = c.pubsubWsUrl ? [_httpToWs(c.pubsubWsUrl)] : [];

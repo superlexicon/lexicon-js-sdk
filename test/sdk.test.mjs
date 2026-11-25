@@ -1207,5 +1207,100 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   }
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (19/19 test groups)!');
+// 20. Waiting-for-Peers (`STATUS_FORMING = 3`) GPS Privacy Rounding, RF Frequency Formatting & Map Isolation
+{
+  const {
+    SUBNET_STATUS,
+    formatChannelFrequencyHz,
+    applyGpsPrivacyRounding,
+    decodeSingleSubnetHex,
+    SlxSubnetManager,
+  } = await import('../src/index.js');
+
+  assert.equal(SUBNET_STATUS.FORMING, 3);
+  assert.equal(formatChannelFrequencyHz(915_250_000, 'flrc'), '915.25 MHz');
+  assert.equal(formatChannelFrequencyHz(915_000_000, 'flrc'), '915.0 MHz');
+  assert.equal(formatChannelFrequencyHz(1, 'tcp'), 'Encrypted TCP/IP');
+
+  // Verify 1km neighborhood privacy rounding collapses adjacent houses onto the same grid cell
+  const p1 = applyGpsPrivacyRounding(1.3521345, 103.8198432, 1000);
+  const p2 = applyGpsPrivacyRounding(1.3522545, 103.8197332, 1000);
+  assert.equal(p1.lat, p2.lat);
+  assert.equal(p1.lon, p2.lon);
+  assert.notEqual(p1.lat, 1.3521345);
+
+  // Decode a STATUS_FORMING (3) single-node beacon with empty publicRpcUrls
+  const sidB = utf8ToBytes('wait-sg-915');
+  const nameB = utf8ToBytes('Katong Forming 915.25M');
+  const trB = utf8ToBytes('flrc');
+  const epB = utf8ToBytes(
+    JSON.stringify({
+      forming: true,
+      minValidators: 3,
+      haveValidators: 1,
+      callingChannelHz: 915_000_000,
+      fuzzyRadiusM: 500,
+      locationLabel: 'Katong, Singapore',
+    })
+  );
+  const hdr = new Uint8Array(102);
+  hdr[0] = SUBNET_STATUS.FORMING;
+  hdr[1] = sidB.length;
+  hdr[2] = nameB.length;
+  hdr[3] = trB.length;
+  hdr[4] = (epB.length >> 8) & 0xff;
+  hdr[5] = epB.length & 0xff;
+  hdr[9] = 1; // validatorCount = 1
+  const latI32 = Math.round(p1.lat * 1e7) >>> 0;
+  const lonI32 = Math.round(p1.lon * 1e7) >>> 0;
+  hdr.set([(latI32 >>> 24) & 0xff, (latI32 >>> 16) & 0xff, (latI32 >>> 8) & 0xff, latI32 & 0xff], 10);
+  hdr.set([(lonI32 >>> 24) & 0xff, (lonI32 >>> 16) & 0xff, (lonI32 >>> 8) & 0xff, lonI32 & 0xff], 14);
+  hdr.set(u64BEBytes(915_250_000), 18);
+
+  const recHex = bytesToHex(concatBytes(u64BEBytes(4), hdr, sidB, nameB, trB, epB));
+  const rec = decodeSingleSubnetHex(recHex);
+  assert.equal(rec.forming, true);
+  assert.equal(rec.status, 3);
+  assert.equal(rec.haveValidators, 1);
+  assert.equal(rec.minValidators, 3);
+  assert.equal(rec.callingChannelHz, 915_000_000);
+  assert.equal(rec.fuzzyRadiusM, 500);
+  assert.equal(rec.frequencyLabel, '915.25 MHz');
+
+  // Verify RPC dropdowns (`listSubnets()`) exclude RPC-less forming beacons while World Map (`includeForming: true`) includes them!
+  const prevLs = globalThis.localStorage;
+  const prevWin = globalThis.window;
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
+  globalThis.window = {
+    location: { protocol: 'https:', hostname: 'superlexicon.com', href: 'https://superlexicon.com/' },
+    dispatchEvent: () => {},
+  };
+  try {
+    store.set(
+      'slx_discovered_subnets_meta_v1',
+      JSON.stringify({
+        onChainRegistryAddr: '0xd7983d631634bb6d1dea4318a25dd413066ad5fc',
+        onChainSubnets: [rec],
+      })
+    );
+    const activeOnly = SlxSubnetManager.listSubnets();
+    const withForming = SlxSubnetManager.listSubnets({ includeForming: true });
+    assert.ok(!activeOnly.some((s) => s.subnetId === 'wait-sg-915'));
+    const fItem = withForming.find((s) => s.subnetId === 'wait-sg-915');
+    assert.ok(fItem);
+    assert.equal(fItem.forming, true);
+    assert.equal(fItem.haveValidators, 1);
+    assert.equal(fItem.minValidators, 3);
+  } finally {
+    globalThis.localStorage = prevLs;
+    globalThis.window = prevWin;
+  }
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (20/20 test groups)!');
 process.exit(0);
