@@ -1302,5 +1302,118 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
   }
 }
 
-console.log('✅ @superlexicon/sdk unit test suite passed (20/20 test groups)!');
+// 21. Paid Hardware `SLXR` Voucher Commitment, 90-Day (3-Month) Maturity, Schnorr Claim & Cash-Back Rate
+{
+  const {
+    HARDWARE_SKU,
+    REWARD_TIER_BPS,
+    DEFAULT_MIN_ACTIVE_VALIDATOR_DAYS,
+    DEFAULT_BLOCKS_PER_VALIDATOR_DAY,
+    computeExpectedSlxrEntitlement,
+    generateCheckoutVoucherBundle,
+    signVoucherClaimIntent,
+    verifyVoucherClaimIntent,
+    computeOraclePaymentRefHash,
+    RewardVoucherAbi,
+    decodeValidatorMaturityHex,
+    decodeRewardPoolStatsHex,
+  } = await import('../src/index.js');
+
+  assert.equal(DEFAULT_MIN_ACTIVE_VALIDATOR_DAYS, 90);
+  assert.equal(DEFAULT_BLOCKS_PER_VALIDATOR_DAY, 20_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.DONGLE, REWARD_TIER_BPS.KICKSTARTER), 35_600_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.DONGLE, REWARD_TIER_BPS.RETAIL), 8_900_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.WATCH, REWARD_TIER_BPS.KICKSTARTER), 137_600_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.WATCH, REWARD_TIER_BPS.RETAIL), 34_400_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.SLATE, REWARD_TIER_BPS.KICKSTARTER), 239_600_000);
+  assert.equal(computeExpectedSlxrEntitlement(HARDWARE_SKU.SLATE, REWARD_TIER_BPS.RETAIL), 59_900_000);
+
+  const bundle = generateCheckoutVoucherBundle('0x' + '42'.repeat(32));
+  assert.equal(bundle.voucherCommitment.length, 66);
+  const paymentRefHash = computeOraclePaymentRefHash('slx-prod-salt-2026', 'stripe', 'pi_3Q9SlatePro1198');
+  assert.equal(paymentRefHash.length, 66);
+
+  const rvAddr = '0xd5000000000000000000000000000000000000d5';
+  const valPk = '0x' + '99'.repeat(32);
+  const recipientId = '0xb1000000000000000000000000000000000000b1';
+  const ethRecipient = '0xe1000000000000000000000000000000000000e1';
+
+  const signedClaim = signVoucherClaimIntent({
+    secretLeHexOrScalar: bundle.secretLeHex,
+    rewardVoucherAddr: rvAddr,
+    paymentRefHash,
+    validatorPubKey: valPk,
+    recipientIdentity: recipientId,
+    ethRecipient,
+  });
+  assert.equal(signedClaim.signatureBytes.length, 64);
+  assert.equal(
+    verifyVoucherClaimIntent({
+      voucherPkHex: bundle.voucherPkHex,
+      rewardVoucherAddr: rvAddr,
+      paymentRefHash,
+      validatorPubKey: valPk,
+      recipientIdentity: recipientId,
+      ethRecipient,
+      signatureHex: signedClaim.signatureHex,
+    }),
+    true
+  );
+  // MEV front-run check: altering recipientIdentity MUST fail Schnorr verification!
+  assert.equal(
+    verifyVoucherClaimIntent({
+      voucherPkHex: bundle.voucherPkHex,
+      rewardVoucherAddr: rvAddr,
+      paymentRefHash,
+      validatorPubKey: valPk,
+      recipientIdentity: '0xee000000000000000000000000000000000000ee',
+      ethRecipient,
+      signatureHex: signedClaim.signatureHex,
+    }),
+    false
+  );
+
+  // Verify 164-byte issuePaidVoucher ABI encoding matches Rust BankingPaymentsOracle
+  const issueHex = RewardVoucherAbi.issuePaidVoucher({
+    paymentRefHash,
+    skuCode: HARDWARE_SKU.SLATE,
+    tierBps: REWARD_TIER_BPS.KICKSTARTER,
+    priceUsdMicros: 1_198_000_000,
+    voucherCommitment: bundle.voucherCommitment,
+  });
+  assert.equal(hexToBytes(issueHex).length, 164);
+
+  // Verify 80-byte validator maturity & pool stats binary decoders
+  const matBytes = concatBytes(
+    u64BEBytes(90),
+    u64BEBytes(1_800_000),
+    u64BEBytes(1_805_000),
+    hexToBytes('0x' + 'aa'.repeat(32)),
+    new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0]),
+    u64BEBytes(90),
+    u64BEBytes(20_000)
+  );
+  const mat = decodeValidatorMaturityHex(bytesToHex(matBytes));
+  assert.equal(mat.activeEpochsCompleted, 90);
+  assert.equal(mat.eligibleToClaim, true);
+  assert.equal(mat.progressPct, 100);
+
+  const statsBytes = concatBytes(
+    u64BEBytes(90),
+    u64BEBytes(20_000),
+    u64BEBytes(12),
+    u64BEBytes(10),
+    u64BEBytes(1),
+    u64BEBytes(239_600_000), // unredeemedSlxr
+    u64BEBytes(0),
+    u64BEBytes(119_800_000), // $119.80 realized savings => $0.50 per 1,000,000 SLXR!
+    u64BEBytes(0),
+    u64BEBytes(500_000_000_000)
+  );
+  const stats = decodeRewardPoolStatsHex(bytesToHex(statsBytes));
+  assert.equal(stats.totalIssuedVouchers, 12);
+  assert.ok(Math.abs(stats.usdPerMillionSlxr - 0.5) < 1e-9);
+}
+
+console.log('✅ @superlexicon/sdk unit test suite passed (21/21 test groups)!');
 process.exit(0);
