@@ -466,57 +466,138 @@ function injectSubnetWorldMapStyles() {
     .slx-swm-seg {
       display: inline-flex;
       align-items: center;
-      padding: 2px;
-      border-radius: 9px;
-      background: rgba(2, 6, 23, 0.85);
-      border: 1px solid rgba(56, 189, 248, 0.42);
-      gap: 2px;
+      padding: 3px;
+      border-radius: 10px;
+      background: rgba(2, 6, 23, 0.92);
+      border: 1.5px solid rgba(56, 189, 248, 0.55);
+      gap: 3px;
     }
     .slx-swm-seg-btn {
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 7px;
-      border: none;
+      border: 1px solid transparent;
       background: transparent;
       color: #94a3b8;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 0.68rem;
+      font-size: 0.72rem;
       font-weight: 800;
       cursor: pointer;
       transition: all 0.15s ease;
       white-space: nowrap;
     }
     .slx-swm-seg-btn:hover {
-      color: #e2e8f0;
+      color: #f8fafc;
+      background: rgba(30, 41, 59, 0.65);
     }
     .slx-swm-seg-btn.active {
-      background: linear-gradient(135deg, rgba(14, 165, 233, 0.32), rgba(168, 85, 247, 0.28));
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.28), rgba(14, 165, 233, 0.34));
+      border-color: rgba(56, 189, 248, 0.75);
+      color: #ffffff;
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.28);
+    }
+    @keyframes slxSwmNudgeRight {
+      0%, 100% { transform: translateY(-50%) translateX(0); }
+      50% { transform: translateY(-50%) translateX(-4px); }
+    }
+    @keyframes slxSwmNudgeLeft {
+      0%, 100% { transform: translateY(-50%) translateX(0); }
+      50% { transform: translateY(-50%) translateX(4px); }
+    }
+    .slx-swm-paddle {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 6;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 13px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(4, 12, 26, 0.92), rgba(12, 26, 48, 0.92));
+      border: 1.5px solid rgba(56, 189, 248, 0.78);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), 0 0 16px rgba(56, 189, 248, 0.25);
+      backdrop-filter: blur(8px);
       color: #f8fafc;
-      box-shadow: 0 0 10px rgba(56, 189, 248, 0.22);
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+    .slx-swm-paddle:hover {
+      border-color: #34d399;
+      background: linear-gradient(135deg, rgba(6, 36, 30, 0.95), rgba(12, 34, 62, 0.95));
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.75), 0 0 20px rgba(52, 211, 153, 0.38);
+    }
+    .slx-swm-paddle.next {
+      right: 12px;
+      animation: slxSwmNudgeRight 2.6s ease-in-out infinite;
+    }
+    .slx-swm-paddle.prev {
+      left: 12px;
+      animation: slxSwmNudgeLeft 2.6s ease-in-out infinite;
+    }
+    .slx-swm-paddle-chev {
+      font-size: 1.35rem;
+      line-height: 1;
+      font-weight: 800;
+      color: #38bdf8;
+    }
+    .slx-swm-paddle-txt {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      line-height: 1.2;
+      text-align: left;
+    }
+    .slx-swm-paddle.next .slx-swm-paddle-txt {
+      align-items: flex-end;
+      text-align: right;
+    }
+    .slx-swm-paddle-main {
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: #f8fafc;
+      white-space: nowrap;
+    }
+    .slx-swm-paddle-sub {
+      font-size: 0.59rem;
+      font-weight: 700;
+      color: #6ee7b7;
+      white-space: nowrap;
     }
     .slx-swm-swipe-pill {
       position: absolute;
-      top: 10px;
+      bottom: 10px;
       right: 10px;
-      z-index: 4;
+      z-index: 5;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 10px;
+      gap: 8px;
+      padding: 5px 12px;
       border-radius: 999px;
-      background: rgba(3, 7, 18, 0.84);
-      border: 1px solid rgba(56, 189, 248, 0.48);
+      background: rgba(3, 8, 20, 0.92);
+      border: 1.5px solid rgba(56, 189, 248, 0.62);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.55);
       backdrop-filter: blur(6px);
-      color: #bae6fd;
+      color: #e0f2fe;
       font-family: 'JetBrains Mono', monospace;
-      font-size: 0.63rem;
-      font-weight: 700;
+      font-size: 0.67rem;
+      font-weight: 800;
       cursor: pointer;
       transition: all 0.15s ease;
     }
     .slx-swm-swipe-pill:hover {
-      border-color: rgba(192, 132, 252, 0.8);
-      color: #f8fafc;
-      background: rgba(15, 23, 42, 0.94);
+      border-color: #34d399;
+      color: #ffffff;
+      background: rgba(15, 23, 42, 0.96);
+    }
+    @media (max-width: 640px) {
+      .slx-swm-paddle {
+        padding: 6px 9px;
+        gap: 5px;
+      }
+      .slx-swm-paddle-sub {
+        display: none;
+      }
     }
     .slx-swm-svg {
       width: 100%;
@@ -674,7 +755,7 @@ export function mountSlxSubnetWorldMap({
   backgroundImgUrl = '/assets/hegemony/world_map.jpg',
   tileApiKey = '',
   initialMode = 'auto-fit', // 'auto-fit' (World -> auto-zoom to fit all subnets) | 'fit-immediate' | 'global-only'
-  initialView = 'map', // 'map' | 'phase'
+  initialView = 'phase', // 'phase' (1st: Animated RF Consensus & Bridge) | 'map' (2nd: Global Subnet World Map)
   showCloseButton = false,
   onClose = null,
   onSelectSubnet = null,
@@ -684,7 +765,7 @@ export function mountSlxSubnetWorldMap({
   const effectiveTileKey = resolveCartoTileKey(tileApiKey);
 
   const state = {
-    view: initialView === 'phase' ? 'phase' : 'map',
+    view: initialView === 'map' ? 'map' : 'phase',
     lat: GLOBAL_DEFAULT_LAT,
     lon: GLOBAL_DEFAULT_LON,
     zoom: MIN_Z,
@@ -712,19 +793,19 @@ export function mountSlxSubnetWorldMap({
   };
 
   mountContainer.innerHTML = `
-    <div class="slx-swm-card" role="region" aria-label="SuperLexicon Global Subnet Map &amp; Phase Sync">
+    <div class="slx-swm-card" role="region" aria-label="SuperLexicon Live Consensus Animation &amp; Global Subnet World Map">
       <div class="slx-swm-hdr">
         <div class="slx-swm-title-wrap">
           <div class="slx-swm-seg" role="tablist" aria-label="Subnet Visualization View">
-            <button type="button" class="slx-swm-seg-btn active" data-swm-view="map" role="tab" aria-selected="true">🌍 1. Subnet Map</button>
-            <button type="button" class="slx-swm-seg-btn" data-swm-view="phase" role="tab" aria-selected="false">⚡ 2. Phase &amp; Bridge Live</button>
+            <button type="button" class="slx-swm-seg-btn active" data-swm-view="phase" role="tab" aria-selected="true">⚡ 1. Live RF Consensus &amp; Bridge</button>
+            <button type="button" class="slx-swm-seg-btn" data-swm-view="map" role="tab" aria-selected="false">🌍 2. Global Subnet World Map</button>
           </div>
           <span class="slx-swm-pill" data-swm="summary-pill">Connecting SubnetRegistry HFS…</span>
           <button type="button" class="slx-swm-btn" data-swm="hfs-badge" title="Click to copy On-Chain SubnetRegistry HFS contract address" style="padding:2px 8px;font-size:0.63rem;color:#7dd3fc;border-color:rgba(56,189,248,0.45);">⛓️ HFS Registry</button>
         </div>
         <div class="slx-swm-controls">
           <span class="slx-swm-coords" data-swm="coords">—</span>
-          <span data-swm="map-tools" style="display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;">
+          <span data-swm="map-tools" style="display:none;align-items:center;gap:5px;flex-wrap:wrap;">
             <button type="button" class="slx-swm-btn active" data-swm-act="global" title="Zoom out to Full World Map">🌍 World</button>
             <button type="button" class="slx-swm-btn" data-swm-act="fit" title="Auto-zoom &amp; center so all subnets maximally fill the map">🎯 Fit All Subnets</button>
             <button type="button" class="slx-swm-btn" data-swm-act="zoom-in" title="Zoom In">➕</button>
@@ -741,10 +822,40 @@ export function mountSlxSubnetWorldMap({
       </div>
 
       <div class="slx-swm-stage" data-swm="stage">
-        <button type="button" class="slx-swm-swipe-pill" data-swm="swipe-toggle" title="Swipe or click to switch between Map and Live Phase Sync &amp; Bridge Diagram">
-          ● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›
+        <!-- Obvious Left/Right Edge Carousel Paddles -->
+        <button type="button" class="slx-swm-paddle prev" data-swm="nav-prev" style="display:none;" title="Swipe right or click to view Live 4-Phase RF Consensus &amp; Bridge Animation">
+          <span class="slx-swm-paddle-chev">‹</span>
+          <span class="slx-swm-paddle-txt">
+            <span class="slx-swm-paddle-main">⚡ Live Animation</span>
+            <span class="slx-swm-paddle-sub">⇄ Swipe Right or Click</span>
+          </span>
         </button>
+
+        <button type="button" class="slx-swm-paddle next" data-swm="nav-next" title="Swipe left or click to view Interactive Global Subnet World Map">
+          <span class="slx-swm-paddle-txt">
+            <span class="slx-swm-paddle-main">🌍 World Map</span>
+            <span class="slx-swm-paddle-sub">Swipe Left or Click ⇄</span>
+          </span>
+          <span class="slx-swm-paddle-chev">›</span>
+        </button>
+
+        <button type="button" class="slx-swm-swipe-pill" data-swm="swipe-toggle" title="Drag/Swipe horizontally or click to toggle between Live Consensus Animation and Global Subnet World Map">
+          ● ○ &nbsp;1 / 2 • Swipe Left ⇄ World Map ›
+        </button>
+
         <div class="slx-swm-track" data-swm="track">
+          <!-- PANE 1 (FIRST / DEFAULT): Live 4-Phase RF Consensus & Cross-Subnet Bridge Animation -->
+          <div class="slx-swm-pane" data-swm="pane-phase">
+            <div data-swm="phase-mount" style="width:100%;height:100%;"></div>
+            <div class="slx-swm-hud-bl">
+              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;"></i>P1 TX</span>
+              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;"></i>P2 PROPOSE</span>
+              <span><i class="slx-swm-legend-dot" style="background:#c084fc;"></i>P3 VOTE</span>
+              <span><i class="slx-swm-legend-dot" style="background:#34d399;"></i>P4 FINALIZE</span>
+            </div>
+          </div>
+
+          <!-- PANE 2 (SECOND ON SWIPE): Interactive Global Subnet World Map -->
           <div class="slx-swm-pane" data-swm="pane-map">
             <svg class="slx-swm-svg" data-swm="svg" viewBox="0 0 ${MAP_BASE_W} ${MAP_BASE_H}" preserveAspectRatio="xMidYMid slice">
               <defs>
@@ -773,17 +884,6 @@ export function mountSlxSubnetWorldMap({
               <span><i class="slx-swm-legend-dot" style="background:#38bdf8;box-shadow:0 0 6px #38bdf8;"></i>LR2021 Sub-GHz RF</span>
               <span><i class="slx-swm-legend-dot" style="background:#c084fc;box-shadow:0 0 6px #c084fc;"></i>Encrypted TCP/IP</span>
               <span><i class="slx-swm-legend-dot" style="background:#fbbf24;box-shadow:0 0 6px #fbbf24;"></i>Cross-Subnet Bridge</span>
-              <span style="color:#94a3b8;">🌍 World ⇄ 🎯 Auto-Fit • Swipe ⇄ Phase Diagram</span>
-            </div>
-          </div>
-          <div class="slx-swm-pane" data-swm="pane-phase">
-            <div data-swm="phase-mount" style="width:100%;height:100%;"></div>
-            <div class="slx-swm-hud-bl">
-              <span><i class="slx-swm-legend-dot" style="background:#38bdf8;"></i>P1 TX</span>
-              <span><i class="slx-swm-legend-dot" style="background:#fbbf24;"></i>P2 VOTE</span>
-              <span><i class="slx-swm-legend-dot" style="background:#c084fc;"></i>P3 PROP</span>
-              <span><i class="slx-swm-legend-dot" style="background:#34d399;"></i>P4 FINALIZE</span>
-              <span style="color:#94a3b8;">‹ Swipe ⇄ back to Subnet Map</span>
             </div>
           </div>
         </div>
@@ -801,6 +901,8 @@ export function mountSlxSubnetWorldMap({
   const elStage = mountContainer.querySelector('[data-swm="stage"]');
   const elTrack = mountContainer.querySelector('[data-swm="track"]');
   const elSwipeToggle = mountContainer.querySelector('[data-swm="swipe-toggle"]');
+  const elNavPrev = mountContainer.querySelector('[data-swm="nav-prev"]');
+  const elNavNext = mountContainer.querySelector('[data-swm="nav-next"]');
   const elPhaseMount = mountContainer.querySelector('[data-swm="phase-mount"]');
   const gBackdrop = mountContainer.querySelector('[data-swm="world-backdrop"]');
   const gTilesCoarse = mountContainer.querySelector('[data-swm="tiles-coarse"]');
@@ -840,10 +942,10 @@ export function mountSlxSubnetWorldMap({
   }
 
   function applyActiveView(nextView) {
-    state.view = nextView === 'phase' ? 'phase' : 'map';
+    state.view = nextView === 'map' ? 'map' : 'phase';
     if (elTrack) {
       elTrack.classList.remove('swiping');
-      elTrack.style.transform = state.view === 'phase' ? 'translate3d(-50%, 0, 0)' : 'translate3d(0%, 0, 0)';
+      elTrack.style.transform = state.view === 'map' ? 'translate3d(-50%, 0, 0)' : 'translate3d(0%, 0, 0)';
     }
     viewTabBtns.forEach((b) => {
       const act = b.getAttribute('data-swm-view') === state.view;
@@ -852,17 +954,20 @@ export function mountSlxSubnetWorldMap({
     });
     if (elMapTools) elMapTools.style.display = state.view === 'map' ? 'inline-flex' : 'none';
     if (elCoords) elCoords.style.display = state.view === 'map' ? '' : 'none';
+    if (elNavNext) elNavNext.style.display = state.view === 'phase' ? 'inline-flex' : 'none';
+    if (elNavPrev) elNavPrev.style.display = state.view === 'map' ? 'inline-flex' : 'none';
     if (elSwipeToggle) {
       elSwipeToggle.innerHTML =
-        state.view === 'map'
-          ? '● ○ &nbsp;Swipe ⇄ Phase &amp; Bridge Live ›'
-          : '‹ ● &nbsp;Swipe ⇄ Subnet Map';
+        state.view === 'phase'
+          ? '● ○ &nbsp;1 / 2 • Swipe Left ⇄ World Map ›'
+          : '‹ ○ ● &nbsp;2 / 2 • Swipe Right ⇄ Live Animation';
     }
     elStage?.classList.toggle('pan-mode', state.view === 'map' && state.mode === 'custom');
     if (state.view === 'phase') {
       phaseDiagramInst?.wake?.();
     } else if (isStageVisible()) {
       renderMap();
+      if (initialMode !== 'global-only') scheduleInitialAutoZoom();
     }
   }
 
@@ -871,7 +976,15 @@ export function mountSlxSubnetWorldMap({
   });
   elSwipeToggle?.addEventListener('click', (ev) => {
     ev.stopPropagation();
-    applyActiveView(state.view === 'map' ? 'phase' : 'map');
+    applyActiveView(state.view === 'phase' ? 'map' : 'phase');
+  });
+  elNavNext?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    applyActiveView('map');
+  });
+  elNavPrev?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    applyActiveView('phase');
   });
 
   function getEnrichedSubnets() {
@@ -1605,6 +1718,8 @@ export function mountSlxSubnetWorldMap({
     if (
       ev.target.closest('[data-swm-pin]') ||
       ev.target.closest('[data-swm="swipe-toggle"]') ||
+      ev.target.closest('[data-swm="nav-prev"]') ||
+      ev.target.closest('[data-swm="nav-next"]') ||
       ev.target.closest('[data-spd-send]')
     ) {
       return;
@@ -1672,7 +1787,7 @@ export function mountSlxSubnetWorldMap({
         }
       }
       if (drag.lockedHoriz && elTrack) {
-        const basePct = state.view === 'phase' ? -50 : 0;
+        const basePct = state.view === 'map' ? -50 : 0;
         const deltaPct = (dx / rect.width) * 50;
         const clampedPct = Math.max(-54, Math.min(4, basePct + deltaPct));
         elTrack.style.transform = `translate3d(${clampedPct.toFixed(2)}%, 0, 0)`;
@@ -1687,7 +1802,13 @@ export function mountSlxSubnetWorldMap({
         const dx = (ev?.clientX ?? drag.lastX) - drag.startX;
         const dy = (ev?.clientY ?? drag.lastY) - drag.startY;
         if (!drag.abortedVert && Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.2) {
-          applyActiveView(state.view === 'map' ? 'phase' : 'map');
+          if (state.view === 'phase' && dx < 0) {
+            applyActiveView('map');
+          } else if (state.view === 'map' && dx > 0) {
+            applyActiveView('phase');
+          } else {
+            applyActiveView(state.view);
+          }
         } else {
           applyActiveView(state.view);
         }
