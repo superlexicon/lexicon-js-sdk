@@ -36,9 +36,9 @@ export const VOUCHER_STATUS = Object.freeze({
 });
 
 export const HARDWARE_SKU = Object.freeze({
-  DONGLE: 1, // $178 -> KS 20% = 35,600,000 SLXR | Retail 5% = 8,900,000 SLXR
-  WATCH: 2,  // $688 -> KS 20% = 137,600,000 SLXR | Retail 5% = 34,400,000 SLXR
-  SLATE: 3,  // $1,198 -> KS 20% = 239,600,000 SLXR | Retail 5% = 59,900,000 SLXR
+  DONGLE: 1, // $198 -> KS 20% = 39,600,000 SLXR | Retail 5% = 9,900,000 SLXR
+  WATCH: 2,  // $888 -> KS 20% = 177,600,000 SLXR | Retail 5% = 44,400,000 SLXR
+  SLATE: 3,  // $1,288 -> KS 20% = 257,600,000 SLXR | Retail 5% = 64,400,000 SLXR
 });
 
 export const REWARD_TIER_BPS = Object.freeze({
@@ -58,9 +58,9 @@ const DOMAIN_FOREIGN_EPOCH = utf8ToBytes('SLX_FOREIGN_EPOCH_V1');
  */
 export function computeExpectedSlxrEntitlement(skuCode, tierBps = REWARD_TIER_BPS.RETAIL, customPriceUsd = 0) {
   const defaultPricesUsd = {
-    [HARDWARE_SKU.DONGLE]: 178,
-    [HARDWARE_SKU.WATCH]: 688,
-    [HARDWARE_SKU.SLATE]: 1198,
+    [HARDWARE_SKU.DONGLE]: 198,
+    [HARDWARE_SKU.WATCH]: 888,
+    [HARDWARE_SKU.SLATE]: 1288,
   };
   const usd = Number(customPriceUsd || defaultPricesUsd[Number(skuCode)] || 0);
   if (usd <= 0) return 0;
