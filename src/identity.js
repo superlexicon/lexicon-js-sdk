@@ -1613,6 +1613,12 @@ export function encodeHfsTypeId(typeName) {
 }
 
 export const HfsRegistryAbi = {
+  pinSovereignCharter(charterAddr) {
+    return encodeAbi('pinSovereignCharter(address)', [['address', charterAddr]]);
+  },
+  sovereignCharter() {
+    return bytesToHex(selectorBytes('sovereignCharter()'));
+  },
   getInstancesByType(typeName, offset = 0, limit = 32) {
     return encodeAbi('getInstancesByType(bytes32,uint64,uint64)', [
       ['bytes32', encodeHfsTypeId(typeName)],

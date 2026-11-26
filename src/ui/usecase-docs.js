@@ -1373,8 +1373,8 @@ export const USECASE_DESCRIPTIONS = {
             <p>Community-published apps execute inside <code>&lt;iframe sandbox="allow-scripts allow-forms"&gt;</code> (without <code>allow-same-origin</code>), isolating parent <code>localStorage</code> and <code>secp256k1</code> private keys while bridging RPC reads and user-approved <code>Identity</code> transactions via <code>window.slx</code>.</p>
           </div>
           <div class="slx-ucd-card">
-            <h4>🪪 Slug Ownership &amp; firewall Whitelisting</h4>
-            <p>Publishing binds each app slug to the creator’s on-chain <code>Identity</code> HFS (<code>ERR_SLUG_OWNED_BY_OTHER = -15</code> prevents hijacking), while users’ <code>Identity</code> Subroutine Firewalls automatically block any <code>State = 3 (Spam)</code> contract.</p>
+            <h4>🪪 <code>Superlexicon · Developers</code> Gate vs. Direct RF</h4>
+            <p>To prevent internet spam over public Web JSON-RPC, publishing apps and deploying non-<code>Identity</code> HFS instances via the website requires membership in the <strong><code>Superlexicon · Developers</code></strong> social subgroup governed by the cast-in-stone <strong>Superlexicon Pte. Ltd.</strong> (Singapore) <code>CorporateCharter</code>—while connecting directly via physical <code>LR2021</code> RF hardware remains permissionless on-subnet.</p>
           </div>
         </div>
       `,
@@ -1384,7 +1384,8 @@ export const USECASE_DESCRIPTIONS = {
             <tr><th>Component</th><th>Role in Zero-Server App Execution</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>app_store.wasm</code> (HPS #27)</td><td>Stores immutable <code>keccak256</code>-verified gzipped UI chunks, permissionless app listings, release counters, and <code>0x…</code> instance-to-UI bindings.</td></tr>
+            <tr><td><code>app_store.wasm</code> (HPS #27)</td><td>Stores immutable <code>keccak256</code>-verified gzipped UI chunks, <code>Superlexicon · Developers</code>-gated app listings, release counters, and <code>0x…</code> instance-to-UI bindings.</td></tr>
+            <tr><td><code>corporate_charter.wasm</code> (Sovereign Root)</td><td>Casts <strong>Superlexicon Pte. Ltd.</strong> (Singapore; Directors: Manogaran Thanabalan &amp; Sarah Jean Rodrigues; <code>100,000</code> <code>SLX-ORD</code> shares) in stone at protocol level, blocks confusable entity names, auto-creates company social groups, and governs the <code>Superlexicon · Developers</code> subgroup.</td></tr>
             <tr><td><code>BYTECODE_STORE</code> (<code>0x0100</code>)</td><td>Content-addressed L1 store holding each app’s compiled <code>.wasm</code> Halt-Free Subroutine bytecode once per subnet.</td></tr>
             <tr><td><code>identity.wasm</code></td><td>Authenticates app publishers on update and guards user transaction signing via the Host Wallet Confirmation Sheet.</td></tr>
             <tr><td><code>app-host-boot.js</code> &amp; <code>/apps.html</code></td><td>Universal Host Shell that resolves <code>uiHash</code>, verifies <code>keccak256</code> client-side, decompresses <code>gzip</code>, caches in <code>IndexedDB</code>, and mounts all 12 core apps + community apps dynamically.</td></tr>

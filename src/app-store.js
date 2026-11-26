@@ -36,9 +36,36 @@ import {
   readOnChainIdentityNickname,
   HFS_ASSOC_STATUS,
 } from './identity.js';
+import {
+  SUBGROUP_ALL_MEMBERS_SLUG,
+  SUBGROUP_DEVELOPERS_SLUG,
+  SOVEREIGN_SUPERLEXICON_CHARTER_SPEC,
+  isConfusableSuperlexiconName,
+  companyGroupChannelHash,
+  isPublicWebsiteRpcUrl,
+  CharterSocialAbi,
+  decodeEntityProfileHex,
+  decodeCompanySocialOverviewHex,
+  resolveSovereignSuperlexiconCharter,
+  checkSuperlexiconDeveloperStanding,
+} from './charter-social.js';
+
+export {
+  SUBGROUP_ALL_MEMBERS_SLUG,
+  SUBGROUP_DEVELOPERS_SLUG,
+  SOVEREIGN_SUPERLEXICON_CHARTER_SPEC,
+  isConfusableSuperlexiconName,
+  companyGroupChannelHash,
+  isPublicWebsiteRpcUrl,
+  CharterSocialAbi,
+  decodeEntityProfileHex,
+  decodeCompanySocialOverviewHex,
+  resolveSovereignSuperlexiconCharter,
+  checkSuperlexiconDeveloperStanding,
+};
 
 export const APP_STORE_CODE_HASH =
-  '0x9ed33ecadd23d9f35c7f77d0cead887fb40fa3a6fc31eff26783151dd496b948';
+  '0xee9d0de546e867f3a564e67cca86ea8988b965246b240eb93c9c2fc83ee90646';
 export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
 
 export const APP_STORE_CHUNK_BYTES = 32_768; // 32 KiB per chunk (up to 8 chunks = 256 KiB compressed)
@@ -276,6 +303,23 @@ export const SlxUiBundleCache = {
 
 export const AppStoreAbi = {
   initialize: (adminAddr) => encodeAbi('initialize(address)', [['address', adminAddr]]),
+  initializeWithDeveloperGate: (
+    adminAddr,
+    superlexiconCharterAddr,
+    subgroupSlug = SUBGROUP_DEVELOPERS_SLUG
+  ) =>
+    encodeAbi('initializeWithDeveloperGate(address,address,bytes32)', [
+      ['address', adminAddr],
+      ['address', superlexiconCharterAddr],
+      ['bytes32', subgroupSlug || SUBGROUP_DEVELOPERS_SLUG],
+    ]),
+  setAuthorizedPublisherGroup: (superlexiconCharterAddr, subgroupSlug = SUBGROUP_DEVELOPERS_SLUG) =>
+    encodeAbi('setAuthorizedPublisherGroup(address,bytes32)', [
+      ['address', superlexiconCharterAddr],
+      ['bytes32', subgroupSlug || SUBGROUP_DEVELOPERS_SLUG],
+    ]),
+  authorizedPublisherGroup: () => bytesToHex(selectorBytes('authorizedPublisherGroup()')),
+  canPublish: (actorAddr) => encodeAbi('canPublish(address)', [['address', actorAddr]]),
   abiVersion: () => bytesToHex(selectorBytes('abiVersion()')),
   admin: () => bytesToHex(selectorBytes('admin()')),
   uploadBundleChunk: ({ uiHash, chunkIndex, totalChunks, encoding, uncompressedLen, chunkBytes }) =>
@@ -644,7 +688,10 @@ export class AppStoreClient {
       extraTargets: [predictedStoreAddr],
       lowerBoundHashHex: txStore.txHash,
     });
-    const initCd = AppStoreAbi.initialize(idRec.identityAddr);
+    const initSov = await resolveSovereignSuperlexiconCharter(this.rpcUrl);
+    const initCd = initSov
+      ? AppStoreAbi.initializeWithDeveloperGate(idRec.identityAddr, initSov, SUBGROUP_DEVELOPERS_SLUG)
+      : AppStoreAbi.initialize(idRec.identityAddr);
     const txInit = signOrderedLexiconTx({
       privateKey: myPriv,
       nonce: n0 + 2n,
@@ -692,10 +739,32 @@ export class AppStoreClient {
     return confirmedAddr;
   }
 
+  async checkPublisherStanding(wallet) {
+    const storeAddr = await this.resolveStoreAddress();
+    const idRec = wallet?.getIdentityRecord?.() || null;
+    const identityAddr = idRec?.identityAddr || '';
+    const eoaAddr = wallet?.keypair?.address || '';
+    return checkSuperlexiconDeveloperStanding({
+      rpcUrl: this.rpcUrl,
+      identityAddr,
+      eoaAddr,
+      storeAddr,
+    });
+  }
+
   async uploadUiBundleOnChain({ wallet, htmlSource, onStatus = null }) {
     const emit = (m) => {
       if (typeof onStatus === 'function') onStatus(m);
     };
+    // Enforce Superlexicon · Developers social group membership before Web RPC publish / HFS deploy
+    const standing = await this.checkPublisherStanding(wallet);
+    if (!standing.authorized) {
+      throw new Error(
+        standing.reason ||
+          'Only members of the Superlexicon · Developers social subgroup (linked to Superlexicon Pte. Ltd. CorporateCharter) are authorized to publish apps or deploy HFS over Web RPC.'
+      );
+    }
+
     const packed = await compressAppUiBundle(htmlSource);
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
     await SlxUiBundleCache.putVerifiedHtml(packed.uiHash, {
@@ -800,6 +869,15 @@ export class AppStoreClient {
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, '-');
     const slugId = slugToBytes32(cleanSlug);
+
+    // Enforce Superlexicon · Developers social group membership before Web RPC publish / HFS deploy
+    const standing = await this.checkPublisherStanding(wallet);
+    if (!standing.authorized) {
+      throw new Error(
+        standing.reason ||
+          'Only members of the Superlexicon · Developers social subgroup (linked to Superlexicon Pte. Ltd. CorporateCharter) are authorized to publish apps or deploy HFS over Web RPC.'
+      );
+    }
 
     const packed = await compressAppUiBundle(htmlSource);
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);

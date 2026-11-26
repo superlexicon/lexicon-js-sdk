@@ -33,6 +33,7 @@
     "./reward-voucher": "./src/reward-voucher.js",
     "./crowdfunding": "./src/crowdfunding.js",
     "./app-store": "./src/app-store.js",
+    "./charter-social": "./src/charter-social.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"
