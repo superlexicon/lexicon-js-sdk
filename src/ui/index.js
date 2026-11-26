@@ -380,7 +380,12 @@ function createModalProgressController(hostEl) {
 
 export function openIdentityCreateModal(
   wallet,
-  { rpcUrl = getDefaultNodeWsUrl(), appName = 'SuperLexicon' } = {}
+  {
+    rpcUrl = getDefaultNodeWsUrl(),
+    appName = 'SuperLexicon',
+    requireOrderProfile = false,
+    existingRecord = null,
+  } = {}
 ) {
   if (typeof document === 'undefined') {
     return wallet.deployUnifiedIdentityWithNickname(`Capt_${truncAddr4(wallet.keypair.address)}`, {
@@ -401,29 +406,44 @@ export function openIdentityCreateModal(
     }
 
     let isDeploying = false;
-    const preferredNick = wallet.getPreferredNickname?.() || '';
+    const currentRec = existingRecord || wallet.getIdentityRecord?.() || null;
+    const isUpdateExisting = Boolean(currentRec?.identityAddr);
+    const preferredNick = currentRec?.nickname || wallet.getPreferredNickname?.() || '';
     const clearedNotice = wallet.lastClearedIdentityNotice || null;
     const defaultSuggestion = preferredNick || `Capt_${truncAddr4(wallet.keypair.address)}`;
+    const initFullName = currentRec?.fullName || '';
+    const initBilling = currentRec?.billingAddress || '';
+    const initShipping = currentRec?.shippingAddress || '';
+    const defaultSameShip = !initShipping || initShipping === initBilling;
+
     backdrop.classList.add('is-open');
     backdrop.innerHTML = `
-      <div class="slx-modal-card" style="max-width:520px;" onclick="event.stopPropagation()">
+      <div class="slx-modal-card" style="max-width:560px;" onclick="event.stopPropagation()">
         <div class="slx-modal-header">
           <div>
             <div style="display:flex;align-items:center;gap:0.45rem;flex-wrap:wrap;">
-              <strong style="font-size:0.98rem;color:#f8fafc;">🪪 Create Your On-Chain Identity</strong>
-              <span style="padding:0.14rem 0.48rem;border-radius:999px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.5);color:#6ee7b7;font-family:monospace;font-size:0.66rem;font-weight:700;">1-Time Subnet Deploy</span>
+              <strong style="font-size:0.98rem;color:#f8fafc;">
+                ${isUpdateExisting ? '🪪 Complete Identity Pre-Order Profile' : '🪪 Create Your On-Chain Identity'}
+              </strong>
+              <span style="padding:0.14rem 0.48rem;border-radius:999px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.5);color:#6ee7b7;font-family:monospace;font-size:0.66rem;font-weight:700;">
+                ${isUpdateExisting ? 'On-Chain Profile Sync' : '1-Time Subnet Deploy'}
+              </span>
             </div>
             <div style="font-size:0.72rem;color:#94a3b8;margin-top:3px;">
-              This action in <strong>${escapeHtmlText(appName)}</strong> requires an on-chain <code>identity.wasm</code> smart contract — deploy once to share across all SuperLexicon apps, or click <strong>Spectate Only</strong> to keep browsing.
+              ${
+                isUpdateExisting
+                  ? `Attach your credit-card holder name, billing address, and shipping address to your existing Identity HFS (<code>${shortHex(currentRec.identityAddr)}</code>). Editable anytime.`
+                  : `This action in <strong>${escapeHtmlText(appName)}</strong> uses an on-chain <code>identity.wasm</code> smart contract — deploy once to share across all SuperLexicon apps${requireOrderProfile ? ' with your Pre-Order Billing & Shipping profile' : ''}.`
+              }
             </div>
           </div>
-          <button type="button" class="slx-mini-btn" id="slxIdentityCloseBtn" aria-label="Close and continue spectating">✕</button>
+          <button type="button" class="slx-mini-btn" id="slxIdentityCloseBtn" aria-label="Close">✕</button>
         </div>
         <form id="slxIdentityCreateForm" class="slx-modal-body">
           ${
-            clearedNotice
+            clearedNotice && !isUpdateExisting
               ? `<div style="padding:0.45rem 0.65rem;border-radius:0.5rem;background:rgba(245,158,11,0.14);border:1px solid rgba(251,191,36,0.45);color:#fde68a;font-size:0.71rem;">
-                   Previous cached Identity HFS (<code>${shortHex(clearedNotice.identityAddr)}</code>) is not deployed on the active subnet — confirm your nickname below to deploy a fresh Identity smart contract in 1 block.
+                   Previous cached Identity HFS (<code>${shortHex(clearedNotice.identityAddr)}</code>) is not deployed on the active subnet — confirm your profile below to deploy a fresh Identity smart contract in 1 block.
                  </div>`
               : ''
           }
@@ -433,7 +453,7 @@ export function openIdentityCreateModal(
               <code style="color:#6ee7b7;font-weight:700;">${wallet.keypair.address.slice(0, 10)}…${wallet.keypair.address.slice(-6)} (${truncAddr4(wallet.keypair.address)})</code>
             </div>
             <label style="font-size:0.76rem;font-weight:700;color:#7dd3fc;margin-top:0.25rem;" for="slxIdentityNickInput">
-              Choose Your Public Nickname (1–24 chars)
+              Public Nickname (1–24 chars) *
             </label>
             <input
               id="slxIdentityNickInput"
@@ -443,19 +463,77 @@ export function openIdentityCreateModal(
               required
               placeholder="e.g. AdmiralVex, Mano, MacroWhale"
               value="${escapeHtmlText(defaultSuggestion)}"
-              style="font-size:1rem;padding:0.55rem 0.7rem;"
+              style="font-size:0.95rem;padding:0.5rem 0.7rem;"
             />
-            <div style="font-size:0.69rem;color:#94a3b8;">
-              Rendered on-chain alongside your 4-char account tag (<code>· ${truncAddr4(wallet.keypair.address)}</code>) next to your vessels, trades, ballots &amp; messages.
+            <div style="font-size:0.68rem;color:#94a3b8;">
+              Rendered on-chain alongside your 4-char account tag (<code>· ${truncAddr4(wallet.keypair.address)}</code>). You can change your nickname, full name, or addresses at any time.
             </div>
           </div>
+
+          <details id="slxIdentityOrderDetails" class="slx-panel-box" ${requireOrderProfile || initFullName || initBilling || initShipping ? 'open' : ''} style="border-color:${requireOrderProfile ? 'rgba(56,189,248,0.45)' : 'rgba(148,163,184,0.25)'};">
+            <summary style="cursor:pointer;font-size:0.77rem;font-weight:700;color:${requireOrderProfile ? '#38bdf8' : '#cbd5e1'};user-select:none;">
+              💳 ${requireOrderProfile ? 'Required for Pre-Order: Full Name, Billing & Shipping Address *' : 'Optional: Attach Full Name & Billing/Shipping Address (for Hardware Pre-Orders)'}
+            </summary>
+            <div style="display:flex;flex-direction:column;gap:0.45rem;margin-top:0.55rem;">
+              <div style="font-size:0.68rem;color:#94a3b8;line-height:1.4;">
+                🔒 Client-side authenticated encryption (<code>enc1</code> Keccak-CTR+MAC) seals these fields to your Identity HFS keypair so cleartext home addresses are never exposed on public RF state.
+              </div>
+              <div>
+                <label style="font-size:0.72rem;font-weight:700;color:#e2e8f0;display:block;margin-bottom:3px;" for="slxIdFullNameInput">
+                  Full Legal Name (as per Credit Card Account) ${requireOrderProfile ? '*' : '(optional)'}
+                </label>
+                <input
+                  id="slxIdFullNameInput"
+                  class="slx-input-field"
+                  type="text"
+                  maxlength="160"
+                  ${requireOrderProfile ? 'required' : ''}
+                  placeholder="Exact cardholder full name (e.g. Tan Wei Ming)"
+                  value="${escapeHtmlText(initFullName)}"
+                  style="width:100%;box-sizing:border-box;"
+                />
+              </div>
+              <div>
+                <label style="font-size:0.72rem;font-weight:700;color:#e2e8f0;display:block;margin-bottom:3px;" for="slxIdBillingInput">
+                  Billing Address (as per Credit Card Statement) ${requireOrderProfile ? '*' : '(optional)'}
+                </label>
+                <textarea
+                  id="slxIdBillingInput"
+                  class="slx-input-field"
+                  rows="2"
+                  maxlength="480"
+                  ${requireOrderProfile ? 'required' : ''}
+                  placeholder="Street address, unit/apt, city, state/province, postal code, country"
+                  style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;"
+                >${escapeHtmlText(initBilling)}</textarea>
+              </div>
+              <label style="display:inline-flex;align-items:center;gap:0.42rem;font-size:0.72rem;color:#cbd5e1;cursor:pointer;">
+                <input id="slxIdSameAsBillChk" type="checkbox" ${defaultSameShip ? 'checked' : ''} />
+                <span>Shipping address is the same as Billing Address</span>
+              </label>
+              <div id="slxIdShipWrap" style="display:${defaultSameShip ? 'none' : 'block'};">
+                <label style="font-size:0.72rem;font-weight:700;color:#e2e8f0;display:block;margin-bottom:3px;" for="slxIdShippingInput">
+                  Shipping Address (Hardware Delivery Destination) ${requireOrderProfile ? '*' : '(optional)'}
+                </label>
+                <textarea
+                  id="slxIdShippingInput"
+                  class="slx-input-field"
+                  rows="2"
+                  maxlength="480"
+                  placeholder="Recipient street address, unit/apt, city, postal code, country"
+                  style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;"
+                >${escapeHtmlText(initShipping)}</textarea>
+              </div>
+            </div>
+          </details>
+
           <div id="slxIdentityCreateStatus" style="display:none;"></div>
           <div style="display:flex;justify-content:flex-end;gap:0.5rem;flex-wrap:wrap;">
             <button type="button" id="slxIdentityCancelBtn" class="slx-mini-btn" style="padding:0.55rem 0.9rem;font-size:0.8rem;">
-              👁️ Spectate Only
+              ${isUpdateExisting ? 'Cancel' : '👁️ Spectate Only'}
             </button>
             <button type="submit" id="slxIdentitySubmitBtn" class="slx-mini-btn emerald" style="padding:0.55rem 1.1rem;font-size:0.82rem;">
-              🚀 Deploy Identity &amp; Continue →
+              ${isUpdateExisting ? '💾 Save Profile & Continue →' : '🚀 Deploy Identity & Continue →'}
             </button>
           </div>
         </form>
@@ -464,11 +542,20 @@ export function openIdentityCreateModal(
 
     const form = backdrop.querySelector('#slxIdentityCreateForm');
     const inp = backdrop.querySelector('#slxIdentityNickInput');
+    const fnInp = backdrop.querySelector('#slxIdFullNameInput');
+    const billInp = backdrop.querySelector('#slxIdBillingInput');
+    const sameChk = backdrop.querySelector('#slxIdSameAsBillChk');
+    const shipWrap = backdrop.querySelector('#slxIdShipWrap');
+    const shipInp = backdrop.querySelector('#slxIdShippingInput');
     const statusEl = backdrop.querySelector('#slxIdentityCreateStatus');
     const submitBtn = backdrop.querySelector('#slxIdentitySubmitBtn');
     const cancelBtn = backdrop.querySelector('#slxIdentityCancelBtn');
     const closeBtn = backdrop.querySelector('#slxIdentityCloseBtn');
     const prog = createModalProgressController(statusEl);
+
+    sameChk?.addEventListener('change', () => {
+      if (shipWrap) shipWrap.style.display = sameChk.checked ? 'none' : 'block';
+    });
 
     const cancelToSpectator = () => {
       if (isDeploying) return;
@@ -476,7 +563,7 @@ export function openIdentityCreateModal(
       backdrop.onclick = null;
       backdrop.classList.remove('is-open');
       _activePromptPromise = null;
-      const cancelErr = new Error('Identity deployment canceled — continuing in Spectator Mode.');
+      const cancelErr = new Error('Identity prompt canceled.');
       cancelErr.isIdentityPromptCanceled = true;
       reject(cancelErr);
     };
@@ -494,37 +581,71 @@ export function openIdentityCreateModal(
     closeBtn?.addEventListener('click', cancelToSpectator);
 
     setTimeout(() => {
-      inp?.focus();
-      inp?.select();
+      if (isUpdateExisting && requireOrderProfile && fnInp && !fnInp.value) {
+        fnInp.focus();
+      } else {
+        inp?.focus();
+        inp?.select();
+      }
     }, 40);
 
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const chosen = String(inp.value || '').trim();
       if (!chosen) return;
+      const fullName = String(fnInp?.value || '').trim();
+      const billingAddress = String(billInp?.value || '').trim();
+      const shippingAddress = sameChk?.checked
+        ? billingAddress
+        : String(shipInp?.value || '').trim();
+
+      if (requireOrderProfile && (!fullName || !billingAddress || !shippingAddress)) {
+        prog.fail('Full Name, Billing Address, and Shipping Address are required for hardware pre-orders.');
+        const detailsEl = backdrop.querySelector('#slxIdentityOrderDetails');
+        if (detailsEl) detailsEl.open = true;
+        return;
+      }
+
       isDeploying = true;
       inp.disabled = true;
+      if (fnInp) fnInp.disabled = true;
+      if (billInp) billInp.disabled = true;
+      if (shipInp) shipInp.disabled = true;
+      if (sameChk) sameChk.disabled = true;
       submitBtn.disabled = true;
       if (cancelBtn) cancelBtn.disabled = true;
       if (closeBtn) closeBtn.disabled = true;
-      submitBtn.textContent = '⏳ Deploying Identity…';
+      submitBtn.textContent = isUpdateExisting ? '⏳ Saving Profile…' : '⏳ Deploying Identity…';
       prog.start(
-        `Deploying "${chosen}" Unified Identity…`,
-        'Instantiating identity.wasm & sealing IdentityRegistry in 1 block',
-        14
+        isUpdateExisting
+          ? `Updating "${chosen}" Identity HFS Profile…`
+          : `Deploying "${chosen}" Unified Identity…`,
+        isUpdateExisting
+          ? 'Sealing encrypted name & addresses to your Identity HFS'
+          : 'Instantiating identity.wasm & sealing IdentityRegistry in 1 block',
+        18
       );
       try {
-        const deployed = await wallet.deployUnifiedIdentityWithNickname(chosen, {
-          rpcUrl,
-          onStatus: (msg, meta) => {
-            prog.update(msg, meta);
-          },
-        });
+        const deployed = isUpdateExisting
+          ? await wallet.updateIdentityProfile(
+              { nickname: chosen, fullName, billingAddress, shippingAddress },
+              {
+                rpcUrl,
+                onStatus: (msg, meta) => prog.update(msg, meta),
+              }
+            )
+          : await wallet.deployUnifiedIdentityWithNickname(chosen, {
+              rpcUrl,
+              fullName,
+              billingAddress,
+              shippingAddress,
+              onStatus: (msg, meta) => prog.update(msg, meta),
+            });
         prog.complete(
-          `✓ Identity "${chosen}" (${shortHex(deployed.identityAddr)}) Live!`,
+          `✓ Identity "${chosen}" (${shortHex(deployed.identityAddr)}) Synced!`,
           'Synchronized across all SuperLexicon apps'
         );
-        await new Promise((r) => setTimeout(r, 260));
+        await new Promise((r) => setTimeout(r, 240));
         document.removeEventListener('keydown', onEscKey);
         backdrop.onclick = null;
         backdrop.classList.remove('is-open');
@@ -533,10 +654,16 @@ export function openIdentityCreateModal(
       } catch (err) {
         isDeploying = false;
         inp.disabled = false;
+        if (fnInp) fnInp.disabled = false;
+        if (billInp) billInp.disabled = false;
+        if (shipInp) shipInp.disabled = false;
+        if (sameChk) sameChk.disabled = false;
         submitBtn.disabled = false;
         if (cancelBtn) cancelBtn.disabled = false;
         if (closeBtn) closeBtn.disabled = false;
-        submitBtn.textContent = '🚀 Retry Identity Deployment →';
+        submitBtn.textContent = isUpdateExisting
+          ? '💾 Retry Profile Save →'
+          : '🚀 Retry Identity Deployment →';
         prog.fail(err.message || String(err));
       }
     });
@@ -692,7 +819,7 @@ export function mountSlxWalletHeader({
             activeTab === 'wallet'
               ? `
             <div class="slx-panel-box">
-              <strong style="color:#7dd3fc;font-size:0.82rem;">🪪 Shared On-Chain Identity HFS (<code>identity.wasm</code>)</strong>
+              <strong style="color:#7dd3fc;font-size:0.82rem;">🪪 Shared On-Chain Identity HFS (<code>identity.wasm</code>) &amp; Order Profile</strong>
               ${
                 idRec
                   ? `
@@ -710,9 +837,35 @@ export function mountSlxWalletHeader({
                         <button type="button" class="slx-mini-btn" data-copy="${idRec.identityAddr}">Copy</button>
                       </div>
                     </div>
-                    <div style="display:flex;gap:0.45rem;flex-wrap:wrap;margin-top:0.2rem;">
-                      <input id="slxEditNickInput" type="text" maxlength="24" class="slx-input-field" value="${escapeHtmlText(idRec.nickname)}" placeholder="New nickname (1–24 chars)" />
-                      <button type="button" class="slx-mini-btn emerald" id="slxBtnSaveNick">✏ Update On-Chain Nickname</button>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0.45rem;margin-top:0.35rem;">
+                      <div>
+                        <label style="font-size:0.68rem;color:#94a3b8;display:block;margin-bottom:2px;">Public Nickname (1–24 chars)</label>
+                        <input id="slxEditNickInput" type="text" maxlength="24" class="slx-input-field" value="${escapeHtmlText(idRec.nickname)}" placeholder="Public nickname" style="width:100%;box-sizing:border-box;" />
+                      </div>
+                      <div>
+                        <label style="font-size:0.68rem;color:#94a3b8;display:block;margin-bottom:2px;">Full Name (as per Credit Card)</label>
+                        <input id="slxEditFullNameInput" type="text" maxlength="160" class="slx-input-field" value="${escapeHtmlText(idRec.fullName || '')}" placeholder="Cardholder full legal name (optional)" style="width:100%;box-sizing:border-box;" />
+                      </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:0.45rem;margin-top:0.4rem;">
+                      <div>
+                        <label style="font-size:0.68rem;color:#94a3b8;display:block;margin-bottom:2px;">Billing Address (Credit Card Account)</label>
+                        <textarea id="slxEditBillingInput" rows="2" maxlength="480" class="slx-input-field" placeholder="Street, unit, city, postal code, country" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtmlText(idRec.billingAddress || '')}</textarea>
+                      </div>
+                      <div>
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.35rem;margin-bottom:2px;">
+                          <label style="font-size:0.68rem;color:#94a3b8;">Shipping Address (Delivery)</label>
+                          <label style="font-size:0.65rem;color:#38bdf8;cursor:pointer;display:inline-flex;align-items:center;gap:3px;">
+                            <input id="slxEditSameAsBillChk" type="checkbox" ${idRec.billingAddress && idRec.shippingAddress === idRec.billingAddress ? 'checked' : ''} />
+                            Same as Billing
+                          </label>
+                        </div>
+                        <textarea id="slxEditShippingInput" rows="2" maxlength="480" class="slx-input-field" placeholder="Delivery street, unit, city, postal code, country" style="width:100%;box-sizing:border-box;resize:vertical;font-family:inherit;">${escapeHtmlText(idRec.shippingAddress || '')}</textarea>
+                      </div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:0.45rem;flex-wrap:wrap;margin-top:0.45rem;">
+                      <span style="font-size:0.66rem;color:#94a3b8;">🔒 Name &amp; addresses are encrypted (<code>enc1</code>) before sealing to your Identity HFS. Editable anytime.</span>
+                      <button type="button" class="slx-mini-btn emerald" id="slxBtnSaveNick">💾 Update Profile on Identity HFS</button>
                     </div>
                   `
                   : `
@@ -1021,16 +1174,41 @@ export function mountSlxWalletHeader({
       privRevealed = !privRevealed;
       renderModal();
     });
+    modal.querySelector('#slxEditSameAsBillChk')?.addEventListener('change', (ev) => {
+      const chk = ev.currentTarget;
+      const billInp = modal.querySelector('#slxEditBillingInput');
+      const shipInp = modal.querySelector('#slxEditShippingInput');
+      if (chk.checked && billInp && shipInp) {
+        shipInp.value = billInp.value;
+      }
+    });
     modal.querySelector('#slxBtnSaveNick')?.addEventListener('click', async (ev) => {
       const btn = ev.currentTarget;
       const inp = modal.querySelector('#slxEditNickInput');
+      const fnInp = modal.querySelector('#slxEditFullNameInput');
+      const billInp = modal.querySelector('#slxEditBillingInput');
+      const shipInp = modal.querySelector('#slxEditShippingInput');
+      const sameChk = modal.querySelector('#slxEditSameAsBillChk');
       const nextNick = String(inp?.value || '').trim();
       if (!nextNick) return;
+      const nextFullName = String(fnInp?.value || '').trim();
+      const nextBilling = String(billInp?.value || '').trim();
+      const nextShipping = sameChk?.checked
+        ? nextBilling
+        : String(shipInp?.value || '').trim();
       btn.disabled = true;
       btn.textContent = '⏳ Saving…';
       try {
-        await wallet.updateIdentityNickname(nextNick, { rpcUrl: cachedRpc });
-        statusBanner = `✓ Updated on-chain nickname to "${nextNick}"!`;
+        await wallet.updateIdentityProfile(
+          {
+            nickname: nextNick,
+            fullName: nextFullName,
+            billingAddress: nextBilling,
+            shippingAddress: nextShipping,
+          },
+          { rpcUrl: cachedRpc }
+        );
+        statusBanner = `✓ Updated Identity HFS profile ("${nextNick}")!`;
         if (onWalletSwitch) await onWalletSwitch(wallet.keypair);
       } catch (err) {
         statusBanner = `⚠ ${err.message || err}`;

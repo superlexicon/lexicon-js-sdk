@@ -15,6 +15,7 @@ import {
   utf8ToBytes,
   bytesToUtf8,
   concatBytes,
+  keccak256Bytes,
   selectorBytes,
   computeAddress,
   computeCreateAddress,
@@ -49,8 +50,121 @@ const STORAGE_KEY_WALLET = 'slx_wallet_keypair_v1';
 const STORAGE_KEY_UNIFIED_IDENTITIES = 'slx_unified_identities_v1';
 const STORAGE_KEY_PREFERRED_NICKNAMES = 'slx_preferred_nicknames_v1';
 const IDENTITY_VERIFY_TTL_MS = 15_000;
+const PROFILE_VAULT_HFS_SENTINEL = '0x0000000000000000000000000000000050524f46';
+const BYTECODE_STORE_SYS_ADDR = '0x0000000000000000000000000000000000000100';
+export const IDENTITY_V5_CODE_HASH =
+  '0xcc46a2588c305b47ce5407b744b2c730479459d60fbe3aae1d001a6d740f19cb';
 
 let _uiIdentityPromptHandler = null;
+
+function _deriveProfileSymmetricKey(privateKeyHex, identityAddrHex) {
+  const pk = hexToBytes(privateKeyHex);
+  const id = hexToBytes(String(identityAddrHex || ZERO_ADDR).toLowerCase());
+  return keccak256Bytes(concatBytes(utf8ToBytes('SLX_ID_PROFILE_KEY_V1'), pk, id));
+}
+
+function _keccakCtrXor(key32, nonce16, inputBytes) {
+  const out = new Uint8Array(inputBytes.length);
+  const blocks = Math.ceil(inputBytes.length / 32);
+  for (let b = 0; b < blocks; b++) {
+    const ctr = new Uint8Array(4);
+    ctr[0] = (b >>> 24) & 0xff;
+    ctr[1] = (b >>> 16) & 0xff;
+    ctr[2] = (b >>> 8) & 0xff;
+    ctr[3] = b & 0xff;
+    const ks = keccak256Bytes(concatBytes(key32, nonce16, ctr));
+    const off = b * 32;
+    const lim = Math.min(32, inputBytes.length - off);
+    for (let i = 0; i < lim; i++) {
+      out[off + i] = inputBytes[off + i] ^ ks[i];
+    }
+  }
+  return out;
+}
+
+/**
+ * Deterministically seals a profile PII field (`fullName`, `billingAddress`, `shippingAddress`)
+ * into an authenticated `enc1:<nonce16Hex>:<ctHex>:<mac16Hex>` string so on-chain `Identity` HFS
+ * storage never exposes cleartext customer addresses on public RF mesh `WorldState`.
+ */
+export function sealIdentityProfileField(plainText, privateKeyHex, identityAddrHex, fieldTag = 'f') {
+  const clean = String(plainText || '').trim();
+  if (!clean) return '';
+  if (!privateKeyHex || !identityAddrHex) return clean;
+  const key32 = _deriveProfileSymmetricKey(privateKeyHex, identityAddrHex);
+  const ptBytes = utf8ToBytes(clean);
+  const nonceFull = keccak256Bytes(concatBytes(key32, utf8ToBytes(fieldTag), ptBytes));
+  const nonce16 = nonceFull.subarray(0, 16);
+  const ct = _keccakCtrXor(key32, nonce16, ptBytes);
+  const macFull = keccak256Bytes(concatBytes(utf8ToBytes('SLX_ID_PROFILE_MAC_V1'), key32, nonce16, ct));
+  const mac16 = macFull.subarray(0, 16);
+  return `enc1:${bytesToHex(nonce16, false)}:${bytesToHex(ct, false)}:${bytesToHex(mac16, false)}`;
+}
+
+export function openIdentityProfileField(storedStr, privateKeyHex, identityAddrHex) {
+  const raw = String(storedStr || '').trim();
+  if (!raw) return '';
+  if (!raw.startsWith('enc1:')) return raw;
+  if (!privateKeyHex || !identityAddrHex) return '';
+  const parts = raw.split(':');
+  if (parts.length !== 4) return '';
+  try {
+    const key32 = _deriveProfileSymmetricKey(privateKeyHex, identityAddrHex);
+    const nonce16 = hexToBytes('0x' + parts[1]);
+    const ct = hexToBytes('0x' + parts[2]);
+    const mac16 = hexToBytes('0x' + parts[3]);
+    const expectedMac = keccak256Bytes(
+      concatBytes(utf8ToBytes('SLX_ID_PROFILE_MAC_V1'), key32, nonce16, ct)
+    ).subarray(0, 16);
+    if (expectedMac.length !== mac16.length) return '';
+    let diff = 0;
+    for (let i = 0; i < 16; i++) diff |= expectedMac[i] ^ mac16[i];
+    if (diff !== 0) return '';
+    return bytesToUtf8(_keccakCtrXor(key32, nonce16, ct));
+  } catch (_) {
+    return '';
+  }
+}
+
+export function computeIdentityProfileCommitment({ fullName = '', billingAddress = '', shippingAddress = '' } = {}) {
+  const fnH = keccak256Bytes(utf8ToBytes(String(fullName || '').trim()));
+  const blH = keccak256Bytes(utf8ToBytes(String(billingAddress || '').trim()));
+  const shH = keccak256Bytes(utf8ToBytes(String(shippingAddress || '').trim()));
+  return bytesToHex(keccak256Bytes(concatBytes(fnH, blH, shH)), true);
+}
+
+export async function readOnChainIdentityProfile(rpcUrl, identityAddr, privateKeyHex = '') {
+  const empty = { nickname: '', fullName: '', billingAddress: '', shippingAddress: '', version: 0 };
+  if (!identityAddr || /^0x0{40}$/i.test(identityAddr)) return empty;
+  const nickname = await readOnChainIdentityNickname(rpcUrl, identityAddr);
+  let version = 0;
+  try {
+    const verHex = await slxNodeRpc(rpcUrl, 'eth_call', [
+      { to: identityAddr, data: bytesToHex(selectorBytes('identityVersion()')) },
+      'latest',
+    ]);
+    version = decodeUintWord(verHex);
+  } catch (_) {}
+
+  if (version >= 5) {
+    try {
+      const [fnHex, blHex, shHex] = await Promise.all([
+        slxNodeRpc(rpcUrl, 'eth_call', [{ to: identityAddr, data: bytesToHex(selectorBytes('fullName()')) }, 'latest']),
+        slxNodeRpc(rpcUrl, 'eth_call', [{ to: identityAddr, data: bytesToHex(selectorBytes('billingAddress()')) }, 'latest']),
+        slxNodeRpc(rpcUrl, 'eth_call', [{ to: identityAddr, data: bytesToHex(selectorBytes('shippingAddress()')) }, 'latest']),
+      ]);
+      return {
+        nickname,
+        fullName: openIdentityProfileField(decodeAbiStringHex(fnHex), privateKeyHex, identityAddr),
+        billingAddress: openIdentityProfileField(decodeAbiStringHex(blHex), privateKeyHex, identityAddr),
+        shippingAddress: openIdentityProfileField(decodeAbiStringHex(shHex), privateKeyHex, identityAddr),
+        version,
+      };
+    } catch (_) {}
+  }
+
+  return { ...empty, nickname, version };
+}
 
 export function registerIdentityPromptHandler(handlerFn) {
   _uiIdentityPromptHandler = handlerFn;
@@ -252,29 +366,75 @@ export class SlxWalletManager {
 
   getIdentityRecord(eoaAddr = this.keypair.address) {
     const map = this._loadIdentityMap();
-    return map[String(eoaAddr || '').toLowerCase()] || null;
+    const k = String(eoaAddr || '').toLowerCase();
+    const raw = map[k];
+    if (!raw) return null;
+    const priv = k === this.keypair.address.toLowerCase() ? this.keypair.privateKey : '';
+    const idAddr = raw.identityAddr || '';
+    return {
+      ...raw,
+      fullName: raw.fullNameEnc
+        ? openIdentityProfileField(raw.fullNameEnc, priv, idAddr)
+        : String(raw.fullName || ''),
+      billingAddress: raw.billingAddressEnc
+        ? openIdentityProfileField(raw.billingAddressEnc, priv, idAddr)
+        : String(raw.billingAddress || ''),
+      shippingAddress: raw.shippingAddressEnc
+        ? openIdentityProfileField(raw.shippingAddressEnc, priv, idAddr)
+        : String(raw.shippingAddress || ''),
+    };
   }
 
   saveIdentityRecord(record, eoaAddr = this.keypair.address) {
     const map = this._loadIdentityMap();
     const k = String(eoaAddr || '').toLowerCase();
+    const prev = map[k] || {};
+    const idAddr = record.identityAddr || prev.identityAddr || '';
+    const priv = k === this.keypair.address.toLowerCase() ? this.keypair.privateKey : '';
+
+    const fullName =
+      record.fullName !== undefined
+        ? String(record.fullName || '').trim()
+        : prev.fullNameEnc
+        ? openIdentityProfileField(prev.fullNameEnc, priv, idAddr)
+        : String(prev.fullName || '');
+    const billingAddress =
+      record.billingAddress !== undefined
+        ? String(record.billingAddress || '').trim()
+        : prev.billingAddressEnc
+        ? openIdentityProfileField(prev.billingAddressEnc, priv, idAddr)
+        : String(prev.billingAddress || '');
+    const shippingAddress =
+      record.shippingAddress !== undefined
+        ? String(record.shippingAddress || '').trim()
+        : prev.shippingAddressEnc
+        ? openIdentityProfileField(prev.shippingAddressEnc, priv, idAddr)
+        : String(prev.shippingAddress || '');
+
     map[k] = {
-      identityAddr: record.identityAddr,
-      nickname: record.nickname,
-      handle: record.handle || record.nickname,
-      registryAddr: record.registryAddr || '',
+      identityAddr: idAddr,
+      nickname: record.nickname ?? prev.nickname ?? '',
+      handle: record.handle || record.nickname || prev.handle || '',
+      registryAddr: record.registryAddr ?? prev.registryAddr ?? '',
+      fullNameEnc: priv && idAddr ? sealIdentityProfileField(fullName, priv, idAddr, 'name') : '',
+      billingAddressEnc: priv && idAddr ? sealIdentityProfileField(billingAddress, priv, idAddr, 'bill') : '',
+      shippingAddressEnc: priv && idAddr ? sealIdentityProfileField(shippingAddress, priv, idAddr, 'ship') : '',
+      piiCommitment:
+        fullName || billingAddress || shippingAddress
+          ? computeIdentityProfileCommitment({ fullName, billingAddress, shippingAddress })
+          : '',
     };
     this._saveIdentityMap(map);
-    if (record.nickname) {
-      this.setPreferredNickname(record.nickname, k);
+    if (map[k].nickname) {
+      this.setPreferredNickname(map[k].nickname, k);
     }
     this._verifiedCache.clear();
     this.lastClearedIdentityNotice = null;
-    if (record.identityAddr && record.nickname) {
-      _writeSharedIdentityLabel(record.identityAddr, `${record.nickname} · ${truncAddr4(k)}`);
+    if (idAddr && map[k].nickname) {
+      _writeSharedIdentityLabel(idAddr, `${map[k].nickname} · ${truncAddr4(k)}`);
     }
     this._emit();
-    return map[k];
+    return this.getIdentityRecord(k);
   }
 
   clearIdentityRecord(eoaAddr = this.keypair.address) {
@@ -325,11 +485,38 @@ export class SlxWalletManager {
         }
         if (isActiveOwner) {
           this.lastClearedIdentityNotice = null;
-          const liveNick = await readOnChainIdentityNickname(rpcUrl, rec.identityAddr);
-          const verifiedRec =
-            liveNick && liveNick !== rec.nickname
-              ? this.saveIdentityRecord({ ...rec, nickname: liveNick }, eoa)
-              : rec;
+          const liveProf = await readOnChainIdentityProfile(
+            rpcUrl,
+            rec.identityAddr,
+            this.keypair.privateKey
+          );
+          const liveNick = liveProf.nickname || '';
+          const nextFullName = liveProf.version >= 5 && liveProf.fullName ? liveProf.fullName : rec.fullName;
+          const nextBilling =
+            liveProf.version >= 5 && liveProf.billingAddress
+              ? liveProf.billingAddress
+              : rec.billingAddress;
+          const nextShipping =
+            liveProf.version >= 5 && liveProf.shippingAddress
+              ? liveProf.shippingAddress
+              : rec.shippingAddress;
+          const changed =
+            (liveNick && liveNick !== rec.nickname) ||
+            nextFullName !== rec.fullName ||
+            nextBilling !== rec.billingAddress ||
+            nextShipping !== rec.shippingAddress;
+          const verifiedRec = changed
+            ? this.saveIdentityRecord(
+                {
+                  ...rec,
+                  nickname: liveNick || rec.nickname,
+                  fullName: nextFullName,
+                  billingAddress: nextBilling,
+                  shippingAddress: nextShipping,
+                },
+                eoa
+              )
+            : rec;
           this._verifiedCache.set(cacheKey, { at: Date.now(), record: verifiedRec });
           return verifiedRec;
         }
@@ -358,8 +545,13 @@ export class SlxWalletManager {
           const hitIdx = checks.findIndex((c) => c.deployed && c.owner.toLowerCase() === eoa);
           if (hitIdx >= 0) {
             const foundAddr = candidates[hitIdx];
+            const foundProf = await readOnChainIdentityProfile(
+              rpcUrl,
+              foundAddr,
+              this.keypair.privateKey
+            );
             const foundNick =
-              (await readOnChainIdentityNickname(rpcUrl, foundAddr)) ||
+              foundProf.nickname ||
               this.getPreferredNickname(eoa) ||
               `Capt_${truncAddr4(eoa)}`;
             const recovered = this.saveIdentityRecord(
@@ -367,6 +559,9 @@ export class SlxWalletManager {
                 identityAddr: foundAddr,
                 nickname: foundNick,
                 handle: foundNick,
+                fullName: foundProf.fullName || '',
+                billingAddress: foundProf.billingAddress || '',
+                shippingAddress: foundProf.shippingAddress || '',
               },
               eoa
             );
@@ -393,10 +588,17 @@ export class SlxWalletManager {
       manifest = null,
       onStatus = null,
       waitForRegistrySeal = false,
+      fullName = '',
+      billingAddress = '',
+      shippingAddress = '',
     } = {}
   ) {
     const nickname = String(rawNickname || '').trim().slice(0, 24);
     if (!nickname) throw new Error('Please enter a nickname (1–24 characters).');
+    const cleanFullName = String(fullName || '').trim().slice(0, 160);
+    const cleanBilling = String(billingAddress || '').trim().slice(0, 480);
+    const cleanShipping = String(shippingAddress || '').trim().slice(0, 480);
+    const hasProfilePii = Boolean(cleanFullName || cleanBilling || cleanShipping);
 
     const emitStatus = (msg, meta = {}) => {
       if (typeof onStatus === 'function') {
@@ -418,6 +620,7 @@ export class SlxWalletManager {
     if (!idCodeHash) {
       throw new Error('Missing identity.wasm codeHash in subnet1-deployments.json');
     }
+    const isV5CodeHash = String(idCodeHash).toLowerCase() === IDENTITY_V5_CODE_HASH;
 
     const myEoa = this.keypair.address;
     const myPriv = this.keypair.privateKey;
@@ -449,7 +652,7 @@ export class SlxWalletManager {
 
     const ZERO_LB = '0x' + '00'.repeat(32);
 
-    // 2. User EOA (0% background contention!) deploys Identity + initializes Nickname (+ Auth HFS) in ONE block!
+    // 2. User EOA (0% background contention!) deploys Identity + initializes Nickname & Profile (+ Auth HFS) in ONE block!
     const idInstSigned = signOrderedLexiconTx({
       privateKey: myPriv,
       nonce: myNonce0,
@@ -461,33 +664,87 @@ export class SlxWalletManager {
     });
 
     const derivedKeys = deriveIdentityEncryptionKeys(myPriv, newIdAddr);
-    const initCd = encodeAbi('initializeWithKeys(address,string,string,bytes,bytes32)', [
-      ['address', myEoa],
-      ['string', handle],
-      ['string', nickname],
-      ['bytes', derivedKeys.secpPub64Bytes],
-      ['bytes32', derivedKeys.edPub32Hex],
-    ]);
+    const sealedFullName = cleanFullName
+      ? sealIdentityProfileField(cleanFullName, myPriv, newIdAddr, 'name')
+      : '';
+    const sealedBilling = cleanBilling
+      ? sealIdentityProfileField(cleanBilling, myPriv, newIdAddr, 'bill')
+      : '';
+    const sealedShipping = cleanShipping
+      ? sealIdentityProfileField(cleanShipping, myPriv, newIdAddr, 'ship')
+      : '';
+
+    const initCd =
+      isV5CodeHash && hasProfilePii
+        ? encodeAbi(
+            'initializeWithProfile(address,string,string,bytes,bytes32,string,string,string)',
+            [
+              ['address', myEoa],
+              ['string', handle],
+              ['string', nickname],
+              ['bytes', derivedKeys.secpPub64Bytes],
+              ['bytes32', derivedKeys.edPub32Hex],
+              ['string', sealedFullName],
+              ['string', sealedBilling],
+              ['string', sealedShipping],
+            ]
+          )
+        : encodeAbi('initializeWithKeys(address,string,string,bytes,bytes32)', [
+            ['address', myEoa],
+            ['string', handle],
+            ['string', nickname],
+            ['bytes', derivedKeys.secpPub64Bytes],
+            ['bytes32', derivedKeys.edPub32Hex],
+          ]);
+
     const initSigned = signOrderedLexiconTx({
       privateKey: myPriv,
       nonce: myNonce0 + 1n,
       to: newIdAddr,
       data: initCd,
-      gasLimit: 5_000_000n,
+      gasLimit: 5_200_000n,
       extraTargets: [newIdAddr],
       lowerBoundHashHex: idInstSigned.txHash,
     });
 
     const userRawTxs = [idInstSigned.raw, initSigned.raw];
+    let nextNonceOffset = 2n;
     if (canRegisterInst) {
       const authInstSigned = signOrderedLexiconTx({
         privateKey: myPriv,
-        nonce: myNonce0 + 2n,
+        nonce: myNonce0 + nextNonceOffset,
         to: null,
         data: authCodeHash,
         gasLimit: 4_000_000n,
       });
       userRawTxs.push(authInstSigned.raw);
+      nextNonceOffset += 1n;
+    }
+
+    let profileSealTxInfo = null;
+    if (hasProfilePii && !isV5CodeHash) {
+      const piiCommit = computeIdentityProfileCommitment({
+        fullName: cleanFullName,
+        billingAddress: cleanBilling,
+        shippingAddress: cleanShipping,
+      });
+      const profAssocCd = IdentityHfsWhitelistAbi.setHfsAssociation(
+        PROFILE_VAULT_HFS_SENTINEL,
+        piiCommit,
+        2,
+        'SLX_ORDER_PROFILE_V1'
+      );
+      const profAssocSigned = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: myNonce0 + nextNonceOffset,
+        to: newIdAddr,
+        data: profAssocCd,
+        gasLimit: 4_500_000n,
+        extraTargets: [newIdAddr, PROFILE_VAULT_HFS_SENTINEL],
+        lowerBoundHashHex: initSigned.txHash,
+      });
+      userRawTxs.push(profAssocSigned.raw);
+      profileSealTxInfo = { signed: profAssocSigned, dataHex: profAssocCd };
     }
 
     emitStatus(`Broadcasting "${nickname}" (${shortHex(newIdAddr)}) to Subnet 1…`, {
@@ -516,9 +773,23 @@ export class SlxWalletManager {
       from: myEoa,
       to: newIdAddr,
       contractLabel: 'Identity',
-      fnLabel: `initializeWithNickname("${nickname}")`,
+      fnLabel:
+        isV5CodeHash && hasProfilePii
+          ? `initializeWithProfile("${nickname}")`
+          : `initializeWithNickname("${nickname}")`,
       dataHex: initCd,
     });
+    if (profileSealTxInfo) {
+      this.recordExternalRpcTx({
+        txHash: userHashes[userHashes.length - 1],
+        rawTx: profileSealTxInfo.signed.raw,
+        from: myEoa,
+        to: newIdAddr,
+        contractLabel: 'Identity',
+        fnLabel: 'sealOrderProfileCommitment()',
+        dataHex: profileSealTxInfo.dataHex,
+      });
+    }
 
     emitStatus(`Confirming "${nickname}" (${shortHex(newIdAddr)}) in next Subnet 1 block…`, {
       pct: 76,
@@ -630,6 +901,9 @@ export class SlxWalletManager {
         nickname,
         handle,
         registryAddr: inst?.registry || '',
+        fullName: cleanFullName,
+        billingAddress: cleanBilling,
+        shippingAddress: cleanShipping,
       },
       myEoa
     );
@@ -638,32 +912,197 @@ export class SlxWalletManager {
   async updateIdentityNickname(rawNickname, { rpcUrl = getDefaultNodeWsUrl() } = {}) {
     const nickname = String(rawNickname || '').trim().slice(0, 24);
     if (!nickname) throw new Error('Nickname must be 1–24 characters.');
+    return this.updateIdentityProfile({ nickname }, { rpcUrl });
+  }
+
+  /**
+   * Updates any combination of `nickname`, `fullName` (as per credit card), `billingAddress`,
+   * and `shippingAddress` on the user's deployed `Identity` HFS at any time.
+   *
+   * - On ABI `v5+` `Identity` contracts, executes `setProfile(string,string,string,string)` directly
+   *   with `enc1:...` authenticated client-side encryption for PII fields.
+   * - On ABI `v2–v4` `Identity` contracts, updates `setNickname(string)` and seals the deterministic
+   *   PII commitment `keccak256(H(name)||H(bill)||H(ship))` on-chain in the `Identity` HFS register.
+   */
+  async updateIdentityProfile(
+    { nickname, fullName, billingAddress, shippingAddress } = {},
+    { rpcUrl = getDefaultNodeWsUrl(), onStatus = null } = {}
+  ) {
+    const emitStatus = (msg, meta = {}) => {
+      if (typeof onStatus === 'function') {
+        try {
+          onStatus(msg, meta);
+        } catch (_) {}
+      }
+    };
+
     const rec = await this.resolveVerifiedIdentity(rpcUrl);
-    if (!rec) return this.deployUnifiedIdentityWithNickname(nickname, { rpcUrl });
+    const nextNick =
+      nickname !== undefined
+        ? String(nickname || '').trim().slice(0, 24)
+        : String(rec?.nickname || '').trim().slice(0, 24);
+    if (!nextNick) throw new Error('Nickname must be 1–24 characters.');
+
+    const nextFullName =
+      fullName !== undefined
+        ? String(fullName || '').trim().slice(0, 160)
+        : String(rec?.fullName || '').trim().slice(0, 160);
+    const nextBilling =
+      billingAddress !== undefined
+        ? String(billingAddress || '').trim().slice(0, 480)
+        : String(rec?.billingAddress || '').trim().slice(0, 480);
+    const nextShipping =
+      shippingAddress !== undefined
+        ? String(shippingAddress || '').trim().slice(0, 480)
+        : String(rec?.shippingAddress || '').trim().slice(0, 480);
+
+    if (!rec || !rec.identityAddr) {
+      return this.deployUnifiedIdentityWithNickname(nextNick, {
+        rpcUrl,
+        onStatus,
+        fullName: nextFullName,
+        billingAddress: nextBilling,
+        shippingAddress: nextShipping,
+      });
+    }
 
     const myEoa = this.keypair.address;
-    const nonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
-    const cd = encodeAbi('setNickname(string)', [['string', nickname]]);
-    const signed = signOrderedLexiconTx({
-      privateKey: this.keypair.privateKey,
-      nonce,
-      to: rec.identityAddr,
-      data: cd,
-      gasLimit: 4_000_000n,
-      extraTargets: [rec.identityAddr],
+    const myPriv = this.keypair.privateKey;
+    const idAddr = rec.identityAddr.toLowerCase();
+
+    let idVersion = 0;
+    try {
+      const verHex = await slxNodeRpc(rpcUrl, 'eth_call', [
+        { to: idAddr, data: bytesToHex(selectorBytes('identityVersion()')) },
+        'latest',
+      ]);
+      idVersion = decodeUintWord(verHex);
+    } catch (_) {}
+
+    const baseNonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+    const ZERO_LB = '0x' + '00'.repeat(32);
+
+    const piiTouched =
+      fullName !== undefined || billingAddress !== undefined || shippingAddress !== undefined;
+    const nickChanged = nextNick !== rec.nickname;
+
+    const txBatch = [];
+    if (idVersion >= 5 && piiTouched) {
+      const sealedName = nextFullName
+        ? sealIdentityProfileField(nextFullName, myPriv, idAddr, 'name')
+        : '';
+      const sealedBill = nextBilling
+        ? sealIdentityProfileField(nextBilling, myPriv, idAddr, 'bill')
+        : '';
+      const sealedShip = nextShipping
+        ? sealIdentityProfileField(nextShipping, myPriv, idAddr, 'ship')
+        : '';
+      const cd = encodeAbi('setProfile(string,string,string,string)', [
+        ['string', nextNick],
+        ['string', sealedName],
+        ['string', sealedBill],
+        ['string', sealedShip],
+      ]);
+      const signed = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: baseNonce,
+        to: idAddr,
+        data: cd,
+        gasLimit: 5_000_000n,
+        extraTargets: [idAddr],
+        lowerBoundHashHex: ZERO_LB,
+      });
+      txBatch.push({ signed, fnLabel: `setProfile("${nextNick}")`, dataHex: cd });
+    } else {
+      let curNonce = baseNonce;
+      let prevHash = ZERO_LB;
+      if (nickChanged || !piiTouched) {
+        const cdNick = encodeAbi('setNickname(string)', [['string', nextNick]]);
+        const sNick = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce: curNonce,
+          to: idAddr,
+          data: cdNick,
+          gasLimit: 4_000_000n,
+          extraTargets: [idAddr],
+          lowerBoundHashHex: prevHash,
+        });
+        txBatch.push({ signed: sNick, fnLabel: `setNickname("${nextNick}")`, dataHex: cdNick });
+        curNonce += 1n;
+        prevHash = sNick.txHash;
+      }
+      if (piiTouched) {
+        const piiCommit =
+          nextFullName || nextBilling || nextShipping
+            ? computeIdentityProfileCommitment({
+                fullName: nextFullName,
+                billingAddress: nextBilling,
+                shippingAddress: nextShipping,
+              })
+            : ZERO_BYTES32;
+        const cdAssoc = IdentityHfsWhitelistAbi.setHfsAssociation(
+          PROFILE_VAULT_HFS_SENTINEL,
+          piiCommit,
+          2,
+          'SLX_ORDER_PROFILE_V1'
+        );
+        const sAssoc = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce: curNonce,
+          to: idAddr,
+          data: cdAssoc,
+          gasLimit: 4_500_000n,
+          extraTargets: [idAddr, PROFILE_VAULT_HFS_SENTINEL],
+          lowerBoundHashHex: prevHash,
+        });
+        txBatch.push({
+          signed: sAssoc,
+          fnLabel: 'updateOrderProfileCommitment()',
+          dataHex: cdAssoc,
+        });
+      }
+    }
+
+    if (txBatch.length) {
+      emitStatus(`Updating Identity HFS profile (${shortHex(idAddr)})…`, {
+        pct: 55,
+        awaitingBlock: true,
+        identityAddr: idAddr,
+      });
+      const hashes = [];
+      for (const item of txBatch) {
+        const h = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [item.signed.raw]);
+        hashes.push(h);
+        this.recordExternalRpcTx({
+          txHash: h,
+          rawTx: item.signed.raw,
+          from: myEoa,
+          to: idAddr,
+          contractLabel: 'Identity',
+          fnLabel: item.fnLabel,
+          dataHex: item.dataHex,
+        });
+      }
+      await waitReceiptsChecked(rpcUrl, hashes);
+      _invalidateIdentityAssocCache(idAddr);
+    }
+
+    emitStatus(`✓ Identity HFS profile updated (${shortHex(idAddr)})!`, {
+      pct: 100,
+      done: true,
+      identityAddr: idAddr,
     });
-    const txHash = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
-    this.recordExternalRpcTx({
-      txHash,
-      rawTx: signed.raw,
-      from: myEoa,
-      to: rec.identityAddr,
-      contractLabel: 'Identity',
-      fnLabel: `setNickname("${nickname}")`,
-      dataHex: cd,
-    });
-    await waitReceiptsChecked(rpcUrl, [txHash]);
-    return this.saveIdentityRecord({ ...rec, nickname }, myEoa);
+
+    return this.saveIdentityRecord(
+      {
+        ...rec,
+        nickname: nextNick,
+        fullName: nextFullName,
+        billingAddress: nextBilling,
+        shippingAddress: nextShipping,
+      },
+      myEoa
+    );
   }
 
   async bindExistingMultiDeviceIdentity(identityAddrHex, { rpcUrl = getDefaultNodeWsUrl() } = {}) {
@@ -687,11 +1126,18 @@ export class SlxWalletManager {
     if (!isOwner) {
       throw new Error(`Current device EOA (${shortHex(myEoa)}) is not an active owner device on ${shortHex(cleanAddr)}.`);
     }
-    const nickname =
-      (await readOnChainIdentityNickname(rpcUrl, cleanAddr)) || `Capt_${truncAddr4(cleanAddr)}`;
+    const prof = await readOnChainIdentityProfile(rpcUrl, cleanAddr, this.keypair.privateKey);
+    const nickname = prof.nickname || `Capt_${truncAddr4(cleanAddr)}`;
     this._verifiedCache.clear();
     return this.saveIdentityRecord(
-      { identityAddr: cleanAddr, nickname, handle: nickname },
+      {
+        identityAddr: cleanAddr,
+        nickname,
+        handle: nickname,
+        fullName: prof.fullName || '',
+        billingAddress: prof.billingAddress || '',
+        shippingAddress: prof.shippingAddress || '',
+      },
       myEoa
     );
   }
@@ -701,14 +1147,31 @@ export class SlxWalletManager {
     appName = 'SuperLexicon',
     forcePrompt = false,
     defaultNickname = '',
+    requireOrderProfile = false,
   } = {}) {
+    let existing = null;
     if (!forcePrompt) {
-      const existing = await this.resolveVerifiedIdentity(rpcUrl);
-      if (existing) return existing;
+      existing = await this.resolveVerifiedIdentity(rpcUrl);
+      const hasOrderProfile = Boolean(
+        existing?.fullName?.trim() &&
+          existing?.billingAddress?.trim() &&
+          existing?.shippingAddress?.trim()
+      );
+      if (existing && (!requireOrderProfile || hasOrderProfile)) {
+        return existing;
+      }
+    } else {
+      existing = await this.resolveVerifiedIdentity(rpcUrl);
     }
     if (typeof document !== 'undefined' && typeof _uiIdentityPromptHandler === 'function') {
-      return _uiIdentityPromptHandler(this, { rpcUrl, appName });
+      return _uiIdentityPromptHandler(this, {
+        rpcUrl,
+        appName,
+        requireOrderProfile,
+        existingRecord: existing || null,
+      });
     }
+    if (existing) return existing;
     const fallbackNick =
       defaultNickname || this.getPreferredNickname() || `Capt_${truncAddr4(this.keypair.address)}`;
     return this.deployUnifiedIdentityWithNickname(fallbackNick, { rpcUrl });

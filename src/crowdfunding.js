@@ -50,6 +50,8 @@ export const PLEDGE_STATUS = Object.freeze({
   REFUNDED_OR_VOIDED: 4,
 });
 
+export const ERR_ALREADY_CHARGED_NO_USER_CANCEL = -43;
+
 export const GROWTH_BUDGET_CATEGORY = Object.freeze({
   BASE_MANUFACTURING_MOQ: 1,
   RND_ENGINEERING: 2,
@@ -220,8 +222,32 @@ export const CrowdfundingAbi = Object.freeze({
     ]);
   },
 
+  recordOraclePreorderHoldForBacker({
+    backer = ZERO_ADDR,
+    paymentRefHash,
+    skuIndex = 0,
+    quantity = 1,
+    voucherCommitment = ZERO_BYTES32,
+  }) {
+    return encodeAbi('recordOraclePreorderHoldForBacker(address,bytes32,uint64,uint64,bytes32)', [
+      ['address', backer],
+      ['bytes32', paymentRefHash],
+      ['uint64', skuIndex],
+      ['uint64', quantity],
+      ['bytes32', voucherCommitment],
+    ]);
+  },
+
+  cancelPreorderAuthorization(pledgeId) {
+    return encodeAbi('cancelPreorderAuthorization(uint64)', [['uint64', pledgeId]]);
+  },
+
   confirmOracleHoldCaptured(pledgeId) {
     return encodeAbi('confirmOracleHoldCaptured(uint64)', [['uint64', pledgeId]]);
+  },
+
+  grantDiscretionaryRefund(pledgeId) {
+    return encodeAbi('grantDiscretionaryRefund(uint64)', [['uint64', pledgeId]]);
   },
 
   finalizeCampaign() {
