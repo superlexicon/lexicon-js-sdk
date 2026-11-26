@@ -359,9 +359,20 @@ export const SlxSubnetManager = {
       const rm = roamingList[i];
       const sid = String(rm?.subnet_id || '').trim().toLowerCase();
       if (!sid || sid === '00000000' || seenIds.has(sid)) continue;
-      seenIds.add(sid);
 
       const isKnownS2 = sid === String(meta.subnet2?.subnetId || '6eaa3da4').toLowerCase();
+      const rmHz = Number(rm?.last_channel_hz || 0);
+      if (
+        !isKnownS2 &&
+        !rm?.name &&
+        !rm?.lan_rpc_url &&
+        !rm?.public_rpc_url &&
+        rmHz > 1 &&
+        result.some((r) => Number(r.channelHz) === rmHz)
+      ) {
+        continue;
+      }
+      seenIds.add(sid);
       const transport =
         rm.transport ||
         (isKnownS2 ? meta.subnet2?.transport || 'tcp' : Number(rm.last_channel_hz) === 1 ? 'tcp' : 'flrc');
