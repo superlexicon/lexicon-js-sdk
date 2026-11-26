@@ -3807,6 +3807,10 @@ export function mountSlxUnifiedHeader({
             <span style="opacity:0.75;font-size:0.62rem;">▾</span>
           </button>
           <div class="slx-uh-apps-menu" data-uh="appsMenu" role="menu">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px 8px;margin-bottom:4px;border-bottom:1px solid rgba(56,189,248,0.25);">
+              <a href="/apps.html" style="flex:1;text-decoration:none;padding:5px 8px;border-radius:7px;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.45);color:#e0f2fe;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">🧩 App Directory</a>
+              <a href="/apps.html?create=1" style="flex:1;text-decoration:none;padding:5px 8px;border-radius:7px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.55);color:#d1fae5;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">➕ Publish App</a>
+            </div>
             ${appsMenuHtml}
           </div>
         </div>

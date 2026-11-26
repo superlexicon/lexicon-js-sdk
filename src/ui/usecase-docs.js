@@ -25,6 +25,9 @@ const DOC_APP_ALIASES = {
   ciphervote: 'ballot',
   'ifrs-ledger': 'accounting',
   ifrs: 'accounting',
+  'app-store': 'apps',
+  appstore: 'apps',
+  directory: 'apps',
 };
 
 const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir']);
@@ -1299,6 +1302,114 @@ export const USECASE_DESCRIPTIONS = {
       `,
     },
   },
+  apps: {
+    id: 'apps',
+    icon: '🧩',
+    title: 'HFS App Store & Directory — Zero-Backend, Zero-Database, Zero-EC2 Architecture',
+    href: '/apps.html',
+    tagline:
+      'How full-stack applications publish and run directly from Halt-Free Subroutines and on-chain gzipped UI bundles—eliminating backend servers, cloud databases, EC2 instances, and web-client redeploys.',
+    featurePills: [
+      { label: 'Zero Backend Servers', tone: 'emerald' },
+      { label: 'Zero Cloud Databases', tone: 'cyan' },
+      { label: 'Zero EC2 / Docker VMs', tone: 'amber' },
+      { label: 'keccak256 Gzip UI Bundles', tone: 'violet' },
+      { label: 'Opaque Iframe Sandbox', tone: 'sky' },
+      { label: '$0.00 Gas & $0/mo Hosting', tone: 'emerald' },
+    ],
+    tabs: {
+      codification: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🛡️ Eliminating EC2 Instances, Cloud Databases, Backend APIs &amp; Frontend Redeploys</div>
+          <p>
+            Traditional web and Web3 apps still depend on a fragile, expensive cloud stack: AWS EC2 / Docker containers running Node/Go APIs, RDS / Postgres / Supabase databases storing mutable state, Auth0 / OAuth session servers, and Vercel / S3 / CloudFront CDNs that must be rebuilt and redeployed every time a new app ships.
+            SuperLexicon’s <strong>HFS App Store &amp; Directory (<code>app_store.wasm</code>, HPS #27)</strong> stores both the <strong>deterministic backend logic (<code>.wasm</code> Halt-Free Subroutine)</strong> and the <strong><code>gzip</code>-compressed, <code>keccak256</code>-verified HTML/CSS/JS frontend bundle</strong> directly on Subnet 1—requiring <strong>no backend server, no database, and no EC2 instance</strong>.
+          </p>
+        </div>
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Legacy Cloud Layer</th>
+              <th>What You Delete Forever</th>
+              <th>SuperLexicon Zero-Infrastructure Replacement</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Compute / Backend API</strong></td>
+              <td>AWS EC2, ECS, Kubernetes, Lambda, Nginx reverse proxies, API gateways &amp; DevOps on-call.</td>
+              <td><strong>Halt-Free Subroutines (<code>.wasm</code>)</strong> executed deterministically by physical <code>LR2021</code> RF validators at <code>$0.00</code> gas (<code>108–169 TPS</code>).</td>
+            </tr>
+            <tr>
+              <td><strong>Database &amp; Cache</strong></td>
+              <td>Postgres, MySQL, RDS, MongoDB, Supabase, Redis, ORM migrations &amp; backup crons.</td>
+              <td><strong>Rooted HFS WorldState (<code>host_state_get</code> / <code>host_state_set</code>)</strong>—atomic, tamper-proof key-value &amp; table storage replicated automatically across every validator.</td>
+            </tr>
+            <tr>
+              <td><strong>Static Hosting &amp; CDN</strong></td>
+              <td>Vercel, Netlify, S3 buckets, CloudFront invalidations, DNS expiry &amp; client redeploys.</td>
+              <td><strong>Content-Addressed UI Bundles (<code>app_store.wasm</code>)</strong>—single-file HTML/CSS/JS compressed via <code>gzip</code> (<code>2–40 KiB</code>), verified by <code>keccak256</code>, and cached in browser <code>IndexedDB</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>Auth, Sessions &amp; Billing</strong></td>
+              <td>Auth0, Clerk, JWT secrets, password resets &amp; siloed user tables per app.</td>
+              <td><strong>Unified <code>Identity</code> HFS + <code>window.slx</code> Bridge</strong>—instant <code>&lt;Nickname&gt; · &lt;4-char&gt;</code> login, ECIES encryption, and native IFRS / <code>AssetLedger</code> settlement.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      primitives: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>📦 Content-Addressed <code>gzip</code> UI Bundles</h4>
+            <p>Because the Host Shell provides shared wallet, RLP, and RPC primitives once, app UIs compress 4×–6× via standard browser <code>CompressionStream('gzip')</code>. On upload, <code>app_store.wasm</code> reassembles up to 8×32 KiB chunks in Wasmtime and enforces <code>keccak256(bytes) == expectedUiHash</code> before sealing.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>📡 Over-the-Air Radio-2 Shard Sync</h4>
+            <p>A <code>20 KiB</code> gzipped app bundle transfers across a <code>2.6 Mbps</code> Semtech <code>LR2021</code> FLRC radio link in ~65 milliseconds on Radio 2’s World-State Shard Carousel—meaning users can discover and run new apps even completely off-grid with zero internet.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🛡️ Opaque-Origin <code>&lt;iframe sandbox&gt;</code></h4>
+            <p>Community-published apps execute inside <code>&lt;iframe sandbox="allow-scripts allow-forms"&gt;</code> (without <code>allow-same-origin</code>), isolating parent <code>localStorage</code> and <code>secp256k1</code> private keys while bridging RPC reads and user-approved <code>Identity</code> transactions via <code>window.slx</code>.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🪪 Slug Ownership &amp; firewall Whitelisting</h4>
+            <p>Publishing binds each app slug to the creator’s on-chain <code>Identity</code> HFS (<code>ERR_SLUG_OWNED_BY_OTHER = -15</code> prevents hijacking), while users’ <code>Identity</code> Subroutine Firewalls automatically block any <code>State = 3 (Spam)</code> contract.</p>
+          </div>
+        </div>
+      `,
+      topology: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Component</th><th>Role in Zero-Server App Execution</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>app_store.wasm</code> (HPS #27)</td><td>Stores immutable <code>keccak256</code>-verified gzipped UI chunks, permissionless app listings, release counters, and <code>0x…</code> instance-to-UI bindings.</td></tr>
+            <tr><td><code>BYTECODE_STORE</code> (<code>0x0100</code>)</td><td>Content-addressed L1 store holding each app’s compiled <code>.wasm</code> Halt-Free Subroutine bytecode once per subnet.</td></tr>
+            <tr><td><code>identity.wasm</code></td><td>Authenticates app publishers on update and guards user transaction signing via the Host Wallet Confirmation Sheet.</td></tr>
+            <tr><td><code>app-host-boot.js</code> &amp; <code>/apps.html</code></td><td>Universal Host Shell that resolves <code>uiHash</code>, verifies <code>keccak256</code> client-side, decompresses <code>gzip</code>, caches in <code>IndexedDB</code>, and mounts all 12 core apps + community apps dynamically.</td></tr>
+          </tbody>
+        </table>
+      `,
+      verification: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>✅ End-to-End Dual <code>keccak256</code> Verification</h4>
+            <ul>
+              <li><strong>On-Chain Seal:</strong> <code>uploadBundleChunk</code> reverts with <code>-34</code> unless the assembled chunks hash to <code>expectedUiHash</code>.</li>
+              <li><strong>Client-Side Verify:</strong> <code>verifyAndUnpackAppUiBundle</code> recomputes <code>keccak256(bytes)</code> in your browser before decompressing or rendering a single byte of HTML.</li>
+            </ul>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🔬 Verify Live on All 12 Core Apps</h4>
+            <ul>
+              <li>Every SuperLexicon use case (<code>/dex.html</code>, <code>/charter.html</code>, <code>/crowdfunding.html</code>, <code>/accounting.html</code>, etc.) now runs as a verified App Store UI bundle—check the bottom-left <code>🧩 UI 0x…</code> badge on any page!</li>
+            </ul>
+          </div>
+        </div>
+      `,
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1695,6 +1806,62 @@ export const USECASE_INSTRUCTIONS = {
       tips: `
         <div class="slx-ucd-callout">
           <strong>💡 Tip — Cover All 10 Last Digits for Guaranteed Action:</strong> Adding 10 tickets ending in <code>0..9</code> guarantees at least one Tier-4 (<code>15 SGD</code>) hit on every draw while giving you 10 shots at 2D, 3D, and the Rolling 4D Grand Jackpot!
+        </div>
+      `,
+    },
+  },
+  apps: {
+    id: 'apps',
+    icon: '🧩',
+    title: 'HFS App Store & Publisher Studio — User & Builder Guide',
+    tagline:
+      'Browse, run, fork, and publish complete applications on Subnet 1 with zero backend servers, zero databases, and zero EC2 instances.',
+    tabs: {
+      quickstart: `
+        <div class="slx-ucd-steps">
+          <div class="slx-ucd-step">
+            <h4>1. Browse &amp; Launch Any App Instantly (Zero Setup)</h4>
+            <p>Filter the Directory by category or search by name/hash, then click <strong>▶ Launch App</strong> (or paste any <code>0x…</code> HFS contract address in the quick-launch bar). The Host Shell verifies the app’s <code>keccak256</code> UI bundle, decompresses it in ~2 ms, and caches it locally in <code>IndexedDB</code>.</p>
+          </div>
+          <div class="slx-ucd-step">
+            <h4>2. Click “+ Create / Publish a New App”</h4>
+            <p>Click the emerald <strong>+ Create / Publish a New App</strong> button at the top of the App Store. Pick a starter template (or fork any of the 15 existing apps!), edit your single-file HTML/CSS/JS right in the Studio, and optionally attach a compiled <code>.wasm</code> Halt-Free Subroutine.</p>
+          </div>
+          <div class="slx-ucd-step">
+            <h4>3. Preview in Sandbox &amp; Publish On-Chain in 1 Block</h4>
+            <p>Click <strong>👁️ Preview in Sandbox</strong> to test your UI inside an isolated <code>&lt;iframe sandbox="allow-scripts"&gt;</code> with live <code>window.slx</code> calls, then click <strong>🚀 Publish App Bundle</strong>. Your app goes live immediately in the Directory—no EC2 server, no RDS database, and no web-client redeploy needed!</p>
+          </div>
+        </div>
+      `,
+      controls: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Control / API</th><th>What It Does</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>➕ Create / Publish a New App</strong></td><td>Opens the guided Zero-Server App Builder &amp; Publisher Studio with live gzip &amp; Radio-2 airtime telemetry.</td></tr>
+            <tr><td><strong>window.slx.getContext()</strong></td><td>Returns active <code>instanceAddr</code>, <code>blockNumber</code>, and the user’s connected <code>Identity</code> (<code>nickname</code>, <code>tag4</code>, <code>identityAddr</code>) without Auth0 or cookies.</td></tr>
+            <tr><td><strong>window.slx.callContract(fnSig, args)</strong></td><td>Reads state directly from your HFS’s on-chain storage (replacing REST <code>GET</code> endpoints &amp; SQL <code>SELECT</code> queries).</td></tr>
+            <tr><td><strong>window.slx.sendTransaction({ fnSig, args, summary })</strong></td><td>Pops the Host Wallet Approval sheet and executes a <code>$0.00</code>-gas transaction via the user’s <code>Identity</code> HFS (replacing REST <code>POST</code> endpoints &amp; SQL <code>INSERT/UPDATE</code>).</td></tr>
+          </tbody>
+        </table>
+      `,
+      reference: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Parameter</th><th>Specification</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Max Compressed UI Bundle</strong></td><td><code>256 KiB</code> gzip (<code>8 × 32 KiB</code> chunks ≈ <code>1.2+ MB</code> raw HTML/CSS/JS)</td></tr>
+            <tr><td><strong>Typical App UI Size</strong></td><td><code>2 KiB – 40 KiB</code> gzip (<code>~10–140 ms</code> single burst over <code>LR2021</code> Radio 2)</td></tr>
+            <tr><td><strong>Monthly Server / DB Cost</strong></td><td><strong>$0.00 / month</strong> (0 EC2 instances, 0 Postgres DBs, 0 CDN bills)</td></tr>
+            <tr><td><strong>Transaction Gas Fee</strong></td><td><strong>$0.00 per tx</strong> on Layer 1</td></tr>
+          </tbody>
+        </table>
+      `,
+      tips: `
+        <div class="slx-ucd-callout">
+          <strong>💡 Tip — Hot-Update Any Existing App Without Redeploying:</strong> Click <strong>✏ Fork / Studio</strong> on any card in the Directory (or click <strong>✏ Studio</strong> on the bottom-left <code>🧩 UI 0x…</code> pill of any page), edit its HTML/CSS/JS, and click <strong>🚀 Publish App Bundle</strong>. Your updated UI loads immediately on the next refresh!
         </div>
       `,
     },
