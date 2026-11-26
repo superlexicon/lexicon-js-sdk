@@ -1427,79 +1427,100 @@ assert.ok(SlxSocialAbi.sendDirectMessage(idB, 'Hello ally').startsWith(selectorH
     decodeCampaignSummaryHex,
     decodeBudgetTiersHex,
     decodeRewardSkusHex,
+    AccountingCrowdfundingAbi,
   } = await import('../src/crowdfunding.js');
 
   const skusPack = packCrowdfundingRewardSkus([
-    { skuCode: 1, unitPriceMicros: 149_000_000, maxUnits: 1000, voucherTierBps: 15_000, name: 'SLX-L1 Early Bird' },
-    { skuCode: 2, unitPriceMicros: 299_000_000, maxUnits: 1000, voucherTierBps: 15_000, name: 'SLX-V1 Validator' },
+    { skuCode: 1, unitPrice: 149, maxUnits: 1000, voucherTierBps: 15_000, name: 'SLX-L1 Early Bird' },
+    { skuCode: 2, unitPrice: 299, maxUnits: 1000, voucherTierBps: 15_000, name: 'SLX-V1 Validator' },
   ]);
   assert.equal(skusPack.length, 128);
 
   const tiersPack = packCrowdfundingBudgetTiers([
     {
-      thresholdMicros: 150_000_000_000,
-      budgetAllocationMicros: 120_000_000_000,
+      threshold: 150_000,
+      budgetAllocation: 120_000,
       ifrsCategory: GROWTH_BUDGET_CATEGORY.BASE_MANUFACTURING_MOQ,
       title: 'Base 500-Unit MOQ & Mold Tooling',
     },
     {
-      thresholdMicros: 300_000_000_000,
-      budgetAllocationMicros: 90_000_000_000,
+      threshold: 300_000,
+      budgetAllocation: 90_000,
       ifrsCategory: GROWTH_BUDGET_CATEGORY.CERTIFICATION_COMPLIANCE,
       title: 'FCC / CE / TELEC RF Certs',
     },
   ]);
   assert.equal(tiersPack.length, 176);
 
-  const initHex = CrowdfundingAbi.initialize({
-    admin: '0x' + '01'.repeat(20),
+  const accAddr = '0x' + 'ac'.repeat(20);
+  const chrAddr = '0x' + 'c0'.repeat(20);
+  const authAddr = '0x' + 'b0'.repeat(20);
+  const propHex = CrowdfundingAbi.proposeCampaign({
+    accountingLedger: accAddr,
     bankingOracle: '0x' + '02'.repeat(20),
     campaignMode: CROWDFUNDING_MODE.MULTI_TIER_GROWTH_BUDGET,
-    baseTargetMicros: 150_000_000_000,
-    deadlineBlock: 50_000,
+    baseTarget: 150_000,
+    durationBlocks: 600,
     title: 'SuperLexicon Wave 1',
-    rewardSkus: [{ skuCode: 1, unitPriceMicros: 149_000_000, maxUnits: 500, voucherTierBps: 15_000, name: 'SLX-L1' }],
+    rewardSkus: [{ skuCode: 1, unitPrice: 149, maxUnits: 500, voucherTierBps: 15_000, name: 'SLX-L1' }],
     budgetTiers: [
       {
-        thresholdMicros: 150_000_000_000,
-        budgetAllocationMicros: 120_000_000_000,
+        threshold: 150_000,
+        budgetAllocation: 120_000,
         ifrsCategory: GROWTH_BUDGET_CATEGORY.BASE_MANUFACTURING_MOQ,
         title: 'Base MOQ',
       },
     ],
   });
-  assert.ok(initHex.startsWith('0x') && initHex.length > 400);
+  assert.ok(propHex.startsWith('0x') && propHex.length > 400);
+  assert.ok(CrowdfundingAbi.bindBoardResolution(authAddr).startsWith('0x'));
+  assert.ok(CrowdfundingAbi.activateCampaign(authAddr).startsWith('0x'));
+  assert.ok(AccountingCrowdfundingAbi.activateCrowdfundingCampaign('0x' + 'cf'.repeat(20), authAddr).startsWith('0x'));
 
-  // Verify 224-byte summary & 112-byte tier wire decoders
-  const sumBuf = new Uint8Array(224);
-  sumBuf[0] = CROWDFUNDING_STATE.SUCCEEDED;
+  // Verify 320-byte summary, 112-byte tier wire, and 72-byte SKU wire decoders
+  const sumBuf = new Uint8Array(320);
+  sumBuf.set(u64BEBytes(CROWDFUNDING_STATE.PENDING_BOARD_RESOLUTION), 0);
   sumBuf.set(u64BEBytes(CROWDFUNDING_MODE.MULTI_TIER_GROWTH_BUDGET), 8);
-  sumBuf.set(u64BEBytes(150_000_000_000), 16);
-  sumBuf.set(u64BEBytes(50_000), 24);
-  sumBuf.set(u64BEBytes(350_000_000_000), 32);
-  sumBuf.set(u64BEBytes(210_000_000_000), 72);
-  sumBuf.set(utf8ToBytes('SuperLexicon Wave 1'), 120);
+  sumBuf.set(u64BEBytes(150_000), 16);
+  sumBuf.set(u64BEBytes(600), 24);
+  sumBuf.set(u64BEBytes(120), 32);
+  sumBuf.set(u64BEBytes(720), 40);
+  sumBuf.set(u64BEBytes(350_000), 48);
+  sumBuf.set(u64BEBytes(210_000), 88);
+  sumBuf.set(utf8ToBytes('SuperLexicon Wave 1'), 136);
+  sumBuf.set(new Uint8Array(20).fill(0xac), 168);
+  sumBuf.set(new Uint8Array(20).fill(0xc0), 188);
+  sumBuf.set(new Uint8Array(20).fill(0xb0), 208);
   const sum = decodeCampaignSummaryHex(bytesToHex(sumBuf));
-  assert.equal(sum.state, CROWDFUNDING_STATE.SUCCEEDED);
-  assert.equal(sum.totalCommittedUsd, 350_000);
+  assert.equal(sum.state, CROWDFUNDING_STATE.PENDING_BOARD_RESOLUTION);
+  assert.equal(sum.totalCommitted, 350_000);
+  assert.equal(sum.accountingLedger, accAddr);
+  assert.equal(sum.corporateCharter, chrAddr);
+  assert.equal(sum.boardResolutionAuth, authAddr);
   assert.equal(sum.title, 'SuperLexicon Wave 1');
 
   const tierWire = new Uint8Array(112);
-  tierWire.set(tiersPack.subarray(0, 88), 0);
-  tierWire.set(u64BEBytes(40_000_000_000), 88);
-  tierWire[96] = 1;
-  tierWire.set(u64BEBytes(1234), 104);
+  tierWire.set(u64BEBytes(150_000), 0);
+  tierWire.set(u64BEBytes(120_000), 8);
+  tierWire.set(u64BEBytes(40_000), 16);
+  tierWire.set(u64BEBytes(1), 24);
+  tierWire.set(u64BEBytes(1), 32);
+  tierWire.set(u64BEBytes(1234), 40);
+  tierWire.set(tiersPack.subarray(24, 56), 48);
+  tierWire.set(tiersPack.subarray(56, 88), 80);
   const decodedTiers = decodeBudgetTiersHex(bytesToHex(tierWire));
   assert.equal(decodedTiers.length, 1);
   assert.equal(decodedTiers[0].unlocked, true);
-  assert.equal(decodedTiers[0].spentUsd, 40_000);
-  assert.equal(decodedTiers[0].remainingMicros, 80_000_000_000);
+  assert.equal(decodedTiers[0].spent, 40_000);
+  assert.equal(decodedTiers[0].remaining, 80_000);
 
   const skuWire = new Uint8Array(72);
-  skuWire.set(skusPack.subarray(0, 64), 0);
-  skuWire.set(u64BEBytes(42), 64);
+  skuWire.set(skusPack.subarray(0, 32), 0);
+  skuWire.set(u64BEBytes(42), 32);
+  skuWire.set(skusPack.subarray(32, 64), 40);
   const decodedSkus = decodeRewardSkusHex(bytesToHex(skuWire));
   assert.equal(decodedSkus[0].soldUnits, 42);
+  assert.equal(decodedSkus[0].name, 'SLX-L1 Early Bird');
 }
 
 console.log('✅ @superlexicon/sdk unit test suite passed (22/22 test groups)!');

@@ -1,8 +1,9 @@
 /**
  * @superlexicon/sdk/crowdfunding
  *
- * Client & Binary Wire Codec for SuperLexicon's Milestone Crowdfunding & Stretch-Goal Corporate
- * Growth Budget HFS (`crowdfunding.wasm`, HPS #26).
+ * Client & Binary Wire Codec for SuperLexicon's Board-Resolution-Activated Pre-Order
+ * Crowdfunding & Stretch-Goal Corporate Growth Budget HFS (`crowdfunding.wasm`, HPS #26),
+ * linked directly to `AccountingLedger` -> `CorporateCharter` -> `Authorization` (`BOARD_RESOLUTION`).
  */
 
 import {
@@ -12,6 +13,7 @@ import {
   bytesToUtf8,
   concatBytes,
   keccak256Bytes,
+  keccak256Hex,
 } from './crypto.js';
 import {
   ZERO_ADDR,
@@ -21,6 +23,8 @@ import {
   encodeAbi,
 } from './abi.js';
 
+export const ACTION_LAUNCH_CROWDFUNDING = keccak256Hex(utf8ToBytes('LAUNCH_CROWDFUNDING'));
+
 export const CROWDFUNDING_MODE = Object.freeze({
   SINGLE_HARD_CAP: 1,
   SINGLE_ALL_OR_NOTHING: 2,
@@ -29,9 +33,13 @@ export const CROWDFUNDING_MODE = Object.freeze({
 
 export const CROWDFUNDING_STATE = Object.freeze({
   UNINITIALIZED: 0,
-  ACTIVE: 1,
-  SUCCEEDED: 2,
-  FAILED_REFUNDABLE: 3,
+  PENDING_BOARD_RESOLUTION: 1,
+  LIVE: 2,
+  SETTLED_SUCCEEDED: 3,
+  FAILED_REFUNDABLE: 4,
+  // Backwards-compatible aliases
+  ACTIVE: 2,
+  SUCCEEDED: 3,
 });
 
 export const PLEDGE_STATUS = Object.freeze({
@@ -51,11 +59,11 @@ export const GROWTH_BUDGET_CATEGORY = Object.freeze({
 });
 
 export const GROWTH_BUDGET_CATEGORY_META = Object.freeze({
-  1: { code: '1020-MOQ', label: 'Base Manufacturing & Mold Tooling MOQ' },
-  2: { code: '6100-RND', label: 'R&D Firmware / Silicon / RF Engineering' },
-  3: { code: '1600-CAPEX', label: 'IAS 16 Automated SMT & RF Test Equipment' },
-  4: { code: '6300-CERT', label: 'FCC / CE / TELEC Global RF Certifications' },
-  5: { code: '6200-GROWTH', label: 'Global Repeater Seed & Channel Growth' },
+  1: { code: '1200-MOQ', ifrsAccount: '1200 Inventory (IAS 2)', label: 'Base Manufacturing & Mold Tooling MOQ' },
+  2: { code: '6400-RND', ifrsAccount: '6400 R&D Expense (IAS 38)', label: 'R&D Firmware / Silicon / RF Engineering' },
+  3: { code: '1500-CAPEX', ifrsAccount: '1500 PPE Machinery (IAS 16)', label: 'Automated SMT & RF Test Equipment' },
+  4: { code: '6400-CERT', ifrsAccount: '6400 G&A Compliance (IAS 1)', label: 'FCC / CE / TELEC Global RF Certifications' },
+  5: { code: '6400-GROWTH', ifrsAccount: '6400 S&M Growth (IAS 1)', label: 'Global Repeater Seed & Channel Growth' },
 });
 
 function padUtf8Fixed32(str) {
@@ -71,14 +79,21 @@ function trimFixedUtf8(bytes) {
   return bytesToUtf8(bytes.subarray(0, end));
 }
 
+function resolveAmount(primary, legacyMicros) {
+  if (primary !== undefined && primary !== null) return Math.round(Number(primary));
+  if (legacyMicros !== undefined && legacyMicros !== null) return Math.round(Number(legacyMicros));
+  return 0;
+}
+
 /**
- * Pack a list of Reward SKU definitions (`64 bytes` each) for `Crowdfunding.initialize(...)`.
+ * Pack a list of Reward SKU definitions (`64 bytes` each) for `Crowdfunding.proposeCampaign(...)`.
  */
 export function packCrowdfundingRewardSkus(skus = []) {
   const chunks = skus.map((s) => {
     const out = new Uint8Array(64);
+    const price = resolveAmount(s.unitPrice ?? s.unitPriceUsd, s.unitPriceMicros);
     out.set(u64BEBytes(Number(s.skuCode || 1)), 0);
-    out.set(u64BEBytes(Math.round(Number(s.unitPriceMicros || 0))), 8);
+    out.set(u64BEBytes(price), 8);
     out.set(u64BEBytes(Number(s.maxUnits || 0)), 16);
     out.set(u64BEBytes(Number(s.voucherTierBps || 0)), 24);
     out.set(padUtf8Fixed32(s.name || 'Reward Tier'), 32);
@@ -88,13 +103,15 @@ export function packCrowdfundingRewardSkus(skus = []) {
 }
 
 /**
- * Pack a list of ascending Corporate Growth Budget Tiers (`88 bytes` each) for `Crowdfunding.initialize(...)`.
+ * Pack a list of ascending Corporate Growth Budget Tiers (`88 bytes` each) for `Crowdfunding.proposeCampaign(...)`.
  */
 export function packCrowdfundingBudgetTiers(tiers = []) {
   const chunks = tiers.map((t, idx) => {
     const out = new Uint8Array(88);
-    out.set(u64BEBytes(Math.round(Number(t.thresholdMicros || 0))), 0);
-    out.set(u64BEBytes(Math.round(Number(t.budgetAllocationMicros || 0))), 8);
+    const threshold = resolveAmount(t.threshold ?? t.thresholdUsd, t.thresholdMicros);
+    const alloc = resolveAmount(t.budgetAllocation ?? t.budgetAllocationUsd, t.budgetAllocationMicros);
+    out.set(u64BEBytes(threshold), 0);
+    out.set(u64BEBytes(alloc), 8);
     out.set(u64BEBytes(Number(t.ifrsCategory || 1)), 16);
     const codeBytes = t.lineItemCodeHex
       ? hexToBytes(t.lineItemCodeHex)
@@ -107,40 +124,78 @@ export function packCrowdfundingBudgetTiers(tiers = []) {
 }
 
 export const CrowdfundingAbi = Object.freeze({
-  initialize({
-    admin = ZERO_ADDR,
-    charterHps = ZERO_ADDR,
-    operatingBankLedger = ZERO_ADDR,
+  proposeCampaign({
     accountingLedger = ZERO_ADDR,
+    escrowIdentity = ZERO_ADDR,
     rewardVoucherHfs = ZERO_ADDR,
     bankingOracle = ZERO_ADDR,
     campaignMode = CROWDFUNDING_MODE.MULTI_TIER_GROWTH_BUDGET,
-    baseTargetMicros = 150_000_000_000,
-    deadlineBlock = 100_000,
-    title = 'SuperLexicon Wave 1 Hardware Launch',
+    baseTarget = undefined,
+    baseTargetMicros = undefined,
+    durationBlocks = 400,
+    title = 'SuperLexicon Wave 1 Hardware',
     rewardSkus = [],
     budgetTiers = [],
   }) {
+    const targetAmt = resolveAmount(baseTarget, baseTargetMicros) || 150_000;
     const titleBytes = padUtf8Fixed32(title);
     const skusBytes = packCrowdfundingRewardSkus(rewardSkus);
     const tiersBytes = packCrowdfundingBudgetTiers(budgetTiers);
     return encodeAbi(
-      'initialize(address,address,address,address,address,address,uint64,uint64,uint64,bytes,bytes,bytes)',
+      'proposeCampaign(address,address,address,address,uint64,uint64,uint64,bytes,bytes,bytes)',
       [
-        ['address', admin],
-        ['address', charterHps],
-        ['address', operatingBankLedger],
         ['address', accountingLedger],
+        ['address', escrowIdentity],
         ['address', rewardVoucherHfs],
         ['address', bankingOracle],
         ['uint64', campaignMode],
-        ['uint64', baseTargetMicros],
-        ['uint64', deadlineBlock],
+        ['uint64', targetAmt],
+        ['uint64', durationBlocks],
         ['bytes', titleBytes],
         ['bytes', skusBytes],
         ['bytes', tiersBytes],
       ]
     );
+  },
+
+  initialize(opts) {
+    return this.proposeCampaign(opts);
+  },
+
+  bindBoardResolution(authObjAddr) {
+    return encodeAbi('bindBoardResolution(address)', [['address', authObjAddr]]);
+  },
+
+  activateCampaign(authObjAddr) {
+    return encodeAbi('activateCampaign(address)', [['address', authObjAddr]]);
+  },
+
+  hashActivateCampaign() {
+    return encodeAbi('hashActivateCampaign()', []);
+  },
+
+  specHash() {
+    return encodeAbi('specHash()', []);
+  },
+
+  accountingLedger() {
+    return encodeAbi('accountingLedger()', []);
+  },
+
+  associatedCharter() {
+    return encodeAbi('associatedCharter()', []);
+  },
+
+  boardResolutionAuth() {
+    return encodeAbi('boardResolutionAuth()', []);
+  },
+
+  escrowIdentity() {
+    return encodeAbi('escrowIdentity()', []);
+  },
+
+  state() {
+    return encodeAbi('state()', []);
   },
 
   pledgeOnChain({ skuIndex = 0, quantity = 1, voucherCommitment = ZERO_BYTES32 }) {
@@ -184,20 +239,36 @@ export const CrowdfundingAbi = Object.freeze({
   disburseUnlockedBudgetLine({
     tierIndex = 0,
     vendorIdentity = ZERO_ADDR,
-    amountMicros = 0,
+    amount = undefined,
+    amountMicros = undefined,
     expenseRefHash = ZERO_BYTES32,
     authHps = ZERO_ADDR,
   }) {
+    const amt = resolveAmount(amount, amountMicros);
     return encodeAbi(
       'disburseUnlockedBudgetLine(uint64,address,uint64,bytes32,address)',
       [
         ['uint64', tierIndex],
         ['address', vendorIdentity],
-        ['uint64', amountMicros],
+        ['uint64', amt],
         ['bytes32', expenseRefHash],
         ['address', authHps],
       ]
     );
+  },
+
+  hashDisburseBudgetLine({
+    tierIndex = 0,
+    vendorIdentity = ZERO_ADDR,
+    amount = 0,
+    expenseRefHash = ZERO_BYTES32,
+  }) {
+    return encodeAbi('hashDisburseBudgetLine(uint64,address,uint64,bytes32)', [
+      ['uint64', tierIndex],
+      ['address', vendorIdentity],
+      ['uint64', amount],
+      ['bytes32', expenseRefHash],
+    ]);
   },
 
   getCampaignSummary() {
@@ -217,37 +288,67 @@ export const CrowdfundingAbi = Object.freeze({
   },
 });
 
+export const AccountingCrowdfundingAbi = Object.freeze({
+  hashActivateCrowdfundingCampaign(crowdfundingHps, specHash) {
+    return encodeAbi('hashActivateCrowdfundingCampaign(address,bytes32)', [
+      ['address', crowdfundingHps],
+      ['bytes32', specHash],
+    ]);
+  },
+  activateCrowdfundingCampaign(crowdfundingHps, authObj) {
+    return encodeAbi('activateCrowdfundingCampaign(address,address)', [
+      ['address', crowdfundingHps],
+      ['address', authObj],
+    ]);
+  },
+  crowdfundingCampaignCount() {
+    return encodeAbi('crowdfundingCampaignCount()', []);
+  },
+  getCrowdfundingCampaign(index) {
+    return encodeAbi('getCrowdfundingCampaign(uint64)', [['uint64', index]]);
+  },
+  isRatifiedCrowdfundingCampaign(crowdfundingHps) {
+    return encodeAbi('isRatifiedCrowdfundingCampaign(address)', [['address', crowdfundingHps]]);
+  },
+});
+
 /**
- * Decode the 224-byte `getCampaignSummary()` frame returned by `crowdfunding.wasm`.
+ * Decode the 320-byte `getCampaignSummary()` frame returned by `crowdfunding.wasm`.
  */
 export function decodeCampaignSummaryHex(hexStr) {
   const b = hexToBytes(hexStr);
-  if (b.length < 224) throw new Error(`Expected 224-byte campaign summary, got ${b.length}`);
-  const baseTargetMicros = readU64BE(b, 16);
-  const totalCommittedMicros = readU64BE(b, 32);
+  if (b.length < 320) throw new Error(`Expected 320-byte campaign summary, got ${b.length}`);
+  const baseTarget = readU64BE(b, 16);
+  const totalCommitted = readU64BE(b, 48);
   return {
-    state: b[0],
+    state: readU64BE(b, 0),
     mode: readU64BE(b, 8),
-    baseTargetMicros,
-    baseTargetUsd: baseTargetMicros / 1_000_000,
-    deadlineBlock: readU64BE(b, 24),
-    totalCommittedMicros,
-    totalCommittedUsd: totalCommittedMicros / 1_000_000,
-    progressPct: baseTargetMicros > 0 ? (totalCommittedMicros / baseTargetMicros) * 100 : 0,
-    totalEscrowedOnChainMicros: readU64BE(b, 40),
-    totalPreauthOracleMicros: readU64BE(b, 48),
-    totalCapturedOracleMicros: readU64BE(b, 56),
-    totalRefundedMicros: readU64BE(b, 64),
-    totalBudgetUnlockedMicros: readU64BE(b, 72),
-    totalBudgetSpentMicros: readU64BE(b, 80),
-    pledgeCount: readU64BE(b, 88),
-    skuCount: readU64BE(b, 96),
-    tierCount: readU64BE(b, 104),
-    unlockedTierCount: readU64BE(b, 112),
-    title: trimFixedUtf8(b.subarray(120, 152)),
-    admin: bytesToHex(b.subarray(152, 172), true),
-    charterHps: bytesToHex(b.subarray(172, 192), true),
-    operatingBankLedger: bytesToHex(b.subarray(192, 212), true),
+    baseTarget,
+    baseTargetUsd: baseTarget,
+    durationBlocks: readU64BE(b, 24),
+    activatedAtBlock: readU64BE(b, 32),
+    deadlineBlock: readU64BE(b, 40),
+    totalCommitted,
+    totalCommittedUsd: totalCommitted,
+    progressPct: baseTarget > 0 ? (totalCommitted / baseTarget) * 100 : 0,
+    totalEscrowedOnChain: readU64BE(b, 56),
+    totalPreauthOracle: readU64BE(b, 64),
+    totalCapturedOracle: readU64BE(b, 72),
+    totalRefunded: readU64BE(b, 80),
+    totalBudgetUnlocked: readU64BE(b, 88),
+    totalBudgetSpent: readU64BE(b, 96),
+    pledgeCount: readU64BE(b, 104),
+    skuCount: readU64BE(b, 112),
+    tierCount: readU64BE(b, 120),
+    unlockedTierCount: readU64BE(b, 128),
+    title: trimFixedUtf8(b.subarray(136, 168)),
+    accountingLedger: bytesToHex(b.subarray(168, 188), true).toLowerCase(),
+    corporateCharter: bytesToHex(b.subarray(188, 208), true).toLowerCase(),
+    boardResolutionAuth: bytesToHex(b.subarray(208, 228), true).toLowerCase(),
+    escrowIdentity: bytesToHex(b.subarray(228, 248), true).toLowerCase(),
+    specHash: bytesToHex(b.subarray(248, 280), true).toLowerCase(),
+    activateActionHash: bytesToHex(b.subarray(280, 312), true).toLowerCase(),
+    sweptToTreasury: readU64BE(b, 312) === 1,
   };
 }
 
@@ -260,26 +361,26 @@ export function decodeBudgetTiersHex(hexStr) {
   const out = [];
   for (let i = 0; i < count; i++) {
     const off = i * 112;
-    const thresholdMicros = readU64BE(b, off);
-    const budgetAllocationMicros = readU64BE(b, off + 8);
-    const ifrsCategory = readU64BE(b, off + 16);
-    const spentMicros = readU64BE(b, off + 88);
-    const unlocked = b[off + 96] === 1;
+    const threshold = readU64BE(b, off);
+    const budgetAllocation = readU64BE(b, off + 8);
+    const spent = readU64BE(b, off + 16);
+    const ifrsCategory = readU64BE(b, off + 24);
+    const unlocked = readU64BE(b, off + 32) === 1;
     out.push({
       tierIndex: i,
-      thresholdMicros,
-      thresholdUsd: thresholdMicros / 1_000_000,
-      budgetAllocationMicros,
-      budgetAllocationUsd: budgetAllocationMicros / 1_000_000,
+      threshold,
+      thresholdUsd: threshold,
+      budgetAllocation,
+      budgetAllocationUsd: budgetAllocation,
+      spent,
+      spentUsd: spent,
       ifrsCategory,
       ifrsMeta: GROWTH_BUDGET_CATEGORY_META[ifrsCategory] || GROWTH_BUDGET_CATEGORY_META[1],
-      lineItemCodeHex: bytesToHex(b.subarray(off + 24, off + 56), true),
-      title: trimFixedUtf8(b.subarray(off + 56, off + 88)),
-      spentMicros,
-      spentUsd: spentMicros / 1_000_000,
-      remainingMicros: unlocked ? Math.max(0, budgetAllocationMicros - spentMicros) : 0,
       unlocked,
-      unlockedAtBlock: readU64BE(b, off + 104),
+      unlockedAtBlock: readU64BE(b, off + 40),
+      lineItemCodeHex: bytesToHex(b.subarray(off + 48, off + 80), true),
+      title: trimFixedUtf8(b.subarray(off + 80, off + 112)),
+      remaining: unlocked ? Math.max(0, budgetAllocation - spent) : 0,
     });
   }
   return out;
@@ -294,16 +395,16 @@ export function decodeRewardSkusHex(hexStr) {
   const out = [];
   for (let i = 0; i < count; i++) {
     const off = i * 72;
-    const unitPriceMicros = readU64BE(b, off + 8);
+    const unitPrice = readU64BE(b, off + 8);
     out.push({
       skuIndex: i,
       skuCode: readU64BE(b, off),
-      unitPriceMicros,
-      unitPriceUsd: unitPriceMicros / 1_000_000,
+      unitPrice,
+      unitPriceUsd: unitPrice,
       maxUnits: readU64BE(b, off + 16),
       voucherTierBps: readU64BE(b, off + 24),
-      name: trimFixedUtf8(b.subarray(off + 32, off + 64)),
-      soldUnits: readU64BE(b, off + 64),
+      soldUnits: readU64BE(b, off + 32),
+      name: trimFixedUtf8(b.subarray(off + 40, off + 72)),
     });
   }
   return out;
