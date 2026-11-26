@@ -3542,6 +3542,15 @@ export const SLX_PLATFORM_APPS = [
     group: 'SuperLexicon Platform',
   },
   {
+    id: 'apps',
+    icon: '🧩',
+    label: 'HFS App Store & Studio',
+    shortLabel: 'App Store',
+    sub: 'On-Chain UI Bundles & Zero-Redeploy Publisher',
+    href: '/apps.html',
+    group: 'SuperLexicon Platform',
+  },
+  {
     id: 'dex',
     icon: '📈',
     label: 'DEX Central Limit Book',

@@ -27,3 +27,4 @@ export * from './ecies_messaging.js';
 export * from './subnet-registry.js';
 export * from './reward-voucher.js';
 export * from './crowdfunding.js';
+export * from './app-store.js';

@@ -1596,6 +1596,14 @@ export const HFS_TYPES = {
     modalTitle: 'Select On-Chain SubnetRegistry HFS',
     placeholder: '',
   },
+  APP_STORE: {
+    typeName: 'APP_STORE',
+    icon: '🧩',
+    shortLabel: 'HFS App Store',
+    deployBtnText: '+ Deploy AppStore',
+    modalTitle: 'Deploy & Register On-Chain HFS App Store',
+    placeholder: 'e.g. Subnet 1 Community App Store',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {

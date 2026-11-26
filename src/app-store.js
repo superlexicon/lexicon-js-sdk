@@ -1,0 +1,1339 @@
+/**
+ * @superlexicon/sdk/app-store
+ *
+ * Headless On-Chain HFS App Store (`app_store.wasm`, HPS #27), Content-Addressed UI Bundle
+ * Compressor/Verifier (`keccak256` + `CompressionStream('gzip')`), `IndexedDB` Immutable Bundle
+ * Cache (`SlxUiBundleCache`), and Zero-Trust Sandboxed Iframe `window.slx` Host Bridge.
+ */
+
+import {
+  hexToBytes,
+  bytesToHex,
+  utf8ToBytes,
+  bytesToUtf8,
+  concatBytes,
+  keccak256Hex,
+  selectorBytes,
+  computeCreateAddress,
+  signOrderedLexiconTx,
+} from './crypto.js';
+import {
+  ZERO_ADDR,
+  ZERO_BYTES32,
+  shortHex,
+  truncAddr4,
+  readU16BE,
+  readU64BE,
+  encodeAbi,
+  decodeUintWord,
+  decodeAddrWord,
+} from './abi.js';
+import { getDefaultNodeWsUrl, SlxHfsCache, slxNodeRpc } from './rpc.js';
+import { slxWaitForReceipt } from './events.js';
+import {
+  encodeHfsTypeId,
+  HfsRegistryAbi,
+  readOnChainIdentityNickname,
+  HFS_ASSOC_STATUS,
+} from './identity.js';
+
+export const APP_STORE_CODE_HASH =
+  '0x9ed33ecadd23d9f35c7f77d0cead887fb40fa3a6fc31eff26783151dd496b948';
+export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
+
+export const APP_STORE_CHUNK_BYTES = 32_768; // 32 KiB per chunk (up to 8 chunks = 256 KiB compressed)
+export const APP_STORE_MAX_CHUNKS = 8;
+
+export const APP_STORE_ENCODING = {
+  RAW_UTF8: 0,
+  GZIP: 1,
+};
+
+export const APP_EXEC_MODE = {
+  SANDBOX_IFRAME: 0,
+  VERIFIED_HOST: 1,
+};
+
+export const APP_STATUS = {
+  ACTIVE: 1,
+  ARCHIVED: 2,
+};
+
+export const APP_CATEGORIES = {
+  1: { id: 1, key: 'defi', label: 'DeFi & Markets', icon: '📈' },
+  2: { id: 2, key: 'governance', label: 'Governance & IFRS', icon: '🏛️' },
+  3: { id: 3, key: 'commerce', label: 'Commerce & Crowdfunding', icon: '🚀' },
+  4: { id: 4, key: 'social', label: 'Social & Messaging', icon: '📡' },
+  5: { id: 5, key: 'games', label: 'Multiplayer Games & VRF', icon: '🎮' },
+  6: { id: 6, key: 'rf', label: 'RF & Utility Tools', icon: '⚡' },
+};
+
+const STORAGE_APP_STORE_ADDR_KEY = 'slx_app_store_hfs_addr_v1';
+const STORAGE_LOCAL_PUBLISHED_APPS_KEY = 'slx_local_published_apps_v1';
+const IDB_NAME = 'slx_app_bundle_cas_v1';
+const IDB_STORE_HTML = 'verified_html';
+const IDB_STORE_RAW = 'raw_bundles';
+
+// ---------------------------------------------------------------------------
+// 1. Gzip Compression / Decompression & `keccak256` Bundle Verification
+// ---------------------------------------------------------------------------
+
+async function _streamTransform(inputBytes, streamInstance) {
+  const writer = streamInstance.writable.getWriter();
+  writer.write(inputBytes);
+  writer.close();
+  const reader = streamInstance.readable.getReader();
+  const chunks = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  return concatBytes(...chunks);
+}
+
+export async function compressAppUiBundle(htmlString) {
+  const rawBytes = utf8ToBytes(String(htmlString || ''));
+  let compressedBytes = rawBytes;
+  let encoding = APP_STORE_ENCODING.RAW_UTF8;
+
+  if (typeof globalThis.CompressionStream === 'function') {
+    try {
+      compressedBytes = await _streamTransform(rawBytes, new globalThis.CompressionStream('gzip'));
+      encoding = APP_STORE_ENCODING.GZIP;
+    } catch (_) {
+      compressedBytes = rawBytes;
+      encoding = APP_STORE_ENCODING.RAW_UTF8;
+    }
+  }
+
+  const uiHash = keccak256Hex(compressedBytes);
+  const chunkCount = Math.max(1, Math.ceil(compressedBytes.length / APP_STORE_CHUNK_BYTES));
+  return {
+    bytes: compressedBytes,
+    encoding,
+    uncompressedLen: rawBytes.length,
+    compressedLen: compressedBytes.length,
+    uiHash,
+    chunkCount,
+  };
+}
+
+export async function decompressAppUiBundle(payloadBytes, encoding = APP_STORE_ENCODING.GZIP) {
+  const u8 = payloadBytes instanceof Uint8Array ? payloadBytes : hexToBytes(payloadBytes);
+  if (!u8.length) return '';
+  const isGzipMagic = u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b;
+  if ((encoding === APP_STORE_ENCODING.GZIP || isGzipMagic) && typeof globalThis.DecompressionStream === 'function') {
+    const out = await _streamTransform(u8, new globalThis.DecompressionStream('gzip'));
+    return bytesToUtf8(out);
+  }
+  return bytesToUtf8(u8);
+}
+
+export async function verifyAndUnpackAppUiBundle(
+  payloadBytes,
+  expectedUiHash,
+  encoding = APP_STORE_ENCODING.GZIP
+) {
+  const u8 = payloadBytes instanceof Uint8Array ? payloadBytes : hexToBytes(payloadBytes);
+  const cleanExpected = String(expectedUiHash || '').trim().toLowerCase();
+  const actualHash = keccak256Hex(u8).toLowerCase();
+  if (cleanExpected && cleanExpected !== ZERO_BYTES32 && actualHash !== cleanExpected) {
+    throw new Error(
+      `UI bundle integrity check failed: expected ${shortHex(cleanExpected)}, computed ${shortHex(actualHash)}`
+    );
+  }
+  const html = await decompressAppUiBundle(u8, encoding);
+  return {
+    uiHash: actualHash,
+    compressedLen: u8.length,
+    uncompressedLen: utf8ToBytes(html).length,
+    html,
+  };
+}
+
+export function splitBundleIntoChunks(compressedBytes) {
+  const chunks = [];
+  for (let off = 0; off < compressedBytes.length; off += APP_STORE_CHUNK_BYTES) {
+    chunks.push(compressedBytes.subarray(off, Math.min(compressedBytes.length, off + APP_STORE_CHUNK_BYTES)));
+  }
+  return chunks;
+}
+
+export function slugToBytes32(slug) {
+  const clean = String(slug || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-');
+  return keccak256Hex(utf8ToBytes(clean));
+}
+
+// ---------------------------------------------------------------------------
+// 2. Immutable Content-Addressed `IndexedDB` UI Bundle Cache
+// ---------------------------------------------------------------------------
+
+const _memHtmlCache = new Map();
+const _memRawBundleCache = new Map();
+let _idbPromise = null;
+
+function _openIdb() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE_HTML)) {
+          db.createObjectStore(IDB_STORE_HTML);
+        }
+        if (!db.objectStoreNames.contains(IDB_STORE_RAW)) {
+          db.createObjectStore(IDB_STORE_RAW);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch (_) {
+      resolve(null);
+    }
+  });
+  return _idbPromise;
+}
+
+export const SlxUiBundleCache = {
+  async getVerifiedHtml(uiHash) {
+    if (!uiHash) return null;
+    const key = String(uiHash).toLowerCase();
+    if (_memHtmlCache.has(key)) return _memHtmlCache.get(key);
+    const db = await _openIdb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE_HTML, 'readonly');
+        const req = tx.objectStore(IDB_STORE_HTML).get(key);
+        req.onsuccess = () => {
+          if (req.result) _memHtmlCache.set(key, req.result);
+          resolve(req.result || null);
+        };
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  },
+
+  async putVerifiedHtml(uiHash, entry) {
+    if (!uiHash || !entry?.html) return;
+    const key = String(uiHash).toLowerCase();
+    _memHtmlCache.set(key, entry);
+    const db = await _openIdb();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE_HTML, 'readwrite');
+      tx.objectStore(IDB_STORE_HTML).put(entry, key);
+    } catch (_) {}
+  },
+
+  async putRawBundle(uiHash, bytes, encoding = APP_STORE_ENCODING.GZIP) {
+    if (!uiHash || !bytes) return;
+    const key = String(uiHash).toLowerCase();
+    const u8 = bytes instanceof Uint8Array ? bytes : hexToBytes(bytes);
+    const payload = { bytes: u8, encoding };
+    _memRawBundleCache.set(key, payload);
+    const db = await _openIdb();
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE_RAW, 'readwrite');
+      tx.objectStore(IDB_STORE_RAW).put(payload, key);
+    } catch (_) {}
+  },
+
+  async getRawBundle(uiHash) {
+    if (!uiHash) return null;
+    const key = String(uiHash).toLowerCase();
+    if (_memRawBundleCache.has(key)) return _memRawBundleCache.get(key);
+    const db = await _openIdb();
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE_RAW, 'readonly');
+        const req = tx.objectStore(IDB_STORE_RAW).get(key);
+        req.onsuccess = () => {
+          if (req.result) _memRawBundleCache.set(key, req.result);
+          resolve(req.result || null);
+        };
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 3. `AppStore` HFS ABI Encoders & Binary Slice Decoders
+// ---------------------------------------------------------------------------
+
+export const AppStoreAbi = {
+  initialize: (adminAddr) => encodeAbi('initialize(address)', [['address', adminAddr]]),
+  abiVersion: () => bytesToHex(selectorBytes('abiVersion()')),
+  admin: () => bytesToHex(selectorBytes('admin()')),
+  uploadBundleChunk: ({ uiHash, chunkIndex, totalChunks, encoding, uncompressedLen, chunkBytes }) =>
+    encodeAbi('uploadBundleChunk(bytes32,uint64,uint64,uint64,uint64,bytes)', [
+      ['bytes32', uiHash],
+      ['uint64', chunkIndex],
+      ['uint64', totalChunks],
+      ['uint64', encoding],
+      ['uint64', uncompressedLen],
+      ['bytes', chunkBytes instanceof Uint8Array ? chunkBytes : hexToBytes(chunkBytes)],
+    ]),
+  hasBundle: (uiHash) => encodeAbi('hasBundle(bytes32)', [['bytes32', uiHash]]),
+  getBundleInfo: (uiHash) => encodeAbi('getBundleInfo(bytes32)', [['bytes32', uiHash]]),
+  getBundleChunk: (uiHash, chunkIndex) =>
+    encodeAbi('getBundleChunk(bytes32,uint64)', [
+      ['bytes32', uiHash],
+      ['uint64', chunkIndex],
+    ]),
+  getBundle: (uiHash) => encodeAbi('getBundle(bytes32)', [['bytes32', uiHash]]),
+  publishApp: ({
+    slugId,
+    publisherIdentity = ZERO_ADDR,
+    wasmCodeHash = ZERO_BYTES32,
+    defaultHfsAddr = ZERO_ADDR,
+    uiHash,
+    category = 6,
+    execMode = APP_EXEC_MODE.SANDBOX_IFRAME,
+    title,
+    summary = '',
+    icon = '🧩',
+    version = '1.0.0',
+  }) =>
+    encodeAbi(
+      'publishApp(bytes32,address,bytes32,address,bytes32,uint64,uint64,string,string,string,string)',
+      [
+        ['bytes32', slugId],
+        ['address', publisherIdentity || ZERO_ADDR],
+        ['bytes32', wasmCodeHash || ZERO_BYTES32],
+        ['address', defaultHfsAddr || ZERO_ADDR],
+        ['bytes32', uiHash],
+        ['uint64', category],
+        ['uint64', execMode],
+        ['string', String(title || '').slice(0, 64)],
+        ['string', String(summary || '').slice(0, 240)],
+        ['string', String(icon || '🧩').slice(0, 16)],
+        ['string', String(version || '1.0.0').slice(0, 24)],
+      ]
+    ),
+  setAppStatus: (appId, status, execMode) =>
+    encodeAbi('setAppStatus(uint64,uint64,uint64)', [
+      ['uint64', appId],
+      ['uint64', status],
+      ['uint64', execMode],
+    ]),
+  registerAppInstance: ({ appId, instanceAddr, creatorIdentity = ZERO_ADDR, label = '' }) =>
+    encodeAbi('registerAppInstance(uint64,address,address,string)', [
+      ['uint64', appId],
+      ['address', instanceAddr],
+      ['address', creatorIdentity || ZERO_ADDR],
+      ['string', String(label || '').slice(0, 64)],
+    ]),
+  bindInstanceUi: (instanceAddr, appId, uiHash) =>
+    encodeAbi('bindInstanceUi(address,uint64,bytes32)', [
+      ['address', instanceAddr],
+      ['uint64', appId],
+      ['bytes32', uiHash],
+    ]),
+  totalApps: () => bytesToHex(selectorBytes('totalApps()')),
+  totalBundles: () => bytesToHex(selectorBytes('totalBundles()')),
+  getApp: (appId) => encodeAbi('getApp(uint64)', [['uint64', appId]]),
+  getAppBySlug: (slugId) => encodeAbi('getAppBySlug(bytes32)', [['bytes32', slugId]]),
+  getAppsSlice: (offset = 0, limit = 24) =>
+    encodeAbi('getAppsSlice(uint64,uint64)', [
+      ['uint64', offset],
+      ['uint64', limit],
+    ]),
+  getAppInstances: (appId, offset = 0, limit = 32) =>
+    encodeAbi('getAppInstances(uint64,uint64,uint64)', [
+      ['uint64', appId],
+      ['uint64', offset],
+      ['uint64', limit],
+    ]),
+  resolveInstance: (instanceAddr) =>
+    encodeAbi('resolveInstance(address)', [['address', instanceAddr]]),
+};
+
+export function decodeAppRecordAt(buf, offset = 0) {
+  if (!buf || offset + 180 > buf.length) return null;
+  const appId = Number(readU64BE(buf, offset));
+  const status = buf[offset + 8];
+  const execMode = buf[offset + 9];
+  const category = readU16BE(buf, offset + 10);
+  const slugId = bytesToHex(buf.subarray(offset + 12, offset + 44));
+  const publisher = bytesToHex(buf.subarray(offset + 44, offset + 64)).toLowerCase();
+  const wasmCodeHash = bytesToHex(buf.subarray(offset + 64, offset + 96)).toLowerCase();
+  const defaultHfsAddr = bytesToHex(buf.subarray(offset + 96, offset + 116)).toLowerCase();
+  const uiHash = bytesToHex(buf.subarray(offset + 116, offset + 148)).toLowerCase();
+  const releaseCount = Number(readU64BE(buf, offset + 148));
+  const installCount = Number(readU64BE(buf, offset + 156));
+  const updatedBlock = Number(readU64BE(buf, offset + 164));
+  const tLen = readU16BE(buf, offset + 172);
+  const sLen = readU16BE(buf, offset + 174);
+  const iLen = readU16BE(buf, offset + 176);
+  const vLen = readU16BE(buf, offset + 178);
+
+  let p = offset + 180;
+  if (p + tLen + sLen + iLen + vLen > buf.length) return null;
+  const title = bytesToUtf8(buf.subarray(p, p + tLen));
+  p += tLen;
+  const summary = bytesToUtf8(buf.subarray(p, p + sLen));
+  p += sLen;
+  const icon = bytesToUtf8(buf.subarray(p, p + iLen)) || '🧩';
+  p += iLen;
+  const version = bytesToUtf8(buf.subarray(p, p + vLen)) || '1.0.0';
+  p += vLen;
+
+  return {
+    nextOffset: p,
+    record: {
+      appId,
+      status,
+      execMode,
+      category,
+      slugId,
+      publisher,
+      wasmCodeHash,
+      defaultHfsAddr,
+      uiHash,
+      releaseCount,
+      installCount,
+      updatedBlock,
+      title,
+      summary,
+      icon,
+      version,
+      source: 'onchain',
+    },
+  };
+}
+
+export function decodeSingleAppHex(hex) {
+  const b = hexToBytes(hex);
+  if (b.length < 180) return null;
+  const parsed = decodeAppRecordAt(b, 0);
+  return parsed ? parsed.record : null;
+}
+
+export function decodeAppsSliceHex(hex) {
+  const b = hexToBytes(hex);
+  if (b.length < 16) return { total: 0, items: [] };
+  const total = Number(readU64BE(b, 0));
+  const returned = Number(readU64BE(b, 8));
+  const items = [];
+  let pos = 16;
+  for (let i = 0; i < returned; i++) {
+    const parsed = decodeAppRecordAt(b, pos);
+    if (!parsed) break;
+    items.push(parsed.record);
+    pos = parsed.nextOffset;
+  }
+  return { total, items };
+}
+
+export function decodeAppInstancesSliceHex(hex) {
+  const b = hexToBytes(hex);
+  if (b.length < 16) return { total: 0, items: [] };
+  const total = Number(readU64BE(b, 0));
+  const returned = Number(readU64BE(b, 8));
+  const items = [];
+  let pos = 16;
+  for (let i = 0; i < returned; i++) {
+    if (pos + 50 > b.length) break;
+    const instanceAddr = bytesToHex(b.subarray(pos, pos + 20)).toLowerCase();
+    const creator = bytesToHex(b.subarray(pos + 20, pos + 40)).toLowerCase();
+    const createdBlock = Number(readU64BE(b, pos + 40));
+    const lLen = readU16BE(b, pos + 48);
+    pos += 50;
+    if (pos + lLen > b.length) break;
+    const label = bytesToUtf8(b.subarray(pos, pos + lLen));
+    pos += lLen;
+    items.push({ instanceAddr, creator, createdBlock, label });
+  }
+  return { total, items };
+}
+
+export function decodeBundleInfoHex(hex) {
+  const b = hexToBytes(hex);
+  if (b.length < 192) {
+    return { sealed: false, totalChunks: 0, compressedLen: 0, uncompressedLen: 0, encoding: 0, uploader: ZERO_ADDR };
+  }
+  return {
+    sealed: Number(readU64BE(b, 24)) === 1,
+    totalChunks: Number(readU64BE(b, 56)),
+    compressedLen: Number(readU64BE(b, 88)),
+    uncompressedLen: Number(readU64BE(b, 120)),
+    encoding: Number(readU64BE(b, 152)),
+    uploader: bytesToHex(b.subarray(172, 192)).toLowerCase(),
+  };
+}
+
+export function decodeResolvedInstanceHex(hex) {
+  const b = hexToBytes(hex);
+  if (b.length < 128) return null;
+  const appId = Number(readU64BE(b, 24));
+  if (!appId) return null;
+  return {
+    appId,
+    uiHash: bytesToHex(b.subarray(32, 64)).toLowerCase(),
+    wasmCodeHash: bytesToHex(b.subarray(64, 96)).toLowerCase(),
+    execMode: b[127],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4. Local Published App Mirror & On-Chain `AppStoreClient`
+// ---------------------------------------------------------------------------
+
+export function loadLocalPublishedApps() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_LOCAL_PUBLISHED_APPS_KEY) || '[]');
+  } catch (_) {
+    return [];
+  }
+}
+
+export function saveLocalPublishedApp(appMeta) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    const list = loadLocalPublishedApps();
+    const idx = list.findIndex(
+      (x) => x.slug === appMeta.slug || (x.slugId && x.slugId === appMeta.slugId)
+    );
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...appMeta, releaseCount: (list[idx].releaseCount || 1) + 1 };
+    } else {
+      list.unshift({ ...appMeta, releaseCount: appMeta.releaseCount || 1 });
+    }
+    localStorage.setItem(STORAGE_LOCAL_PUBLISHED_APPS_KEY, JSON.stringify(list));
+  } catch (_) {}
+}
+
+async function _waitReceipts(rpcUrl, hashes) {
+  const rcpts = await Promise.all(
+    hashes.map((h) => slxWaitForReceipt((m, p) => slxNodeRpc(rpcUrl, m, p), h, { timeoutMs: 56_000, fallbackPollMs: 220 }))
+  );
+  rcpts.forEach((r, idx) => {
+    if (!r) throw new Error(`Timed out waiting for Subnet 1 receipt (${hashes[idx].slice(0, 10)}…)`);
+    if (r.status !== '0x1') throw new Error(`Subnet 1 transaction reverted (${hashes[idx].slice(0, 10)}…)`);
+  });
+  return rcpts;
+}
+
+export class AppStoreClient {
+  constructor({ rpcUrl = getDefaultNodeWsUrl(), storeAddr = '' } = {}) {
+    this.rpcUrl = rpcUrl;
+    this.storeAddr = storeAddr ? storeAddr.toLowerCase() : '';
+  }
+
+  async resolveStoreAddress() {
+    if (this.storeAddr && this.storeAddr !== ZERO_ADDR) {
+      const ok = await this._probeAppStore(this.storeAddr);
+      if (ok) return this.storeAddr;
+    }
+
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(STORAGE_APP_STORE_ADDR_KEY);
+      if (saved && /^0x[0-9a-f]{40}$/i.test(saved)) {
+        if (await this._probeAppStore(saved)) {
+          this.storeAddr = saved.toLowerCase();
+          return this.storeAddr;
+        }
+      }
+    }
+
+    try {
+      const { manifest } = await SlxHfsCache.hydrateWithManifest();
+      const fromManifest = manifest?.contracts?.appStore || manifest?.appStore;
+      if (fromManifest && (await this._probeAppStore(fromManifest))) {
+        this.setStoreAddress(fromManifest);
+        return this.storeAddr;
+      }
+      const regAddr = manifest?.institutional?.hfsRegistry || manifest?.hfsRegistry;
+      if (regAddr) {
+        const typeId = encodeHfsTypeId('APP_STORE');
+        const sliceHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+          { to: regAddr, data: HfsRegistryAbi.getInstancesByType(typeId, 0, 4) },
+          'latest',
+        ]);
+        const sb = hexToBytes(sliceHex);
+        if (sb.length >= 16 + 109) {
+          const retCnt = Number(readU64BE(sb, 8));
+          if (retCnt > 0) {
+            const cand = bytesToHex(sb.subarray(16 + 5, 16 + 25)).toLowerCase();
+            if (await this._probeAppStore(cand)) {
+              this.setStoreAddress(cand);
+              return this.storeAddr;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    return '';
+  }
+
+  setStoreAddress(addr) {
+    this.storeAddr = String(addr || '').trim().toLowerCase();
+    if (typeof localStorage !== 'undefined' && /^0x[0-9a-f]{40}$/.test(this.storeAddr)) {
+      try {
+        localStorage.setItem(STORAGE_APP_STORE_ADDR_KEY, this.storeAddr);
+      } catch (_) {}
+    }
+  }
+
+  async _probeAppStore(addr) {
+    if (!addr || addr === ZERO_ADDR) return false;
+    try {
+      const verHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+        { to: addr, data: AppStoreAbi.abiVersion() },
+        'latest',
+      ]);
+      return decodeUintWord(verHex) >= 1;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async deployAppStoreOnChain({ wallet, wasmUrl = '/contracts/app_store.wasm', onStatus = null }) {
+    const emit = (m) => {
+      if (typeof onStatus === 'function') onStatus(m);
+    };
+    emit('Fetching app_store.wasm (23.7 KB)…');
+    let resp = await fetch(wasmUrl, { cache: 'no-store' });
+    if (!resp.ok) resp = await fetch('/public/contracts/app_store.wasm', { cache: 'no-store' });
+    if (!resp.ok) throw new Error('Could not fetch /contracts/app_store.wasm');
+    const wasmBytes = new Uint8Array(await resp.arrayBuffer());
+    const codeHash = keccak256Hex(wasmBytes);
+
+    const idRec = await wallet.ensureIdentityWithPrompt({
+      rpcUrl: this.rpcUrl,
+      appName: 'SuperLexicon HFS App Store',
+    });
+    const myEoa = wallet.keypair.address;
+    const myPriv = wallet.keypair.privateKey;
+    const ZERO_LB = '0x' + '00'.repeat(32);
+
+    const n0 = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+    const predictedStoreAddr = computeCreateAddress(myEoa, n0 + 1n).toLowerCase();
+
+    emit(`Uploading app_store.wasm & instantiating AppStore HFS (${shortHex(predictedStoreAddr)})…`);
+    const txStore = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce: n0,
+      to: BYTECODE_STORE_ADDRESS,
+      data: codeHash + bytesToHex(wasmBytes, false),
+      gasLimit: 7_500_000n,
+      lowerBoundHashHex: ZERO_LB,
+    });
+    const txInst = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce: n0 + 1n,
+      to: null,
+      data: codeHash,
+      gasLimit: 4_800_000n,
+      extraTargets: [predictedStoreAddr],
+      lowerBoundHashHex: txStore.txHash,
+    });
+    const initCd = AppStoreAbi.initialize(idRec.identityAddr);
+    const txInit = signOrderedLexiconTx({
+      privateKey: myPriv,
+      nonce: n0 + 2n,
+      to: predictedStoreAddr,
+      data: initCd,
+      gasLimit: 4_500_000n,
+      extraTargets: [predictedStoreAddr],
+      lowerBoundHashHex: txInst.txHash,
+    });
+
+    const hashes = [];
+    for (const t of [txStore, txInst, txInit]) {
+      hashes.push(await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [t.raw]));
+    }
+    const rcpts = await _waitReceipts(this.rpcUrl, hashes);
+    const confirmedAddr = (rcpts[1]?.contractAddress || predictedStoreAddr).toLowerCase();
+    this.setStoreAddress(confirmedAddr);
+
+    // Best-effort HfsRegistry global registration so all browsers auto-discover it
+    try {
+      const { manifest } = await SlxHfsCache.hydrateWithManifest();
+      const regAddr = manifest?.institutional?.hfsRegistry || manifest?.hfsRegistry;
+      if (regAddr) {
+        const nReg = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+        const regCd = HfsRegistryAbi.registerInstance({
+          typeId: encodeHfsTypeId('APP_STORE'),
+          primaryAddr: confirmedAddr,
+          creatorIdentity: idRec.identityAddr,
+          label: 'SuperLexicon Subnet App Store',
+          metaBytes: new Uint8Array(0),
+        });
+        const sReg = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce: nReg,
+          to: regAddr,
+          data: regCd,
+          gasLimit: 4_800_000n,
+          extraTargets: [regAddr, confirmedAddr],
+        });
+        await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [sReg.raw]);
+      }
+    } catch (_) {}
+
+    emit(`✓ AppStore HFS live at ${shortHex(confirmedAddr)}!`);
+    return confirmedAddr;
+  }
+
+  async uploadUiBundleOnChain({ wallet, htmlSource, onStatus = null }) {
+    const emit = (m) => {
+      if (typeof onStatus === 'function') onStatus(m);
+    };
+    const packed = await compressAppUiBundle(htmlSource);
+    await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
+    await SlxUiBundleCache.putVerifiedHtml(packed.uiHash, {
+      uiHash: packed.uiHash,
+      compressedLen: packed.compressedLen,
+      uncompressedLen: packed.uncompressedLen,
+      html: htmlSource,
+    });
+
+    if (!this.storeAddr) throw new Error('AppStore HFS address not connected.');
+
+    const hasHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+      { to: this.storeAddr, data: AppStoreAbi.hasBundle(packed.uiHash) },
+      'latest',
+    ]);
+    if (decodeUintWord(hasHex) === 1) {
+      emit(`✓ UI bundle ${shortHex(packed.uiHash)} already verified on-chain (deduplicated)!`);
+      return packed;
+    }
+
+    const chunks = splitBundleIntoChunks(packed.bytes);
+    if (chunks.length > APP_STORE_MAX_CHUNKS) {
+      throw new Error(
+        `Compressed UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB) exceeds ${
+          (APP_STORE_MAX_CHUNKS * APP_STORE_CHUNK_BYTES) / 1024
+        } KiB on-chain cap.`
+      );
+    }
+
+    const myEoa = wallet.keypair.address;
+    const myPriv = wallet.keypair.privateKey;
+    let curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+    let prevHash = '0x' + '00'.repeat(32);
+
+    emit(
+      `Uploading & keccak256-sealing UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB gzip in ${
+        chunks.length
+      } chunk${chunks.length === 1 ? '' : 's'})…`
+    );
+    const txs = chunks.map((chunkBytes, idx) => {
+      const cd = AppStoreAbi.uploadBundleChunk({
+        uiHash: packed.uiHash,
+        chunkIndex: idx,
+        totalChunks: chunks.length,
+        encoding: packed.encoding,
+        uncompressedLen: packed.uncompressedLen,
+        chunkBytes,
+      });
+      const signed = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: curNonce,
+        to: this.storeAddr,
+        data: cd,
+        gasLimit: 8_500_000n,
+        extraTargets: [this.storeAddr],
+        lowerBoundHashHex: prevHash,
+      });
+      curNonce += 1n;
+      prevHash = signed.txHash;
+      return { signed, cd, idx };
+    });
+
+    const hashes = [];
+    for (const item of txs) {
+      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [item.signed.raw]);
+      hashes.push(h);
+      wallet.recordExternalRpcTx({
+        txHash: h,
+        rawTx: item.signed.raw,
+        from: myEoa,
+        to: this.storeAddr,
+        contractLabel: 'AppStore',
+        fnLabel: `uploadBundleChunk(${item.idx + 1}/${chunks.length})`,
+        dataHex: item.cd,
+      });
+    }
+    await _waitReceipts(this.rpcUrl, hashes);
+    return packed;
+  }
+
+  async publishApp({
+    wallet,
+    slug,
+    title,
+    summary = '',
+    icon = '🧩',
+    version = '1.0.0',
+    category = 6,
+    execMode = APP_EXEC_MODE.SANDBOX_IFRAME,
+    htmlSource,
+    wasmBytes = null,
+    wasmCodeHash = ZERO_BYTES32,
+    defaultHfsAddr = ZERO_ADDR,
+    deployInstance = false,
+    onStatus = null,
+  }) {
+    const emit = (m) => {
+      if (typeof onStatus === 'function') onStatus(m);
+    };
+    const cleanSlug = String(slug || title || 'app')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-');
+    const slugId = slugToBytes32(cleanSlug);
+
+    const packed = await compressAppUiBundle(htmlSource);
+    await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
+    await SlxUiBundleCache.putVerifiedHtml(packed.uiHash, {
+      uiHash: packed.uiHash,
+      compressedLen: packed.compressedLen,
+      uncompressedLen: packed.uncompressedLen,
+      html: htmlSource,
+    });
+
+    let resolvedWasmHash = wasmCodeHash || ZERO_BYTES32;
+    let resolvedDefaultHfs = defaultHfsAddr || ZERO_ADDR;
+
+    // If AppStore HFS is live on Subnet 1, publish on-chain!
+    const storeAddr = await this.resolveStoreAddress();
+    if (storeAddr) {
+      const idRec = await wallet.ensureIdentityWithPrompt({
+        rpcUrl: this.rpcUrl,
+        appName: 'SuperLexicon HFS App Publisher',
+      });
+      const myEoa = wallet.keypair.address;
+      const myPriv = wallet.keypair.privateKey;
+
+      if (wasmBytes && wasmBytes.length > 0) {
+        resolvedWasmHash = keccak256Hex(wasmBytes);
+        emit(`Uploading HFS WASM (${(wasmBytes.length / 1024).toFixed(1)} KiB) to BYTECODE_STORE…`);
+        const nW = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+        const sW = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce: nW,
+          to: BYTECODE_STORE_ADDRESS,
+          data: resolvedWasmHash + bytesToHex(wasmBytes, false),
+          gasLimit: 9_000_000n,
+        });
+        const hW = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [sW.raw]);
+        await _waitReceipts(this.rpcUrl, [hW]);
+      }
+
+      if (deployInstance && resolvedWasmHash !== ZERO_BYTES32 && resolvedDefaultHfs === ZERO_ADDR) {
+        emit('Instantiating default HFS subroutine instance…');
+        const nI = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+        const pred = computeCreateAddress(myEoa, nI).toLowerCase();
+        const sI = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce: nI,
+          to: null,
+          data: resolvedWasmHash,
+          gasLimit: 4_800_000n,
+          extraTargets: [pred],
+        });
+        const hI = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [sI.raw]);
+        const [rI] = await _waitReceipts(this.rpcUrl, [hI]);
+        resolvedDefaultHfs = (rI.contractAddress || pred).toLowerCase();
+      }
+
+      await this.uploadUiBundleOnChain({ wallet, htmlSource, onStatus });
+
+      emit(`Registering "${title}" (${version}) in AppStore HFS…`);
+      const pubCd = AppStoreAbi.publishApp({
+        slugId,
+        publisherIdentity: idRec.identityAddr,
+        wasmCodeHash: resolvedWasmHash,
+        defaultHfsAddr: resolvedDefaultHfs,
+        uiHash: packed.uiHash,
+        category,
+        execMode,
+        title,
+        summary,
+        icon,
+        version,
+      });
+      const nP = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+      const sP = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: nP,
+        to: storeAddr,
+        data: pubCd,
+        gasLimit: 5_500_000n,
+        extraTargets: [storeAddr, idRec.identityAddr, ...(resolvedDefaultHfs !== ZERO_ADDR ? [resolvedDefaultHfs] : [])],
+      });
+      const hP = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [sP.raw]);
+      wallet.recordExternalRpcTx({
+        txHash: hP,
+        rawTx: sP.raw,
+        from: myEoa,
+        to: storeAddr,
+        contractLabel: 'AppStore',
+        fnLabel: `publishApp("${title}", "${version}")`,
+        dataHex: pubCd,
+      });
+      await _waitReceipts(this.rpcUrl, [hP]);
+
+      const onChainRec = await this.fetchAppBySlug(cleanSlug);
+      const savedMeta = {
+        ...(onChainRec || {}),
+        slug: cleanSlug,
+        slugId,
+        title,
+        summary,
+        icon,
+        version,
+        category,
+        execMode: onChainRec ? onChainRec.execMode : execMode,
+        uiHash: packed.uiHash,
+        compressedLen: packed.compressedLen,
+        uncompressedLen: packed.uncompressedLen,
+        chunkCount: packed.chunkCount,
+        wasmCodeHash: resolvedWasmHash,
+        defaultHfsAddr: resolvedDefaultHfs,
+        publisher: idRec.identityAddr,
+        publisherLabel: `${idRec.nickname} · ${truncAddr4(myEoa)}`,
+        source: 'onchain',
+      };
+      saveLocalPublishedApp(savedMeta);
+      return savedMeta;
+    }
+
+    // Offline / Local Sandbox publish (still 100% content-addressed by keccak256 in IndexedDB!)
+    const idRec = wallet.getIdentityRecord();
+    const savedLocal = {
+      appId: 1000 + loadLocalPublishedApps().length + 1,
+      slug: cleanSlug,
+      slugId,
+      status: APP_STATUS.ACTIVE,
+      execMode: APP_EXEC_MODE.SANDBOX_IFRAME,
+      category,
+      title,
+      summary,
+      icon,
+      version,
+      uiHash: packed.uiHash,
+      compressedLen: packed.compressedLen,
+      uncompressedLen: packed.uncompressedLen,
+      chunkCount: packed.chunkCount,
+      wasmCodeHash: resolvedWasmHash,
+      defaultHfsAddr: resolvedDefaultHfs,
+      publisher: idRec?.identityAddr || wallet.keypair.address,
+      publisherLabel: idRec?.nickname
+        ? `${idRec.nickname} · ${truncAddr4(wallet.keypair.address)}`
+        : `Dev_${truncAddr4(wallet.keypair.address)}`,
+      updatedBlock: 0,
+      source: 'local-cas',
+    };
+    saveLocalPublishedApp(savedLocal);
+    return savedLocal;
+  }
+
+  async fetchOnChainApps() {
+    const storeAddr = await this.resolveStoreAddress();
+    if (!storeAddr) return [];
+    try {
+      const sliceHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+        { to: storeAddr, data: AppStoreAbi.getAppsSlice(0, 24) },
+        'latest',
+      ]);
+      const { items } = decodeAppsSliceHex(sliceHex);
+      return items.filter((a) => a.status === APP_STATUS.ACTIVE);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async fetchAppBySlug(slug) {
+    const storeAddr = await this.resolveStoreAddress();
+    if (!storeAddr) return null;
+    try {
+      const slugId = slugToBytes32(slug);
+      const hex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+        { to: storeAddr, data: AppStoreAbi.getAppBySlug(slugId) },
+        'latest',
+      ]);
+      return decodeSingleAppHex(hex);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async resolveInstanceApp(instanceAddr) {
+    const storeAddr = await this.resolveStoreAddress();
+    if (!storeAddr || !instanceAddr || instanceAddr === ZERO_ADDR) return null;
+    try {
+      const hex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+        { to: storeAddr, data: AppStoreAbi.resolveInstance(instanceAddr) },
+        'latest',
+      ]);
+      return decodeResolvedInstanceHex(hex);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
+   * Fetches, cryptographically verifies (`keccak256(compressedBytes) === uiHash`), decompresses,
+   * and caches an App UI bundle from:
+   *   1. `IndexedDB` Immutable CAS Cache (`0 ms`)
+   *   2. Local raw bundle store (offline/studio publish)
+   *   3. Live Subnet 1 `AppStore.getBundle(uiHash)` (`1` single `eth_call`)
+   *   4. Genesis static fallback URL (`/app-bundles/<slug>.html.gz`)
+   */
+  async fetchVerifiedBundleHtml({ uiHash, fallbackBundleUrl = '' }) {
+    const cleanHash = String(uiHash || '').trim().toLowerCase();
+
+    if (cleanHash && cleanHash !== ZERO_BYTES32) {
+      const cached = await SlxUiBundleCache.getVerifiedHtml(cleanHash);
+      if (cached?.html) {
+        return { ...cached, cacheHit: true };
+      }
+
+      const rawLocal = await SlxUiBundleCache.getRawBundle(cleanHash);
+      if (rawLocal?.bytes) {
+        const verified = await verifyAndUnpackAppUiBundle(
+          rawLocal.bytes,
+          cleanHash,
+          rawLocal.encoding
+        );
+        await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
+        return { ...verified, cacheHit: false, loadedFrom: 'indexeddb-cas' };
+      }
+
+      const storeAddr = await this.resolveStoreAddress();
+      if (storeAddr) {
+        try {
+          const [infoHex, bundleHex] = await Promise.all([
+            slxNodeRpc(this.rpcUrl, 'eth_call', [
+              { to: storeAddr, data: AppStoreAbi.getBundleInfo(cleanHash) },
+              'latest',
+            ]),
+            slxNodeRpc(this.rpcUrl, 'eth_call', [
+              { to: storeAddr, data: AppStoreAbi.getBundle(cleanHash) },
+              'latest',
+            ]),
+          ]);
+          const info = decodeBundleInfoHex(infoHex);
+          const rawBytes = hexToBytes(bundleHex);
+          if (info.sealed && rawBytes.length > 0) {
+            const verified = await verifyAndUnpackAppUiBundle(rawBytes, cleanHash, info.encoding);
+            await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
+            return { ...verified, cacheHit: false, loadedFrom: 'onchain-appstore' };
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (fallbackBundleUrl) {
+      const resp = await fetch(fallbackBundleUrl);
+      if (!resp.ok) {
+        throw new Error(`Failed to fetch UI bundle ${fallbackBundleUrl} (HTTP ${resp.status})`);
+      }
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      const verified = await verifyAndUnpackAppUiBundle(
+        bytes,
+        cleanHash,
+        APP_STORE_ENCODING.GZIP
+      );
+      if (cleanHash) {
+        await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
+      }
+      return { ...verified, cacheHit: false, loadedFrom: 'genesis-cas' };
+    }
+
+    throw new Error(`UI bundle ${shortHex(cleanHash)} not found in cache or on-chain AppStore.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Zero-Trust Sandboxed Iframe Guest Shim (`window.slx`) & Host Bridge
+// ---------------------------------------------------------------------------
+
+const GUEST_BRIDGE_SCRIPT = `<script>
+(function () {
+  let _reqSeq = 1;
+  const _pending = new Map();
+  const _blockListeners = new Set();
+
+  window.addEventListener('message', function (ev) {
+    const msg = ev.data;
+    if (!msg || msg.__slxBridge !== 'host->guest') return;
+    if (msg.type === 'response' && _pending.has(msg.id)) {
+      const p = _pending.get(msg.id);
+      _pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error));
+      else p.resolve(msg.result);
+    } else if (msg.type === 'event' && msg.event === 'newBlock') {
+      _blockListeners.forEach(function (fn) {
+        try { fn(msg.payload); } catch (_) {}
+      });
+    }
+  });
+
+  function requestHost(method, params) {
+    return new Promise(function (resolve, reject) {
+      const id = _reqSeq++;
+      _pending.set(id, { resolve: resolve, reject: reject });
+      window.parent.postMessage({ __slxBridge: 'guest->host', id: id, method: method, params: params || {} }, '*');
+    });
+  }
+
+  window.slx = {
+    version: '1.0.0',
+    getContext: function () { return requestHost('getContext', {}); },
+    ethCall: function (to, dataHex) { return requestHost('ethCall', { to: to, data: dataHex }); },
+    callContract: function (fnSig, args, to) { return requestHost('callContract', { fnSig: fnSig, args: args || [], to: to }); },
+    encodeAbi: function (fnSig, args) { return requestHost('encodeAbi', { fnSig: fnSig, args: args || [] }); },
+    sendTransaction: function (opts) { return requestHost('sendTransaction', opts || {}); },
+    deployInstance: function (opts) { return requestHost('deployInstance', opts || {}); },
+    resolveIdentity: function (addr) { return requestHost('resolveIdentity', { address: addr }); },
+    getAppStorage: function (key) { return requestHost('getAppStorage', { key: String(key || '') }); },
+    setAppStorage: function (key, value) { return requestHost('setAppStorage', { key: String(key || ''), value: value }); },
+    onNewBlock: function (fn) {
+      if (typeof fn === 'function') _blockListeners.add(fn);
+      return function () { _blockListeners.delete(fn); };
+    }
+  };
+})();
+<\/script>`;
+
+export function buildSandboxedIframeSrcdoc(rawHtml) {
+  const html = String(rawHtml || '');
+  if (/<head[^>]*>/i.test(html)) {
+    return html.replace(/<head[^>]*>/i, (m) => `${m}\n${GUEST_BRIDGE_SCRIPT}`);
+  }
+  if (/<html[^>]*>/i.test(html)) {
+    return html.replace(/<html[^>]*>/i, (m) => `${m}<head>${GUEST_BRIDGE_SCRIPT}</head>`);
+  }
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">${GUEST_BRIDGE_SCRIPT}</head><body>${html}</body></html>`;
+}
+
+export function attachSandboxedAppBridge({
+  iframeEl,
+  appMeta,
+  wallet,
+  rpcUrl = getDefaultNodeWsUrl(),
+  onConfirmTx = null,
+}) {
+  const sessionApprovedTargets = new Set();
+  const appStorageKey = `slx_sandbox_kv_${appMeta.slug || appMeta.uiHash || 'app'}`;
+
+  const loadSandboxKv = () => {
+    try {
+      return JSON.parse(localStorage.getItem(appStorageKey) || '{}');
+    } catch (_) {
+      return {};
+    }
+  };
+  const saveSandboxKv = (obj) => {
+    try {
+      localStorage.setItem(appStorageKey, JSON.stringify(obj));
+    } catch (_) {}
+  };
+
+  const reply = (id, result, error = null) => {
+    try {
+      iframeEl.contentWindow?.postMessage(
+        { __slxBridge: 'host->guest', type: 'response', id, result, error },
+        '*'
+      );
+    } catch (_) {}
+  };
+
+  const onMessage = async (ev) => {
+    if (!iframeEl || ev.source !== iframeEl.contentWindow) return;
+    const msg = ev.data;
+    if (!msg || msg.__slxBridge !== 'guest->host') return;
+    const { id, method, params = {} } = msg;
+
+    try {
+      if (method === 'getContext') {
+        const idRec = wallet.getIdentityRecord();
+        let blk = 0;
+        try {
+          const bHex = await slxNodeRpc(rpcUrl, 'eth_blockNumber', []);
+          blk = Number(BigInt(bHex || '0x0'));
+        } catch (_) {}
+        reply(id, {
+          appId: appMeta.appId || 0,
+          slug: appMeta.slug || '',
+          title: appMeta.title || 'HFS App',
+          version: appMeta.version || '1.0.0',
+          uiHash: appMeta.uiHash || ZERO_BYTES32,
+          wasmCodeHash: appMeta.wasmCodeHash || ZERO_BYTES32,
+          instanceAddr: appMeta.activeInstanceAddr || appMeta.defaultHfsAddr || ZERO_ADDR,
+          rpcUrl,
+          blockNumber: blk,
+          user: {
+            eoa: wallet.keypair.address,
+            tag4: truncAddr4(wallet.keypair.address),
+            identityAddr: idRec?.identityAddr || '',
+            nickname: idRec?.nickname || `Guest_${truncAddr4(wallet.keypair.address)}`,
+          },
+        });
+        return;
+      }
+
+      if (method === 'encodeAbi') {
+        reply(id, encodeAbi(params.fnSig, params.args || []));
+        return;
+      }
+
+      if (method === 'ethCall') {
+        const to = params.to || appMeta.activeInstanceAddr || appMeta.defaultHfsAddr;
+        const out = await slxNodeRpc(rpcUrl, 'eth_call', [{ to, data: params.data || '0x' }, 'latest']);
+        reply(id, out);
+        return;
+      }
+
+      if (method === 'callContract') {
+        const to = params.to || appMeta.activeInstanceAddr || appMeta.defaultHfsAddr;
+        const data = encodeAbi(params.fnSig, params.args || []);
+        const out = await slxNodeRpc(rpcUrl, 'eth_call', [{ to, data }, 'latest']);
+        reply(id, out);
+        return;
+      }
+
+      if (method === 'resolveIdentity') {
+        const addr = String(params.address || '').toLowerCase();
+        const nick = await readOnChainIdentityNickname(rpcUrl, addr);
+        reply(id, { address: addr, nickname: nick || shortHex(addr) });
+        return;
+      }
+
+      if (method === 'getAppStorage') {
+        const kv = loadSandboxKv();
+        reply(id, kv[params.key] ?? null);
+        return;
+      }
+
+      if (method === 'setAppStorage') {
+        const kv = loadSandboxKv();
+        kv[params.key] = params.value;
+        saveSandboxKv(kv);
+        reply(id, true);
+        return;
+      }
+
+      if (method === 'sendTransaction') {
+        const target = String(
+          params.to || appMeta.activeInstanceAddr || appMeta.defaultHfsAddr || ZERO_ADDR
+        ).toLowerCase();
+        const innerData = params.data || (params.fnSig ? encodeAbi(params.fnSig, params.args || []) : '0x');
+
+        // Enforce Identity HFS Subroutine Firewall (`State = 3 SPAM` auto-blocks!)
+        if (target !== ZERO_ADDR) {
+          try {
+            const assocs = await wallet.fetchHfsAssociations({ rpcUrl });
+            const hit = assocs.byAddr?.get(target);
+            if (hit && hit.status === HFS_ASSOC_STATUS.SPAM) {
+              throw new Error(
+                `Blocked by your Identity HFS Firewall: target subroutine ${shortHex(target)} is marked State = 3 (Spam).`
+              );
+            }
+          } catch (fwErr) {
+            if (String(fwErr.message || '').includes('Firewall')) throw fwErr;
+          }
+        }
+
+        if (typeof onConfirmTx === 'function' && !sessionApprovedTargets.has(target)) {
+          const decision = await onConfirmTx({
+            appMeta,
+            target,
+            fnSig: params.fnSig || innerData.slice(0, 10),
+            summary: params.summary || '',
+            dataHex: innerData,
+          });
+          if (!decision?.approved) {
+            throw new Error('Transaction rejected by user in Host Wallet.');
+          }
+          if (decision.trustSession && target !== ZERO_ADDR) {
+            sessionApprovedTargets.add(target);
+          }
+        }
+
+        // Offline / Sandbox simulation fallback if target is 0x0 or chain offline
+        if (target === ZERO_ADDR) {
+          const simHash = keccak256Hex(utf8ToBytes(`simtx:${Date.now()}:${innerData}`));
+          reply(id, { txHash: simHash, simulated: true, status: '0x1' });
+          return;
+        }
+
+        const idRec = await wallet.ensureIdentityWithPrompt({
+          rpcUrl,
+          appName: appMeta.title || 'Sandboxed HFS App',
+        });
+        const myEoa = wallet.keypair.address;
+        const myPriv = wallet.keypair.privateKey;
+        const nonce = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+        const useIdentityExec = params.viaIdentity !== false && idRec?.identityAddr;
+        const txTo = useIdentityExec ? idRec.identityAddr : target;
+        const txData = useIdentityExec
+          ? encodeAbi('execute(address,bytes)', [
+              ['address', target],
+              ['bytes', hexToBytes(innerData)],
+            ])
+          : innerData;
+        const signed = signOrderedLexiconTx({
+          privateKey: myPriv,
+          nonce,
+          to: txTo,
+          data: txData,
+          gasLimit: 6_000_000n,
+          extraTargets: useIdentityExec ? [idRec.identityAddr, target] : [target],
+        });
+        const txHash = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+        wallet.recordExternalRpcTx({
+          txHash,
+          rawTx: signed.raw,
+          from: myEoa,
+          to: target,
+          contractLabel: appMeta.title || 'AppHFS',
+          fnLabel: params.fnSig || 'call',
+          dataHex: innerData,
+        });
+        const [rcpt] = await _waitReceipts(rpcUrl, [txHash]);
+        reply(id, { txHash, status: rcpt.status, blockNumber: Number(BigInt(rcpt.blockNumber || 0)) });
+        return;
+      }
+
+      throw new Error(`Unsupported window.slx bridge method: ${method}`);
+    } catch (err) {
+      reply(id, null, err.message || String(err));
+    }
+  };
+
+  window.addEventListener('message', onMessage);
+  return {
+    notifyNewBlock(blockPayload) {
+      try {
+        iframeEl.contentWindow?.postMessage(
+          { __slxBridge: 'host->guest', type: 'event', event: 'newBlock', payload: blockPayload },
+          '*'
+        );
+      } catch (_) {}
+    },
+    destroy() {
+      window.removeEventListener('message', onMessage);
+    },
+  };
+}

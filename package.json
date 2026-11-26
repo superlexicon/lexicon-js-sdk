@@ -32,6 +32,7 @@
     "./subnet-registry": "./src/subnet-registry.js",
     "./reward-voucher": "./src/reward-voucher.js",
     "./crowdfunding": "./src/crowdfunding.js",
+    "./app-store": "./src/app-store.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"
