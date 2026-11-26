@@ -30,6 +30,8 @@
     "./recovery": "./src/recovery.js",
     "./ecies_messaging": "./src/ecies_messaging.js",
     "./subnet-registry": "./src/subnet-registry.js",
+    "./reward-voucher": "./src/reward-voucher.js",
+    "./crowdfunding": "./src/crowdfunding.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"
