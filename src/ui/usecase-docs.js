@@ -28,6 +28,7 @@ const DOC_APP_ALIASES = {
   'app-store': 'apps',
   appstore: 'apps',
   directory: 'apps',
+  lexicall: 'telephony',
   ethercall: 'telephony',
   webrtc: 'telephony',
 };
@@ -1416,7 +1417,7 @@ export const USECASE_DESCRIPTIONS = {
   telephony: {
     id: 'telephony',
     icon: '📹',
-    title: 'EtherCall — Serverless WebRTC Calls, Discord Channels & P2P Broadcasts',
+    title: 'LexiCall — Serverless WebRTC Calls, Discord Channels & P2P Broadcasts',
     href: '/telephony.html',
     tagline:
       'Zero-cloud 1:1 WebRTC calls, persistent Discord voice/video/screen lounges, and K-ary P2P fanout-tree live broadcasts + stages signaled via Halt-Free Subroutine (webrtc_signal.wasm v2).',
@@ -1434,7 +1435,7 @@ export const USECASE_DESCRIPTIONS = {
           <div class="slx-ucd-hero-title">🛡️ Eliminating Centralized WebRTC Signaling, Discord SFUs &amp; Live-Stream CDNs</div>
           <p>
             Conventional communication apps (Discord, Zoom, Twitch, Twilio) rely on centralized <strong>Socket.io signaling brokers</strong> and <strong>cloud Selective Forwarding Units (SFUs)</strong> that log metadata, charge per-minute bandwidth fees, and can rewrite <code>a=fingerprint:sha-256</code> to MITM calls.
-            <strong>EtherCall v2</strong> moves 1:1 calls, 24/7 Discord-style voice/video lounges, and 1-to-many live stage broadcasts directly into <code>webrtc_signal.wasm</code> (HPS #28 v2) with zero cloud media servers!
+            <strong>LexiCall v2</strong> moves 1:1 calls, 24/7 Discord-style voice/video lounges, and 1-to-many live stage broadcasts directly into <code>webrtc_signal.wasm</code> (HPS #28 v2) with zero cloud media servers!
           </p>
         </div>
         <table class="slx-ucd-table">
@@ -1442,7 +1443,7 @@ export const USECASE_DESCRIPTIONS = {
             <tr>
               <th>Communication Layer</th>
               <th>Conventional Discord / Twitch / Twilio Stack</th>
-              <th>SuperLexicon EtherCall v2 (HFS #28)</th>
+              <th>SuperLexicon LexiCall v2 (HFS #28)</th>
             </tr>
           </thead>
           <tbody>
@@ -1492,7 +1493,7 @@ export const USECASE_DESCRIPTIONS = {
       topology: `
         <table class="slx-ucd-table">
           <thead>
-            <tr><th>Component</th><th>Role in EtherCall v2</th></tr>
+            <tr><th>Component</th><th>Role in LexiCall v2</th></tr>
           </thead>
           <tbody>
             <tr><td><code>webrtc_signal.wasm</code> (v2)</td><td>Halt-Free Subroutine (#28, <code>53.9 KB</code>) managing E2EE directory profiles, 1:1 calls, persistent Discord channels, and K-ary P2P broadcast relay trees + Stage roles.</td></tr>
@@ -1981,7 +1982,7 @@ export const USECASE_INSTRUCTIONS = {
   telephony: {
     id: 'telephony',
     icon: '📹',
-    title: 'EtherCall — Calls, Discord Channels & Broadcasts Instructions',
+    title: 'LexiCall — Calls, Discord Channels & Broadcasts Instructions',
     tagline:
       'Place encrypted 1:1 calls, drop into 24/7 Discord voice/video lounges, or stream live 1-to-many broadcasts via P2P relay trees with $0.00 gas.',
     tabs: {

@@ -1884,11 +1884,11 @@ export async function deployNewWebRtcSignalHfs({
   const reg = manifest?.hfsRegistry;
   if (!reg) throw new Error('Missing hfsRegistry in Subnet 1 manifest');
 
-  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'EtherCall WebRTC' });
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'LexiCall WebRTC' });
   const myEoa = wallet.keypair.address;
   const myPriv = wallet.keypair.privateKey;
   const adminAddr = idRec?.identityAddr || myEoa;
-  const hubLabel = String(label || 'Private EtherCall Signaling Hub').trim();
+  const hubLabel = String(label || 'Private LexiCall Signaling Hub').trim();
 
   if (onStatus) onStatus('Block 1/2: Instantiating fresh webrtc_signal.wasm HFS on Subnet 1…');
   const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));

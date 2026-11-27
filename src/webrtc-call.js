@@ -1809,7 +1809,7 @@ export function createAudioLevelMonitor(
  * VMs, or 2-tab solo testers can place & verify live WebRTC video/voice calls immediately.
  */
 export function createSyntheticTestMediaStream({
-  label = 'EtherCall Sim',
+  label = 'LexiCall Sim',
   includeVideo = true,
   includeAudio = true,
 } = {}) {
@@ -1917,7 +1917,7 @@ export async function acquireCallMediaStream({
   videoDeviceId = '',
   forceSynthetic = false,
   allowSyntheticFallback = false,
-  syntheticLabel = 'EtherCall Test Feed',
+  syntheticLabel = 'LexiCall Test Feed',
 } = {}) {
   if (forceSynthetic) {
     return {
@@ -2297,7 +2297,7 @@ export class SlxWebRtcPeerSession {
     };
 
     if (isInitiator) {
-      bindChannel(this.pc.createDataChannel('slx-ether-call', { ordered: true }));
+      bindChannel(this.pc.createDataChannel('slx-lexicall', { ordered: true }));
     } else {
       this.pc.ondatachannel = (ev) => {
         if (ev.channel) bindChannel(ev.channel);

@@ -3634,9 +3634,9 @@ export const SLX_PLATFORM_APPS = [
   {
     id: 'telephony',
     icon: '📹',
-    label: 'EtherCall — WebRTC Voice & Video',
-    shortLabel: 'EtherCall',
-    sub: 'HFS Signaling, DTLS Pinning & Mesh Rooms',
+    label: 'LexiCall — Calls, Channels & Broadcasts',
+    shortLabel: 'LexiCall',
+    sub: 'HFS Signaling, Discord Lounges & P2P Streams',
     href: '/telephony.html',
     group: 'Institutional & Social HFS',
   },
@@ -3692,6 +3692,7 @@ const APP_ID_ALIASES = {
   ciphervote: 'ballot',
   'ifrs-ledger': 'accounting',
   ifrs: 'accounting',
+  lexicall: 'telephony',
   ethercall: 'telephony',
   webrtc: 'telephony',
 };

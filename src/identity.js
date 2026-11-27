@@ -1607,9 +1607,9 @@ export const HFS_TYPES = {
   WEBRTC_SIGNAL: {
     typeName: 'WEBRTC_SIGNAL',
     icon: '📹',
-    shortLabel: 'EtherCall Hub',
+    shortLabel: 'LexiCall Hub',
     deployBtnText: '+ New Call Hub',
-    modalTitle: 'Deploy & Register Private WebRTC Voice/Video Signaling Hub',
+    modalTitle: 'Deploy & Register Private LexiCall Signaling Hub',
     placeholder: 'e.g. Sovereign Ops Private Signaling Hub',
   },
 };
