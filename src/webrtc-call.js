@@ -105,7 +105,45 @@ export const RTC_ROOM_SIGNAL_TYPE = {
 export const DEFAULT_RTC_ICE_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: ['stun:stun.cloudflare.com:3478'] },
+  { urls: ['stun:global.stun.twilio.com:3478'] },
 ];
+
+/**
+ * Builds an `RTCIceServer[]` list merging default fast STUN servers with an optional custom
+ * TURN/STUN string (`turn:user:pass@host:3478`, `turns:user:pass@host:443?transport=tcp`,
+ * `stun:host:3478`, or JSON `[{ urls, username, credential }]`).
+ */
+export function buildRtcIceServers(customIceSpec = '') {
+  const raw = String(customIceSpec || '').trim();
+  if (!raw) return DEFAULT_RTC_ICE_SERVERS;
+
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(raw);
+      const list = Array.isArray(parsed) ? parsed : [parsed];
+      return [...list.filter((x) => x && x.urls), ...DEFAULT_RTC_ICE_SERVERS];
+    } catch {
+      // fall through to line parser
+    }
+  }
+
+  const customServers = [];
+  for (const token of raw.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean)) {
+    const credMatch = token.match(/^(turns?):([^:@\s]+):([^@\s]+)@([^\s]+)$/i);
+    if (credMatch) {
+      customServers.push({
+        urls: `${credMatch[1].toLowerCase()}:${credMatch[4]}`,
+        username: decodeURIComponent(credMatch[2]),
+        credential: decodeURIComponent(credMatch[3]),
+      });
+    } else if (/^(turns?|stuns?):/i.test(token)) {
+      customServers.push({ urls: token });
+    }
+  }
+  return customServers.length > 0
+    ? [...customServers, ...DEFAULT_RTC_ICE_SERVERS]
+    : DEFAULT_RTC_ICE_SERVERS;
+}
 
 export const WEBRTC_EVENT_TOPICS = {
   WebRtcHubInitialized: eventTopic('WebRtcHubInitialized(address)'),
@@ -265,14 +303,17 @@ export function verifyRemoteSdpDtlsFingerprint(remoteSdp, expectedFpHex) {
 }
 
 /**
- * Normalizes SDP line endings to strict RFC 8866 `\r\n` without mutating media semantics.
+ * Normalizes SDP line endings to strict RFC 8866 `\r\n` WITHOUT trimming intra-line spaces
+ * (critical for Safari/iOS/Firefox `s= ` session-name lines and Chromium `a=msid-semantic: WMS `).
  */
 export function normalizeSdp(sdp) {
-  const lines = String(sdp || '')
+  const raw = String(sdp || '');
+  if (!raw) return '';
+  const lines = raw
     .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
+    .filter((l) => l.length > 0);
   return lines.join('\r\n') + '\r\n';
 }
 
@@ -803,6 +844,7 @@ export class WebRtcSignalClient {
   constructor({ rpcUrl = getDefaultNodeWsUrl(), hubAddr = '' } = {}) {
     this.rpcUrl = rpcUrl;
     this.hubAddr = hubAddr ? String(hubAddr).toLowerCase() : '';
+    this._txQueue = Promise.resolve();
   }
 
   setHubAddress(addr) {
@@ -844,32 +886,37 @@ export class WebRtcSignalClient {
   }
 
   async _sendHubTx({ wallet, identityAddr, dataHex, gasLimit = 5_200_000n }) {
-    const to = await this.resolveHubAddress();
-    const eoa = wallet.keypair.address;
-    const priv = wallet.keypair.privateKey;
-    const nonceHex = await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [eoa, 'latest']);
-    const nonce = BigInt(nonceHex);
-    const extraTargets = [to];
-    if (identityAddr && identityAddr.toLowerCase() !== eoa.toLowerCase()) {
-      extraTargets.push(identityAddr.toLowerCase());
-    }
-    const signed = signOrderedLexiconTx({
-      privateKey: priv,
-      nonce,
-      to,
-      data: dataHex,
-      gasLimit: BigInt(gasLimit),
-      extraTargets,
-    });
-    const txHash = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
-    const receipt = await slxWaitForReceipt((m, p) => slxNodeRpc(this.rpcUrl, m, p), txHash, {
-      timeoutMs: 45_000,
-      fallbackPollMs: 750,
-    });
-    if (!receipt || receipt.status !== '0x1') {
-      throw new Error(`WebRTC HFS transaction reverted (${String(txHash).slice(0, 10)}…)`);
-    }
-    return { txHash, receipt };
+    const run = async () => {
+      const to = await this.resolveHubAddress();
+      const eoa = wallet.keypair.address;
+      const priv = wallet.keypair.privateKey;
+      const nonceHex = await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [eoa, 'latest']);
+      const nonce = BigInt(nonceHex);
+      const extraTargets = [to];
+      if (identityAddr && identityAddr.toLowerCase() !== eoa.toLowerCase()) {
+        extraTargets.push(identityAddr.toLowerCase());
+      }
+      const signed = signOrderedLexiconTx({
+        privateKey: priv,
+        nonce,
+        to,
+        data: dataHex,
+        gasLimit: BigInt(gasLimit),
+        extraTargets,
+      });
+      const txHash = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+      const receipt = await slxWaitForReceipt((m, p) => slxNodeRpc(this.rpcUrl, m, p), txHash, {
+        timeoutMs: 45_000,
+        fallbackPollMs: 750,
+      });
+      if (!receipt || receipt.status !== '0x1') {
+        throw new Error(`WebRTC HFS transaction reverted (${String(txHash).slice(0, 10)}…)`);
+      }
+      return { txHash, receipt };
+    };
+    const next = this._txQueue.then(run, run);
+    this._txQueue = next.catch(() => {});
+    return next;
   }
 
   async getOverview() {
@@ -1183,6 +1230,7 @@ export async function acquireCallMediaStream({
   audioDeviceId = '',
   videoDeviceId = '',
   forceSynthetic = false,
+  allowSyntheticFallback = false,
   syntheticLabel = 'EtherCall Test Feed',
 } = {}) {
   if (forceSynthetic) {
@@ -1196,19 +1244,43 @@ export async function acquireCallMediaStream({
     };
   }
 
+  // Browser security check: getUserMedia is disabled on plain HTTP non-localhost URLs!
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.mediaDevices ||
+    typeof navigator.mediaDevices.getUserMedia !== 'function'
+  ) {
+    if (allowSyntheticFallback) {
+      return {
+        stream: createSyntheticTestMediaStream({
+          label: syntheticLabel,
+          includeVideo: mediaKind !== RTC_MEDIA_KIND.VOICE,
+          includeAudio: true,
+        }),
+        isSynthetic: true,
+        fallbackReason: 'Insecure HTTP origin — using simulated stream',
+      };
+    }
+    const originHint =
+      typeof window !== 'undefined' && !window.isSecureContext
+        ? `Browsers block real Camera & Microphone on plain HTTP (${window.location.origin}). Open https://… or http://localhost:… (or enable "🧪 Simulated Camera" on the left to test without hardware).`
+        : 'Camera/Microphone API unavailable in this browser.';
+    throw new Error(originHint);
+  }
+
   if (mediaKind === RTC_MEDIA_KIND.SCREEN && navigator.mediaDevices?.getDisplayMedia) {
     const dispStream = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 24, max: 30 } },
       audio: true,
     });
-    if (dispStream.getAudioTracks().length === 0 && navigator.mediaDevices?.getUserMedia) {
+    if (dispStream.getAudioTracks().length === 0) {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-            ...(audioDeviceId ? { deviceId: { exact: audioDeviceId } } : {}),
+            ...(audioDeviceId ? { deviceId: { ideal: audioDeviceId } } : {}),
           },
           video: false,
         });
@@ -1221,50 +1293,116 @@ export async function acquireCallMediaStream({
   }
 
   const wantVideo = mediaKind !== RTC_MEDIA_KIND.VOICE;
+  const preferredConstraints = {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      ...(audioDeviceId ? { deviceId: { ideal: audioDeviceId } } : {}),
+    },
+    video: wantVideo
+      ? {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 24 },
+          ...(videoDeviceId ? { deviceId: { ideal: videoDeviceId } } : { facingMode: 'user' }),
+        }
+      : false,
+  };
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        ...(audioDeviceId ? { deviceId: { exact: audioDeviceId } } : {}),
-      },
-      video: wantVideo
-        ? {
-            width: { ideal: 1280, max: 1280 },
-            height: { ideal: 720, max: 720 },
-            frameRate: { ideal: 24, max: 30 },
-            ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
-          }
-        : false,
-    });
+    const stream = await navigator.mediaDevices.getUserMedia(preferredConstraints);
     return { stream, isSynthetic: false };
-  } catch (err) {
-    // Graceful fallback if only camera is missing or running headless
-    if (wantVideo && navigator.mediaDevices?.getUserMedia) {
+  } catch (firstErr) {
+    // Retry 1: Relaxed generic constraints (handles mobile portrait / 480p / stale deviceId)
+    if (wantVideo) {
       try {
-        const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        const synth = createSyntheticTestMediaStream({
-          label: syntheticLabel,
-          includeVideo: true,
-          includeAudio: false,
-        });
-        for (const vt of synth.getVideoTracks()) audioOnly.addTrack(vt);
-        audioOnly._slxSyntheticCleanup = synth._slxSyntheticCleanup;
-        return { stream: audioOnly, isSynthetic: true, fallbackReason: err?.message || 'No camera' };
+        const relaxed = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        return { stream: relaxed, isSynthetic: false };
       } catch {
-        // fall through to full synthetic
+        // Retry 2: Video-only if host has webcam without microphone
+        try {
+          const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          return {
+            stream: videoOnly,
+            isSynthetic: false,
+            fallbackReason: 'Microphone unavailable — connected camera video',
+          };
+        } catch {
+          // Retry 3: Audio-only if host has microphone without webcam (still receives remote video!)
+          try {
+            const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            return {
+              stream: audioOnly,
+              isSynthetic: false,
+              fallbackReason: 'No local camera detected — connected voice + remote video receive',
+            };
+          } catch {
+            // fall through
+          }
+        }
+      }
+    } else {
+      try {
+        const basicAudio = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        return { stream: basicAudio, isSynthetic: false };
+      } catch {
+        // fall through
       }
     }
-    return {
-      stream: createSyntheticTestMediaStream({
-        label: syntheticLabel,
-        includeVideo: wantVideo,
-        includeAudio: true,
-      }),
-      isSynthetic: true,
-      fallbackReason: err?.message || 'Hardware mic/camera unavailable',
-    };
+
+    if (allowSyntheticFallback) {
+      return {
+        stream: createSyntheticTestMediaStream({
+          label: syntheticLabel,
+          includeVideo: wantVideo,
+          includeAudio: true,
+        }),
+        isSynthetic: true,
+        fallbackReason: firstErr?.message || 'Hardware mic/camera unavailable',
+      };
+    }
+
+    throw new Error(
+      `Camera/Microphone access failed (${firstErr?.name || 'Error'}: ${firstErr?.message || 'Permission denied or device busy'}). Allow camera/mic permission in your browser bar, or check "🧪 Simulated Camera" on the left.`
+    );
+  }
+}
+
+/**
+ * Attaches a `MediaStream` to a `<video>` element, refreshing `srcObject` whenever the set of
+ * track IDs changes (so video tracks arriving after audio tracks wake WebKit/Chromium decoders)
+ * and handling browser unmuted-autoplay policies cleanly.
+ */
+export async function attachStreamToVideoElement(
+  videoEl,
+  stream,
+  { muted = false, onAutoplayMuted = null } = {}
+) {
+  if (!videoEl || !stream) return;
+  const tracks = stream.getTracks ? stream.getTracks() : [];
+  const sig = tracks.map((t) => `${t.kind}:${t.id}:${t.readyState}`).join('|');
+  if (videoEl._slxTrackSig !== sig || !videoEl.srcObject) {
+    videoEl._slxTrackSig = sig;
+    videoEl.srcObject = new MediaStream(tracks);
+  }
+  videoEl.playsInline = true;
+  videoEl.muted = Boolean(muted);
+
+  try {
+    await videoEl.play();
+  } catch {
+    if (!muted) {
+      // Autoplay with sound was blocked by browser policy — play muted immediately so video renders,
+      // and notify UI to display a 1-tap "🔊 Unmute Audio" pill!
+      videoEl.muted = true;
+      try {
+        await videoEl.play();
+      } catch {
+        // ignore
+      }
+      onAutoplayMuted?.(videoEl);
+    }
   }
 }
 
@@ -1346,9 +1484,11 @@ export class SlxWebRtcPeerSession {
     onDataMessage = null,
     onDataChannelOpen = null,
   } = {}) {
+    this._hasStunServers = Array.isArray(iceServers) && iceServers.length > 0;
     this.pc = new RTCPeerConnection({
       iceServers,
-      iceCandidatePoolSize: 4,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
     });
     this.localStream = localStream;
     this.remoteStream = new MediaStream();
@@ -1357,29 +1497,58 @@ export class SlxWebRtcPeerSession {
     this.initialCandidates = [];
     this.trickleBuffer = [];
     this._trickleFlushTimer = null;
+    this._onTrickleCandidates = onTrickleCandidates;
+    this._trickleReady = false;
     this._initialDone = false;
     this._appliedCandidateKeys = new Set();
     this._pendingRemoteCandidates = [];
 
-    if (localStream) {
-      for (const track of localStream.getTracks()) {
-        this.pc.addTrack(track, localStream);
+    // Unified-Plan deterministic m-line ordering:
+    //  - Initiator adds [audio, video] transceivers in deterministic order up front so even
+    //    voice-only or camera-less callers negotiate bidirectional audio+video slots cleanly.
+    //  - Responder waits until `setRemoteDescription(offer)` creates transceivers, then binds
+    //    local tracks directly onto the Offer's matching transceivers!
+    if (isInitiator) {
+      const audioTrack = localStream?.getAudioTracks?.()[0] || null;
+      const videoTrack = localStream?.getVideoTracks?.()[0] || null;
+      if (typeof this.pc.addTransceiver === 'function') {
+        this.pc.addTransceiver(audioTrack || 'audio', {
+          direction: audioTrack ? 'sendrecv' : 'recvonly',
+          streams: localStream ? [localStream] : [],
+        });
+        this.pc.addTransceiver(videoTrack || 'video', {
+          direction: videoTrack ? 'sendrecv' : 'recvonly',
+          streams: localStream ? [localStream] : [],
+        });
+      } else if (localStream) {
+        if (audioTrack) this.pc.addTrack(audioTrack, localStream);
+        if (videoTrack) this.pc.addTrack(videoTrack, localStream);
       }
     }
 
-    this.pc.ontrack = (ev) => {
-      if (ev.streams && ev.streams[0]) {
-        for (const tr of ev.streams[0].getTracks()) {
-          this.remoteStream.addTrack(tr);
-        }
-      } else if (ev.track) {
-        this.remoteStream.addTrack(ev.track);
-      }
+    const notifyRemote = () => {
       onRemoteStream?.(this.remoteStream);
     };
 
+    this.pc.ontrack = (ev) => {
+      const addOne = (tr) => {
+        if (!tr) return;
+        const exists = this.remoteStream.getTracks().some((t) => t.id === tr.id);
+        if (!exists) {
+          this.remoteStream.addTrack(tr);
+        }
+        tr.onunmute = () => notifyRemote();
+      };
+      if (ev.streams && ev.streams[0]) {
+        for (const tr of ev.streams[0].getTracks()) addOne(tr);
+      } else if (ev.track) {
+        addOne(ev.track);
+      }
+      notifyRemote();
+    };
+
     this.pc.onicecandidate = (ev) => {
-      if (!ev.candidate) return;
+      if (!ev.candidate || !ev.candidate.candidate) return;
       const candObj = {
         candidate: ev.candidate.candidate,
         sdpMid: ev.candidate.sdpMid,
@@ -1387,17 +1556,10 @@ export class SlxWebRtcPeerSession {
       };
       if (!this._initialDone) {
         this.initialCandidates.push(candObj);
+        this._onNewInitialCandidate?.(candObj);
       } else {
         this.trickleBuffer.push(candObj);
-        if (!this._trickleFlushTimer && onTrickleCandidates) {
-          this._trickleFlushTimer = setTimeout(() => {
-            this._trickleFlushTimer = null;
-            if (this.trickleBuffer.length > 0) {
-              const batch = this.trickleBuffer.splice(0, this.trickleBuffer.length);
-              onTrickleCandidates(batch);
-            }
-          }, 950);
-        }
+        this._scheduleTrickleFlush();
       }
     };
 
@@ -1432,36 +1594,103 @@ export class SlxWebRtcPeerSession {
     }
   }
 
-  async _waitInitialIce(timeoutMs = 950) {
+  _scheduleTrickleFlush() {
+    if (!this._trickleReady || !this._onTrickleCandidates || this.trickleBuffer.length === 0) {
+      return;
+    }
+    if (this._trickleFlushTimer) return;
+    this._trickleFlushTimer = setTimeout(() => {
+      this._trickleFlushTimer = null;
+      if (this._trickleReady && this.trickleBuffer.length > 0) {
+        const batch = this.trickleBuffer.splice(0, this.trickleBuffer.length);
+        this._onTrickleCandidates(batch);
+      }
+    }, 850);
+  }
+
+  /**
+   * Unlocks trickle ICE dispatch AFTER `callId` is confirmed on-chain so zero candidates gathered
+   * during the ~4s block confirmation window are ever dropped!
+   */
+  enableTrickleDispatch() {
+    this._trickleReady = true;
+    if (this.trickleBuffer.length > 0 && this._onTrickleCandidates) {
+      if (this._trickleFlushTimer) {
+        clearTimeout(this._trickleFlushTimer);
+        this._trickleFlushTimer = null;
+      }
+      const batch = this.trickleBuffer.splice(0, this.trickleBuffer.length);
+      this._onTrickleCandidates(batch);
+    }
+  }
+
+  async _attachResponderTracksAfterRemoteOffer() {
+    if (!this.localStream) return;
+    const audioTrack = this.localStream.getAudioTracks?.()[0] || null;
+    const videoTrack = this.localStream.getVideoTracks?.()[0] || null;
+    const transceivers = typeof this.pc.getTransceivers === 'function' ? this.pc.getTransceivers() : [];
+
+    const bindKind = async (kind, track) => {
+      if (!track) return;
+      const tr = transceivers.find(
+        (t) => !t.stopped && t.receiver?.track?.kind === kind && !t.sender?.track
+      );
+      if (tr && tr.sender) {
+        await tr.sender.replaceTrack(track);
+        tr.direction = 'sendrecv';
+      } else {
+        this.pc.addTrack(track, this.localStream);
+      }
+    };
+
+    await bindKind('audio', audioTrack);
+    await bindKind('video', videoTrack);
+  }
+
+  async _waitInitialIce(timeoutMs = 2400) {
     if (this.pc.iceGatheringState === 'complete') {
       this._initialDone = true;
       return;
     }
     await new Promise((resolve) => {
       let settled = false;
+      let quietTimer = null;
       const finish = () => {
         if (settled) return;
         settled = true;
+        if (quietTimer) clearTimeout(quietTimer);
+        this._onNewInitialCandidate = null;
+        this.pc.removeEventListener('icegatheringstatechange', check);
         this._initialDone = true;
         resolve();
       };
-      const timer = setTimeout(finish, timeoutMs);
+      const maxTimer = setTimeout(finish, timeoutMs);
       const check = () => {
         if (this.pc.iceGatheringState === 'complete') {
-          clearTimeout(timer);
-          this.pc.removeEventListener('icegatheringstatechange', check);
+          clearTimeout(maxTimer);
           finish();
+        }
+      };
+      this._onNewInitialCandidate = () => {
+        const hasReflexiveOrRelay = this.initialCandidates.some((c) =>
+          /\btyp\s+(srflx|relay)\b/i.test(c.candidate || '')
+        );
+        // Once we have WAN STUN/TURN candidates (or if running pure LAN with no STUN servers),
+        // finish after a short 400ms settle window instead of waiting the full 2.4s cap.
+        if (hasReflexiveOrRelay || !this._hasStunServers) {
+          if (quietTimer) clearTimeout(quietTimer);
+          quietTimer = setTimeout(() => {
+            clearTimeout(maxTimer);
+            finish();
+          }, 400);
         }
       };
       this.pc.addEventListener('icegatheringstatechange', check);
     });
   }
 
-  async createBundledOffer({ iceWaitMs = 950 } = {}) {
-    const offer = await this.pc.createOffer({
-      offerToReceiveAudio: true,
-      offerToReceiveVideo: true,
-    });
+  async createBundledOffer({ iceWaitMs = 2400 } = {}) {
+    const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     await this._waitInitialIce(iceWaitMs);
     const localSdp = normalizeSdp(this.pc.localDescription?.sdp || offer.sdp);
@@ -1476,7 +1705,7 @@ export class SlxWebRtcPeerSession {
   async acceptOfferAndCreateBundledAnswer(
     remoteOfferPayload,
     expectedCallerDtlsFp,
-    { iceWaitMs = 950 } = {}
+    { iceWaitMs = 2400 } = {}
   ) {
     const normSdp = normalizeSdp(remoteOfferPayload.sdp);
     const fpCheck = verifyRemoteSdpDtlsFingerprint(normSdp, expectedCallerDtlsFp);
@@ -1484,6 +1713,7 @@ export class SlxWebRtcPeerSession {
       throw new Error(fpCheck.reason);
     }
     await this.pc.setRemoteDescription({ type: 'offer', sdp: normSdp });
+    await this._attachResponderTracksAfterRemoteOffer();
     await this.applyRemoteCandidates(remoteOfferPayload.candidates || []);
 
     const answer = await this.pc.createAnswer();
@@ -1541,6 +1771,16 @@ export class SlxWebRtcPeerSession {
   }
 
   async replaceVideoTrack(newVideoTrack) {
+    if (typeof this.pc.getTransceivers === 'function') {
+      const tr = this.pc
+        .getTransceivers()
+        .find((t) => !t.stopped && t.receiver?.track?.kind === 'video');
+      if (tr && tr.sender) {
+        await tr.sender.replaceTrack(newVideoTrack);
+        tr.direction = newVideoTrack ? 'sendrecv' : 'recvonly';
+        return true;
+      }
+    }
     const sender = this.pc.getSenders().find((s) => s.track && s.track.kind === 'video');
     if (sender) {
       await sender.replaceTrack(newVideoTrack);
@@ -1733,6 +1973,12 @@ export async function createLocalLoopbackPair({
     openedAnswer.payload,
     answerBundle.dtlsFp
   );
+
+  // Wire any late host candidates between the loopback pair as well
+  callerSession._onTrickleCandidates = (batch) => calleeSession.applyRemoteCandidates(batch);
+  calleeSession._onTrickleCandidates = (batch) => callerSession.applyRemoteCandidates(batch);
+  callerSession.enableTrickleDispatch();
+  calleeSession.enableTrickleDispatch();
 
   onStep?.('4/4 P2P DTLS-SRTP media & RTCDataChannel established!');
 
