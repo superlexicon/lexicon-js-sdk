@@ -103,8 +103,8 @@ export const RTC_ROOM_SIGNAL_TYPE = {
 };
 
 export const DEFAULT_RTC_ICE_SERVERS = [
-  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: ['stun:stun.cloudflare.com:3478'] },
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: ['stun:global.stun.twilio.com:3478'] },
 ];
 
@@ -317,16 +317,37 @@ export function normalizeSdp(sdp) {
   return lines.join('\r\n') + '\r\n';
 }
 
+/**
+ * Concurrently writes `inputBytes` into a WHATWG `CompressionStream` / `DecompressionStream` while
+ * draining `readable` in parallel. Never `await writer.close()` before reading `readable` — doing so
+ * deadlocks on payloads exceeding the TransformStream's internal readable highWaterMark (~1 chunk)!
+ */
+async function _transformStreamBytes(inputBytes, transformStream) {
+  const writer = transformStream.writable.getWriter();
+  const reader = transformStream.readable.getReader();
+  const writeDone = (async () => {
+    await writer.write(inputBytes);
+    await writer.close();
+  })();
+  const chunks = [];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    if (value) chunks.push(value);
+  }
+  await writeDone;
+  return concatBytes(...chunks);
+}
+
 async function gzipBytesIfSupported(rawBytes) {
   if (typeof globalThis.CompressionStream !== 'function') {
     return { bytes: rawBytes, gzipped: false };
   }
   try {
-    const cs = new globalThis.CompressionStream('gzip');
-    const writer = cs.writable.getWriter();
-    await writer.write(rawBytes);
-    await writer.close();
-    const compressed = new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    const compressed = await _transformStreamBytes(
+      rawBytes,
+      new globalThis.CompressionStream('gzip')
+    );
     return { bytes: compressed, gzipped: true };
   } catch {
     return { bytes: rawBytes, gzipped: false };
@@ -337,11 +358,7 @@ async function gunzipBytesIfNeeded(compBytes) {
   if (typeof globalThis.DecompressionStream !== 'function') {
     throw new Error('Browser DecompressionStream("gzip") unavailable');
   }
-  const ds = new globalThis.DecompressionStream('gzip');
-  const writer = ds.writable.getWriter();
-  await writer.write(compBytes);
-  await writer.close();
-  return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  return _transformStreamBytes(compBytes, new globalThis.DecompressionStream('gzip'));
 }
 
 /**
