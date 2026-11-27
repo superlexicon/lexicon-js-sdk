@@ -1871,6 +1871,91 @@ export async function deployNewIfrsLedgerHfs({
   };
 }
 
+export async function deployNewWebRtcSignalHfs({
+  wallet,
+  label,
+  rpcUrl = getDefaultNodeWsUrl(),
+  onStatus = null,
+}) {
+  const { manifest } = await SlxHfsCache.hydrateWithManifest();
+  const rtcCodeHash =
+    manifest?.codeHashes?.webrtc_signal ||
+    '0x98d13aeb1bc31f7b4a2e297b4026ef79238e0debad619cd81fea1be31e0574c5';
+  const reg = manifest?.hfsRegistry;
+  if (!reg) throw new Error('Missing hfsRegistry in Subnet 1 manifest');
+
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'EtherCall WebRTC' });
+  const myEoa = wallet.keypair.address;
+  const myPriv = wallet.keypair.privateKey;
+  const adminAddr = idRec?.identityAddr || myEoa;
+  const hubLabel = String(label || 'Private EtherCall Signaling Hub').trim();
+
+  if (onStatus) onStatus('Block 1/2: Instantiating fresh webrtc_signal.wasm HFS on Subnet 1…');
+  const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const s0 = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0,
+    to: null,
+    data: rtcCodeHash,
+    gasLimit: 4_500_000n,
+  });
+  const h0 = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [s0.raw]);
+  const [r0] = await waitReceipts(rpcUrl, [h0]);
+  const newHubAddr = r0.contractAddress.toLowerCase();
+
+  if (onStatus) {
+    onStatus(`Block 2/2: Initializing ${shortHex(newHubAddr)} & registering in HfsRegistry…`);
+  }
+  const n1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const initCd = encodeSimpleAbi('initialize(address)', [['address', adminAddr]]);
+  const regCd = HfsRegistryAbi.registerInstance(
+    'WEBRTC_SIGNAL',
+    newHubAddr,
+    idRec?.identityAddr,
+    hubLabel,
+    {}
+  );
+
+  const txInit = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1,
+    to: newHubAddr,
+    data: initCd,
+    gasLimit: 4_800_000n,
+    extraTargets: [newHubAddr],
+  });
+  const txReg = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 1n,
+    to: reg,
+    data: regCd,
+    gasLimit: 5_200_000n,
+    extraTargets: [reg, newHubAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
+    lowerBoundHashHex: txInit.txHash,
+  });
+
+  const hInit = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txInit.raw]);
+  const hReg = await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txReg.raw]);
+  await waitReceipts(rpcUrl, [hInit, hReg]);
+
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: newHubAddr,
+      typeName: 'WEBRTC_SIGNAL',
+      status: 2,
+      label: hubLabel,
+      rpcUrl,
+    })
+    .catch(() => {});
+
+  return {
+    primaryAddr: newHubAddr,
+    label: hubLabel,
+    meta: {},
+    selectionKey: makeHfsSelectionKey(newHubAddr, {}),
+  };
+}
+
 function wrapWebGatedDeployer(fn) {
   return async (opts = {}) => {
     const candidateLabel = opts.companyName || opts.label || '';
@@ -1891,3 +1976,4 @@ registerHfsTypeDeployer("CIPHER_NOIR", wrapWebGatedDeployer(deployNewCipherNoirH
 registerHfsTypeDeployer("QUANTUM_LOTTERY", wrapWebGatedDeployer(deployNewQuantumLotteryHfs));
 registerHfsTypeDeployer("SECRET_BALLOT", wrapWebGatedDeployer(deployNewSecretBallotHfs));
 registerHfsTypeDeployer("IFRS_LEDGER", wrapWebGatedDeployer(deployNewIfrsLedgerHfs));
+registerHfsTypeDeployer("WEBRTC_SIGNAL", wrapWebGatedDeployer(deployNewWebRtcSignalHfs));

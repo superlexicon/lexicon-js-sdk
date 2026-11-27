@@ -29,3 +29,4 @@ export * from './reward-voucher.js';
 export * from './crowdfunding.js';
 export * from './app-store.js';
 export * from './charter-social.js';
+export * from './webrtc-call.js';

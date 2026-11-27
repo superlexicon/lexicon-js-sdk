@@ -1604,6 +1604,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register On-Chain HFS App Store',
     placeholder: 'e.g. Subnet 1 Community App Store',
   },
+  WEBRTC_SIGNAL: {
+    typeName: 'WEBRTC_SIGNAL',
+    icon: '📹',
+    shortLabel: 'EtherCall Hub',
+    deployBtnText: '+ New Call Hub',
+    modalTitle: 'Deploy & Register Private WebRTC Voice/Video Signaling Hub',
+    placeholder: 'e.g. Sovereign Ops Private Signaling Hub',
+  },
 };
 
 export function encodeHfsTypeId(typeName) {

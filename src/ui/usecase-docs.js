@@ -28,6 +28,8 @@ const DOC_APP_ALIASES = {
   'app-store': 'apps',
   appstore: 'apps',
   directory: 'apps',
+  ethercall: 'telephony',
+  webrtc: 'telephony',
 };
 
 const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir']);
@@ -1411,6 +1413,113 @@ export const USECASE_DESCRIPTIONS = {
       `,
     },
   },
+  telephony: {
+    id: 'telephony',
+    icon: '📹',
+    title: 'EtherCall — Serverless WebRTC Voice, Video & Mesh Rooms',
+    href: '/telephony.html',
+    tagline:
+      'Zero-cloud WebRTC voice, HD video, screen share, and 6-peer mesh rooms signaled via Halt-Free Subroutine (webrtc_signal.wasm) with Identity-pinned DTLS-SRTP certificates and secp256k1 ECDH envelopes.',
+    featurePills: [
+      { label: '0 Signaling Servers / 0 Socket.io', tone: 'emerald' },
+      { label: 'Identity-Pinned DTLS-SRTP SHA-256', tone: 'violet' },
+      { label: 'secp256k1 ECDH + Gzip SDP (~750 B)', tone: 'cyan' },
+      { label: 'Sub-Block eth_subscribe Ringing', tone: 'amber' },
+      { label: '0ms P2P Media & RTCDataChannel', tone: 'emerald' },
+      { label: '6-Peer Mesh Conference Rooms', tone: 'sky' },
+    ],
+    tabs: {
+      codification: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🛡️ Eliminating Centralized WebRTC Signaling &amp; Certificate MITM</div>
+          <p>
+            Even though WebRTC media flows peer-to-peer, virtually every WebRTC app today depends on centralized <strong>Socket.io / Twilio / Firebase / AWS API Gateway signaling servers</strong> to discover peers and exchange SDP Offer/Answer + ICE candidates. If that signaling server goes offline, calls fail—and worse, a compromised signaling server can silently rewrite <code>a=fingerprint:sha-256</code> in transit to mount a Man-in-the-Middle (MITM) wiretap!
+            <strong>EtherCall</strong> moves peer presence, E2EE key discovery, DTLS certificate pinning, 1:1 call setup, and multi-peer conference signaling into <code>webrtc_signal.wasm</code> (HPS #28).
+          </p>
+        </div>
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Call Layer</th>
+              <th>Conventional Web2 WebRTC Stack</th>
+              <th>SuperLexicon EtherCall (HFS #28)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Signaling Broker</strong></td>
+              <td>Node.js / Socket.io / Twilio servers ($/min + single point of outage &amp; metadata logging).</td>
+              <td><code>webrtc_signal.wasm</code> on Subnet 1 + <code>eth_subscribe("logs")</code> real-time ringing with <code>$0.00</code> gas.</td>
+            </tr>
+            <tr>
+              <td><strong>DTLS-SRTP Key Authenticity</strong></td>
+              <td>Blindly trusts the signaling server not to swap <code>a=fingerprint:sha-256</code> lines.</td>
+              <td><code>callerDtlsFp</code> &amp; <code>calleeDtlsFp</code> (<code>bytes32</code>) are committed on-chain by each peer’s <code>Identity</code> HFS and verified before media unmutes.</td>
+            </tr>
+            <tr>
+              <td><strong>IP &amp; ICE Candidate Privacy</strong></td>
+              <td>Cleartext SDP exposes LAN/WAN IPs, UDP ports, and <code>ice-pwd</code> to the server operator.</td>
+              <td>Gzipped + <code>secp256k1</code> ECDH-wrapped envelopes (<code>~680–900 B</code>) readable only by the intended callee.</td>
+            </tr>
+            <tr>
+              <td><strong>Live Audio / Video / Chat</strong></td>
+              <td>Often hairpinned through cloud SFU/TURN servers for billing &amp; recording.</td>
+              <td>100% direct browser-to-browser <code>DTLS-SRTP</code> + <code>SCTP RTCDataChannel</code> at sub-millisecond LAN latency.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      primitives: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>🔐 Zero-CA DTLS-SRTP Fingerprint Pinning</h4>
+            <p>Each browser generates an ephemeral ECDSA DTLS certificate inside <code>RTCPeerConnection</code>. Before <code>placeCall</code> or <code>answerCall</code> submits on-chain, the SDK extracts the 32-byte <code>a=fingerprint:sha-256</code> digest and binds it to the caller’s sovereign <code>Identity</code> HFS—eliminating certificate authorities and signaling MITMs.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>📦 Gzip + <code>secp256k1</code> ECDH Signal Envelopes</h4>
+            <p>A raw 3.2 KB WebRTC SDP Offer + bundled host/STUN ICE candidates compresses via browser <code>CompressionStream("gzip")</code> and wraps under ephemeral <code>secp256k1</code> ECDH + 16-byte Keccak MAC into <strong>~750 bytes</strong>—small enough to traverse 915 MHz LR2021 FLRC radio links!</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>⚡ Bundled Initial ICE + Bounded Trickle Batches</h4>
+            <p><code>SlxWebRtcPeerSession</code> gathers initial LAN <code>host</code> &amp; STUN <code>srflx</code> candidates for ~900 ms so 95%+ of calls establish in just <strong>1 Offer tx + 1 Answer tx</strong>, with up to 8 bounded <code>appendIceBatch</code> updates per side for roaming interfaces.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>👥 6-Peer Deterministic Mesh Rooms</h4>
+            <p><code>createRoom</code>, <code>joinRoom</code>, and <code>postRoomSignal</code> coordinate pairwise <code>(fromIdentity → toIdentity)</code> WebRTC sessions for up to 6 participants without centralized SFU orchestration servers.</p>
+          </div>
+        </div>
+      `,
+      topology: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Component</th><th>Role in EtherCall</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>webrtc_signal.wasm</code></td><td>Halt-Free Subroutine (#28) storing E2EE RTC profiles, 1:1 call state machines, DTLS fingerprints, trickle ICE batches, and 6-peer mesh rooms.</td></tr>
+            <tr><td><code>identity.wasm</code></td><td>Authenticates caller/callee EOA &amp; device keys via <code>owner()</code> / <code>isOwnerDevice(address)</code>.</td></tr>
+            <tr><td><code>@superlexicon/sdk/webrtc</code></td><td>Shared submodule library providing ABI codecs, <code>secp256k1</code> ECDH + Gzip envelope sealing, DTLS verification, and <code>SlxWebRtcPeerSession</code>.</td></tr>
+            <tr><td><code>telephony.html.gz</code></td><td>Compact use-case-only App Store UI bundle cached locally in <code>CacheStorage</code> / <code>IndexedDB</code>.</td></tr>
+          </tbody>
+        </table>
+      `,
+      verification: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>🧪 1-Click Local P2P Loopback Verification</h4>
+            <ul>
+              <li>Click <strong>🧪 Loopback Test</strong> in EtherCall to spin up two real <code>RTCPeerConnection</code> instances in your browser, seal Offer &amp; Answer through <code>secp256k1</code> ECDH + Gzip, verify both <code>sha-256</code> DTLS fingerprints, and stream live video + 0ms <code>RTCDataChannel</code> chat!</li>
+            </ul>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🔬 Live On-Chain Signaling Inspector</h4>
+            <ul>
+              <li>Inspect raw vs. gzipped+ECDH byte counts, caller/callee on-chain DTLS hashes, candidate types (<code>host</code> / <code>srflx</code>), and live <code>RTCPeerConnection.getStats()</code> RTT in the right-hand inspector drawer.</li>
+            </ul>
+          </div>
+        </div>
+      `,
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -1863,6 +1972,58 @@ export const USECASE_INSTRUCTIONS = {
       tips: `
         <div class="slx-ucd-callout">
           <strong>💡 Tip — Hot-Update Any Existing App Without Redeploying:</strong> Click <strong>✏ Fork / Studio</strong> on any card in the Directory (or click <strong>✏ Studio</strong> on the bottom-left <code>🧩 UI 0x…</code> pill of any page), edit its HTML/CSS/JS, and click <strong>🚀 Publish App Bundle</strong>. Your updated UI loads immediately on the next refresh!
+        </div>
+      `,
+    },
+  },
+  telephony: {
+    id: 'telephony',
+    icon: '📹',
+    title: 'EtherCall — WebRTC Voice & Video Instructions',
+    tagline:
+      'Place encrypted P2P voice & HD video calls, share screens, or host 6-peer mesh rooms with zero signaling servers and $0.00 gas.',
+    tabs: {
+      quickstart: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🚀 30-Second Quick-Start</div>
+          <p>Connect directly browser-to-browser using <code>webrtc_signal.wasm</code> on Subnet 1 for peer discovery, ECDH-encrypted SDP/ICE exchange, and DTLS-SRTP identity verification.</p>
+        </div>
+        <div class="slx-ucd-steps">
+          <div class="slx-ucd-step"><span>STEP 1</span><h4>Publish Your E2EE Call Presence</h4><p>Click <strong>📡 Go Online (Publish E2EE Key)</strong> in the left sidebar to bind your <code>Identity</code> HFS to your compressed <code>secp256k1</code> signaling encryption key in the directory.</p></div>
+          <div class="slx-ucd-step"><span>STEP 2</span><h4>Dial Any Peer (or Run 1-Click Loopback)</h4><p>Click <strong>🎙️ Voice</strong> or <strong>📹 Video</strong> next to any online peer in the directory (or paste any <code>0x…</code> Identity address). Solo testing? Click <strong>🧪 Loopback Test</strong> to verify full P2P media + ECDH envelopes immediately!</p></div>
+          <div class="slx-ucd-step"><span>STEP 3</span><h4>Accept Ringing Call &amp; Verify DTLS Badge</h4><p>The callee receives a real-time ringing banner via <code>eth_subscribe("logs")</code>. Clicking <strong>✅ Accept</strong> posts the encrypted SDP Answer + DTLS fingerprint and opens direct 0ms P2P media + <code>RTCDataChannel</code> chat.</p></div>
+        </div>
+      `,
+      controls: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Control</th><th>Function</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>📡 Go Online / Status</strong></td><td>Publishes your compressed <code>secp256k1</code> signaling key and availability (<code>Online</code>, <code>Busy</code>, <code>DND</code>) to <code>webrtc_signal.wasm</code>.</td></tr>
+            <tr><td><strong>🎙️ Voice / 📹 Video</strong></td><td>Creates a bundled WebRTC Offer + host/STUN ICE candidates, seals it with Gzip + ECDH, pins your <code>sha-256</code> DTLS fingerprint, and rings the peer on-chain.</td></tr>
+            <tr><td><strong>🖥️ Share Screen</strong></td><td>Captures a window/screen via <code>getDisplayMedia</code> and hot-swaps the active RTP video track (or renegotiates via <code>renegotiateMedia</code>).</td></tr>
+            <tr><td><strong>🧪 Simulated Cam/Mic</strong></td><td>Uses a built-in animated radar <code>&lt;canvas&gt;</code> + gentle harmonic tone so desktops/VMs without webcams or 2-tab tests work effortlessly.</td></tr>
+            <tr><td><strong>👥 Mesh Rooms Tab</strong></td><td>Creates or joins a multi-peer conference room (up to 6 peers) with automatic pairwise WebRTC mesh negotiation.</td></tr>
+          </tbody>
+        </table>
+      `,
+      reference: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr><th>Metric</th><th>Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Signaling Subroutine</strong></td><td><code>webrtc_signal.wasm</code> (<code>29.6 KB</code> Halt-Free WASM, ABI v1)</td></tr>
+            <tr><td><strong>Typical Sealed SDP+ICE Size</strong></td><td><code>~680 – 920 bytes</code> (Gzip + <code>secp256k1</code> ECDH + 16-byte MAC)</td></tr>
+            <tr><td><strong>Media Encryption</strong></td><td><code>DTLS-SRTP</code> (AES-GCM) with on-chain <code>Identity</code> SHA-256 fingerprint pinning</td></tr>
+            <tr><td><strong>Cloud / TURN / Twilio Cost</strong></td><td><strong>$0.00 / minute</strong> &amp; <strong>$0.00 gas</strong></td></tr>
+          </tbody>
+        </table>
+      `,
+      tips: `
+        <div class="slx-ucd-callout">
+          <strong>💡 Two-Tab / Two-Device Testing Tip:</strong> Open <code>/telephony.html</code> in an Incognito window (or on a second laptop/phone on the same Wi-Fi/subnet), create a second <code>Identity</code>, click <strong>📡 Go Online</strong> in both windows, and dial between them!
         </div>
       `,
     },
