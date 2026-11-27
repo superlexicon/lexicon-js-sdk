@@ -1398,11 +1398,19 @@ export async function attachStreamToVideoElement(
 ) {
   if (!videoEl || !stream) return;
   const tracks = stream.getTracks ? stream.getTracks() : [];
+  // WebKit/Safari requires a fresh `MediaStream(tracks)` assignment whenever a new track (e.g.
+  // video arriving right after audio in `ontrack`) joins — mutating an already-attached audio-only
+  // `MediaStream` in place leaves Safari without a video renderer!
+  const trackSetKey = tracks
+    .map((t) => `${t.kind}:${t.id}`)
+    .sort()
+    .join('|');
   const sig = tracks
     .map((t) => `${t.kind}:${t.id}:${t.readyState}:${t.muted ? 'm' : 'u'}`)
     .join('|');
-  if (videoEl.srcObject !== stream) {
-    videoEl.srcObject = stream;
+  if (videoEl._slxTrackSetKey !== trackSetKey || !videoEl.srcObject) {
+    videoEl._slxTrackSetKey = trackSetKey;
+    videoEl.srcObject = tracks.length > 0 ? new MediaStream(tracks) : stream;
   }
   videoEl._slxTrackSig = sig;
   videoEl.playsInline = true;
@@ -1804,7 +1812,11 @@ export class SlxWebRtcPeerSession {
         continue;
       }
       try {
-        await this.pc.addIceCandidate(new RTCIceCandidate(c));
+        await this.pc.addIceCandidate({
+          candidate: c.candidate,
+          sdpMid: c.sdpMid ?? '0',
+          sdpMLineIndex: c.sdpMLineIndex ?? 0,
+        });
       } catch {
         // ignore duplicate or stale candidate
       }
@@ -1813,7 +1825,11 @@ export class SlxWebRtcPeerSession {
       const pending = this._pendingRemoteCandidates.splice(0, this._pendingRemoteCandidates.length);
       for (const p of pending) {
         try {
-          await this.pc.addIceCandidate(new RTCIceCandidate(p));
+          await this.pc.addIceCandidate({
+            candidate: p.candidate,
+            sdpMid: p.sdpMid ?? '0',
+            sdpMLineIndex: p.sdpMLineIndex ?? 0,
+          });
         } catch {
           // ignore
         }

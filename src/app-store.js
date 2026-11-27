@@ -1406,7 +1406,11 @@ export class AppStoreClient {
     }
 
     if (fallbackBundleUrl) {
-      const resp = await fetch(fallbackBundleUrl);
+      const bustUrl =
+        cleanHash && cleanHash !== ZERO_BYTES32
+          ? `${fallbackBundleUrl}${fallbackBundleUrl.includes('?') ? '&' : '?'}h=${cleanHash.slice(2, 14)}`
+          : fallbackBundleUrl;
+      const resp = await fetch(bustUrl, { cache: 'no-cache' });
       if (!resp.ok) {
         throw new Error(`Failed to fetch UI bundle ${fallbackBundleUrl} (HTTP ${resp.status})`);
       }
