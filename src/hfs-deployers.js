@@ -1880,7 +1880,7 @@ export async function deployNewWebRtcSignalHfs({
   const { manifest } = await SlxHfsCache.hydrateWithManifest();
   const rtcCodeHash =
     manifest?.codeHashes?.webrtc_signal ||
-    '0x98d13aeb1bc31f7b4a2e297b4026ef79238e0debad619cd81fea1be31e0574c5';
+    '0x6883e5a1c75848f8d08717076d90fcf812ac280b6a2fd8d909aed95a2463100b';
   const reg = manifest?.hfsRegistry;
   if (!reg) throw new Error('Missing hfsRegistry in Subnet 1 manifest');
 

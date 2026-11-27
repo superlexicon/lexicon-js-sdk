@@ -47,10 +47,10 @@ import { slxWaitForReceipt } from './events.js';
 import { fetchRegisteredHfsByType } from './identity.js';
 
 export const WEBRTC_SIGNAL_CODE_HASH =
-  '0x98d13aeb1bc31f7b4a2e297b4026ef79238e0debad619cd81fea1be31e0574c5';
+  '0x6883e5a1c75848f8d08717076d90fcf812ac280b6a2fd8d909aed95a2463100b';
 
 export const DEFAULT_SUBNET1_WEBRTC_HUB =
-  '0xe7f1725e7734ce288f8367e1bb143e90bb3f0512';
+  '0x95eada4348b88464bc777f38e54070ea82807d64';
 
 export const RTC_AVAILABILITY = {
   OFFLINE: 0,
@@ -100,6 +100,44 @@ export const RTC_ROOM_SIGNAL_TYPE = {
   ICE_BATCH: 3,
   OFFER_WITH_ICE: 4,
   ANSWER_WITH_ICE: 5,
+};
+
+export const RTC_CHANNEL_KIND = {
+  VOICE: 1,
+  VIDEO: 2,
+  GUILD_LOUNGE: 3,
+};
+
+export const RTC_CHANNEL_KIND_LABELS = {
+  1: '🔊 Voice Lounge',
+  2: '📹 Video & Screen',
+  3: '🏛️ Guild Lounge',
+};
+
+export const RTC_CHANNEL_MEDIA_FLAGS = {
+  MIC_MUTED: 1,
+  DEAFENED: 2,
+  VIDEO_ON: 4,
+  SCREEN_ON: 8,
+};
+
+export const RTC_BROADCAST_STATUS = {
+  LIVE: 1,
+  ENDED: 2,
+};
+
+export const RTC_BROADCAST_ROLE = {
+  VIEWER: 0,
+  HOST: 1,
+  SPEAKER: 2,
+  HAND_RAISED: 3,
+};
+
+export const RTC_BROADCAST_ROLE_LABELS = {
+  0: '👀 Viewer',
+  1: '📡 Host',
+  2: '🎤 Stage Speaker',
+  3: '✋ Hand Raised',
 };
 
 export const DEFAULT_RTC_ICE_SERVERS = [
@@ -157,6 +195,14 @@ export const WEBRTC_EVENT_TOPICS = {
   RoomPeerJoined: eventTopic('RoomPeerJoined(uint64,address,uint64)'),
   RoomPeerLeft: eventTopic('RoomPeerLeft(uint64,address,uint64)'),
   RoomSignalPosted: eventTopic('RoomSignalPosted(uint64,address,address)'),
+  ChannelCreated: eventTopic('ChannelCreated(uint64,address,address,uint64)'),
+  ChannelPeerUpdated: eventTopic('ChannelPeerUpdated(uint64,address,uint64,uint64)'),
+  ChannelSignalPosted: eventTopic('ChannelSignalPosted(uint64,address,address)'),
+  BroadcastStarted: eventTopic('BroadcastStarted(uint64,address,address,uint64)'),
+  BroadcastViewerUpdated: eventTopic('BroadcastViewerUpdated(uint64,address,address,uint64)'),
+  BroadcastRoleUpdated: eventTopic('BroadcastRoleUpdated(uint64,address,uint64)'),
+  BroadcastEnded: eventTopic('BroadcastEnded(uint64,address)'),
+  BroadcastSignalPosted: eventTopic('BroadcastSignalPosted(uint64,address,address)'),
 };
 
 const ENVELOPE_TAG_RAW_UTF8 = 0x00;
@@ -169,6 +215,11 @@ const PEER_REC_HDR = 70;
 const CALL_META_LEN = 148;
 const ROOM_HDR_LEN = 50;
 const ROOM_PEER_ENTRY_LEN = 60;
+const CHANNEL_HDR_LEN = 76;
+const CHANNEL_PEER_LEN = 62;
+const BCAST_HDR_LEN = 76;
+const BCAST_NODE_LEN = 88;
+const PINNED_SIGNAL_HDR_LEN = 51;
 
 // ============================================================================
 // 1. secp256k1 Signaling Key Derivation & Compressed Point Decompression
@@ -591,18 +642,154 @@ export const WebRtcSignalAbi = {
       ['address', toIdentity],
     ]);
   },
+  // v2: Persistent Discord-style Voice/Video Channels
+  createChannel(creatorIdentity, guildAddr, channelKind, name, topic = '') {
+    return encodeAbi('createChannel(address,address,uint64,string,string)', [
+      ['address', creatorIdentity],
+      ['address', guildAddr || ZERO_ADDR],
+      ['uint64', channelKind || RTC_CHANNEL_KIND.VOICE],
+      ['string', String(name || '').slice(0, 48)],
+      ['string', String(topic || '').slice(0, 80)],
+    ]);
+  },
+  joinChannel(channelId, peerIdentity, dtlsFp, mediaFlags = 0) {
+    return encodeAbi('joinChannel(uint64,address,bytes32,uint64)', [
+      ['uint64', channelId],
+      ['address', peerIdentity],
+      ['bytes32', dtlsFp || ZERO_BYTES32],
+      ['uint64', mediaFlags || 0],
+    ]);
+  },
+  updateChannelMedia(channelId, peerIdentity, mediaFlags = 0) {
+    return encodeAbi('updateChannelMedia(uint64,address,uint64)', [
+      ['uint64', channelId],
+      ['address', peerIdentity],
+      ['uint64', mediaFlags || 0],
+    ]);
+  },
+  leaveChannel(channelId, peerIdentity) {
+    return encodeAbi('leaveChannel(uint64,address)', [
+      ['uint64', channelId],
+      ['address', peerIdentity],
+    ]);
+  },
+  postChannelSignal(channelId, fromIdentity, toIdentity, signalType, senderDtlsFp, envelopeBytes) {
+    return encodeAbi('postChannelSignal(uint64,address,address,uint64,bytes32,bytes)', [
+      ['uint64', channelId],
+      ['address', fromIdentity],
+      ['address', toIdentity],
+      ['uint64', signalType],
+      ['bytes32', senderDtlsFp || ZERO_BYTES32],
+      ['bytes', envelopeBytes],
+    ]);
+  },
+  getChannelState(channelId) {
+    return encodeAbi('getChannelState(uint64)', [['uint64', channelId]]);
+  },
+  getChannelsSlice(start = 0, limit = 32) {
+    return encodeAbi('getChannelsSlice(uint64,uint64)', [
+      ['uint64', start],
+      ['uint64', limit],
+    ]);
+  },
+  getChannelPairSignal(channelId, fromIdentity, toIdentity) {
+    return encodeAbi('getChannelPairSignal(uint64,address,address)', [
+      ['uint64', channelId],
+      ['address', fromIdentity],
+      ['address', toIdentity],
+    ]);
+  },
+  // v2: Serverless K-ary P2P Fanout-Tree Live Broadcasts & Stage Channels
+  createBroadcast(hostIdentity, guildAddr, mediaKind, fanoutK, hostDtlsFp, title) {
+    return encodeAbi('createBroadcast(address,address,uint64,uint64,bytes32,string)', [
+      ['address', hostIdentity],
+      ['address', guildAddr || ZERO_ADDR],
+      ['uint64', mediaKind || RTC_MEDIA_KIND.VIDEO],
+      ['uint64', fanoutK || 4],
+      ['bytes32', hostDtlsFp || ZERO_BYTES32],
+      ['string', String(title || '').slice(0, 64)],
+    ]);
+  },
+  joinBroadcast(streamId, viewerIdentity, viewerDtlsFp = ZERO_BYTES32) {
+    return encodeAbi('joinBroadcast(uint64,address,bytes32)', [
+      ['uint64', streamId],
+      ['address', viewerIdentity],
+      ['bytes32', viewerDtlsFp || ZERO_BYTES32],
+    ]);
+  },
+  reparentViewer(streamId, viewerIdentity) {
+    return encodeAbi('reparentViewer(uint64,address)', [
+      ['uint64', streamId],
+      ['address', viewerIdentity],
+    ]);
+  },
+  leaveBroadcast(streamId, peerIdentity) {
+    return encodeAbi('leaveBroadcast(uint64,address)', [
+      ['uint64', streamId],
+      ['address', peerIdentity],
+    ]);
+  },
+  endBroadcast(streamId, hostIdentity) {
+    return encodeAbi('endBroadcast(uint64,address)', [
+      ['uint64', streamId],
+      ['address', hostIdentity],
+    ]);
+  },
+  setHandRaised(streamId, viewerIdentity, raised) {
+    return encodeAbi('setHandRaised(uint64,address,bool)', [
+      ['uint64', streamId],
+      ['address', viewerIdentity],
+      ['bool', Boolean(raised)],
+    ]);
+  },
+  setStageRole(streamId, hostIdentity, targetIdentity, role) {
+    return encodeAbi('setStageRole(uint64,address,address,uint64)', [
+      ['uint64', streamId],
+      ['address', hostIdentity],
+      ['address', targetIdentity],
+      ['uint64', role],
+    ]);
+  },
+  postBroadcastSignal(streamId, fromIdentity, toIdentity, signalType, senderDtlsFp, envelopeBytes) {
+    return encodeAbi('postBroadcastSignal(uint64,address,address,uint64,bytes32,bytes)', [
+      ['uint64', streamId],
+      ['address', fromIdentity],
+      ['address', toIdentity],
+      ['uint64', signalType],
+      ['bytes32', senderDtlsFp || ZERO_BYTES32],
+      ['bytes', envelopeBytes],
+    ]);
+  },
+  getBroadcastState(streamId) {
+    return encodeAbi('getBroadcastState(uint64)', [['uint64', streamId]]);
+  },
+  getBroadcastsSlice(start = 0, limit = 24) {
+    return encodeAbi('getBroadcastsSlice(uint64,uint64)', [
+      ['uint64', start],
+      ['uint64', limit],
+    ]);
+  },
+  getBroadcastPairSignal(streamId, fromIdentity, toIdentity) {
+    return encodeAbi('getBroadcastPairSignal(uint64,address,address)', [
+      ['uint64', streamId],
+      ['address', fromIdentity],
+      ['address', toIdentity],
+    ]);
+  },
 };
 
 export function decodeHubOverviewHex(retHex) {
   const b = decodeAbiBytesHex(retHex);
   if (!b || b.length < 48) {
     return {
-      abiVersion: 1,
+      abiVersion: 2,
       totalProfiles: 0,
       totalCalls: 0,
       totalRooms: 0,
       currentBlock: 0,
       maxRoomPeers: 6,
+      totalChannels: 0,
+      totalBroadcasts: 0,
     };
   }
   return {
@@ -612,6 +799,8 @@ export function decodeHubOverviewHex(retHex) {
     totalRooms: Number(readU64BE(b, 24)),
     currentBlock: Number(readU64BE(b, 32)),
     maxRoomPeers: Number(readU64BE(b, 40)),
+    totalChannels: b.length >= 56 ? Number(readU64BE(b, 48)) : 0,
+    totalBroadcasts: b.length >= 64 ? Number(readU64BE(b, 56)) : 0,
   };
 }
 
@@ -853,6 +1042,207 @@ export function decodePairSignalHex(retHex) {
   return { seq, signalType, updatedBlock, envelope };
 }
 
+export function decodePinnedPairSignalHex(retHex) {
+  const b = decodeAbiBytesHex(retHex);
+  if (!b || b.length < PINNED_SIGNAL_HDR_LEN) return null;
+  const seq = Number(readU64BE(b, 0));
+  const signalType = b[8];
+  const updatedBlock = Number(readU64BE(b, 9));
+  const senderDtlsFp = bytesToHex(b.subarray(17, 49), true).toLowerCase();
+  const envLen = readU16BE(b, 49);
+  const envelope = b.subarray(PINNED_SIGNAL_HDR_LEN, Math.min(b.length, PINNED_SIGNAL_HDR_LEN + envLen));
+  return { seq, signalType, updatedBlock, senderDtlsFp, envelope };
+}
+
+export function decodeChannelStateBytes(b, offset = 0) {
+  if (!b || offset + CHANNEL_HDR_LEN > b.length) return null;
+  const channelId = Number(readU64BE(b, offset));
+  const creator = bytesToHex(b.subarray(offset + 8, offset + 28), true).toLowerCase();
+  const guildAddr = bytesToHex(b.subarray(offset + 28, offset + 48), true).toLowerCase();
+  const status = b[offset + 48];
+  const channelKind = b[offset + 49];
+  const peerCount = b[offset + 50];
+  const createdBlock = Number(readU64BE(b, offset + 52));
+  const updatedBlock = Number(readU64BE(b, offset + 60));
+  const nameLen = readU16BE(b, offset + 68);
+  const topicLen = readU16BE(b, offset + 70);
+
+  const nameStart = offset + CHANNEL_HDR_LEN;
+  const topicStart = nameStart + nameLen;
+  const peersStart = topicStart + topicLen;
+  const nextOffset = peersStart + peerCount * CHANNEL_PEER_LEN;
+  if (nextOffset > b.length) return null;
+
+  const name = bytesToUtf8(b.subarray(nameStart, topicStart));
+  const topic = bytesToUtf8(b.subarray(topicStart, peersStart));
+  const peers = [];
+  let p = peersStart;
+  for (let i = 0; i < peerCount; i++) {
+    const flags = b[p + 52];
+    peers.push({
+      identity: bytesToHex(b.subarray(p, p + 20), true).toLowerCase(),
+      dtlsFp: bytesToHex(b.subarray(p + 20, p + 52), true).toLowerCase(),
+      mediaFlags: flags,
+      micMuted: (flags & RTC_CHANNEL_MEDIA_FLAGS.MIC_MUTED) !== 0,
+      deafened: (flags & RTC_CHANNEL_MEDIA_FLAGS.DEAFENED) !== 0,
+      videoOn: (flags & RTC_CHANNEL_MEDIA_FLAGS.VIDEO_ON) !== 0,
+      screenOn: (flags & RTC_CHANNEL_MEDIA_FLAGS.SCREEN_ON) !== 0,
+      joinedBlock: Number(readU64BE(b, p + 54)),
+    });
+    p += CHANNEL_PEER_LEN;
+  }
+
+  return {
+    record: {
+      channelId,
+      creator,
+      guildAddr,
+      status,
+      isOpen: status === 1,
+      channelKind,
+      kindLabel: RTC_CHANNEL_KIND_LABELS[channelKind] || '🔊 Channel',
+      peerCount,
+      createdBlock,
+      updatedBlock,
+      name,
+      topic,
+      peers,
+    },
+    nextOffset,
+  };
+}
+
+export function decodeChannelStateHex(retHex) {
+  const b = decodeAbiBytesHex(retHex);
+  if (!b || b.length < CHANNEL_HDR_LEN) return null;
+  const parsed = decodeChannelStateBytes(b, 0);
+  return parsed ? parsed.record : null;
+}
+
+export function decodeChannelsSliceHex(retHex) {
+  const b = decodeAbiBytesHex(retHex);
+  if (!b || b.length < 16) return { total: 0, channels: [] };
+  const total = Number(readU64BE(b, 0));
+  const count = Number(readU64BE(b, 8));
+  const channels = [];
+  let pos = 16;
+  for (let i = 0; i < count && pos < b.length; i++) {
+    const parsed = decodeChannelStateBytes(b, pos);
+    if (!parsed) break;
+    channels.push(parsed.record);
+    pos = parsed.nextOffset;
+  }
+  return { total, channels };
+}
+
+export function decodeBroadcastMetaBytes(b, offset = 0) {
+  if (!b || offset + BCAST_HDR_LEN > b.length) return null;
+  const streamId = Number(readU64BE(b, offset));
+  const host = bytesToHex(b.subarray(offset + 8, offset + 28), true).toLowerCase();
+  const guildAddr = bytesToHex(b.subarray(offset + 28, offset + 48), true).toLowerCase();
+  const status = b[offset + 48];
+  const mediaKind = b[offset + 49];
+  const fanoutK = b[offset + 50];
+  const activeCount = b[offset + 51];
+  const totalSlots = readU16BE(b, offset + 52);
+  const peakViewers = readU16BE(b, offset + 54);
+  const createdBlock = Number(readU64BE(b, offset + 56));
+  const updatedBlock = Number(readU64BE(b, offset + 64));
+  const titleLen = readU16BE(b, offset + 72);
+  const nextOffset = offset + BCAST_HDR_LEN + titleLen;
+  if (nextOffset > b.length) return null;
+
+  const title = bytesToUtf8(b.subarray(offset + BCAST_HDR_LEN, nextOffset));
+  return {
+    record: {
+      streamId,
+      host,
+      guildAddr,
+      status,
+      isLive: status === RTC_BROADCAST_STATUS.LIVE,
+      mediaKind,
+      mediaLabel:
+        mediaKind === RTC_MEDIA_KIND.VOICE
+          ? '🎙️ Audio Stage'
+          : mediaKind === RTC_MEDIA_KIND.SCREEN
+            ? '🖥️ Screen Broadcast'
+            : '📡 HD Live Stream',
+      fanoutK,
+      activeCount,
+      viewerCount: Math.max(0, activeCount - 1),
+      totalSlots,
+      peakViewers,
+      createdBlock,
+      updatedBlock,
+      title,
+    },
+    nextOffset,
+  };
+}
+
+export function decodeBroadcastStateHex(retHex) {
+  const b = decodeAbiBytesHex(retHex);
+  if (!b || b.length < BCAST_HDR_LEN) return null;
+  const metaParsed = decodeBroadcastMetaBytes(b, 0);
+  if (!metaParsed) return null;
+  let pos = metaParsed.nextOffset;
+  if (pos + 2 > b.length) {
+    return { ...metaParsed.record, nodes: [], maxDepth: 0 };
+  }
+  const nodeCount = readU16BE(b, pos);
+  pos += 2;
+  const nodes = [];
+  let maxDepth = 0;
+  for (let i = 0; i < nodeCount && pos + BCAST_NODE_LEN <= b.length; i++) {
+    const slotIdx = readU16BE(b, pos);
+    const parentSlot = readU16BE(b, pos + 2);
+    const active = b[pos + 4] === 1;
+    const role = b[pos + 5];
+    const tierDepth = b[pos + 6];
+    const activeChildren = b[pos + 7];
+    const identity = bytesToHex(b.subarray(pos + 8, pos + 28), true).toLowerCase();
+    const parentIdentity = bytesToHex(b.subarray(pos + 28, pos + 48), true).toLowerCase();
+    const dtlsFp = bytesToHex(b.subarray(pos + 48, pos + 80), true).toLowerCase();
+    const joinedBlock = Number(readU64BE(b, pos + 80));
+    if (active && tierDepth > maxDepth) maxDepth = tierDepth;
+    nodes.push({
+      slotIdx,
+      parentSlot: parentSlot === 0xffff ? null : parentSlot,
+      active,
+      role,
+      roleLabel: RTC_BROADCAST_ROLE_LABELS[role] || '👀 Viewer',
+      tierDepth,
+      activeChildren,
+      identity,
+      parentIdentity,
+      dtlsFp,
+      joinedBlock,
+    });
+    pos += BCAST_NODE_LEN;
+  }
+  return {
+    ...metaParsed.record,
+    nodes,
+    maxDepth,
+  };
+}
+
+export function decodeBroadcastsSliceHex(retHex) {
+  const b = decodeAbiBytesHex(retHex);
+  if (!b || b.length < 16) return { total: 0, broadcasts: [] };
+  const total = Number(readU64BE(b, 0));
+  const count = Number(readU64BE(b, 8));
+  const broadcasts = [];
+  let pos = 16;
+  for (let i = 0; i < count && pos < b.length; i++) {
+    const parsed = decodeBroadcastMetaBytes(b, pos);
+    if (!parsed) break;
+    broadcasts.push(parsed.record);
+    pos = parsed.nextOffset;
+  }
+  return { total, broadcasts };
+}
+
 // ============================================================================
 // 4. High-Level `WebRtcSignalClient`
 // ============================================================================
@@ -873,15 +1263,20 @@ export class WebRtcSignalClient {
 
     try {
       const { manifest } = await SlxHfsCache.hydrateWithManifest();
+      // Prefer explicit v2+ manifest hub or newest active WEBRTC_SIGNAL instance in HfsRegistry
+      if (manifest?.webrtcSignal?.contractAddr && Number(manifest.webrtcSignal.abiVersion || 0) >= 2) {
+        this.hubAddr = String(manifest.webrtcSignal.contractAddr).toLowerCase();
+        return this.hubAddr;
+      }
       if (manifest?.hfsRegistry) {
         const list = await fetchRegisteredHfsByType({
           rpcUrl: this.rpcUrl,
           registryAddr: manifest.hfsRegistry,
           typeName: 'WEBRTC_SIGNAL',
         });
-        const active = list.find((it) => it.status === 1 && it.primaryAddr);
-        if (active?.primaryAddr) {
-          this.hubAddr = active.primaryAddr.toLowerCase();
+        const newestActive = [...list].reverse().find((it) => it.status === 1 && it.primaryAddr);
+        if (newestActive?.primaryAddr) {
+          this.hubAddr = newestActive.primaryAddr.toLowerCase();
           return this.hubAddr;
         }
       }
@@ -1129,6 +1524,280 @@ export class WebRtcSignalClient {
       gasLimit: 6_000_000n,
     });
   }
+
+  // --- v2: Persistent Discord-style Voice/Video Channels ---
+
+  async getChannels(start = 0, limit = 32) {
+    const hex = await this._ethCall(WebRtcSignalAbi.getChannelsSlice(start, limit));
+    return decodeChannelsSliceHex(hex);
+  }
+
+  async getChannelState(channelId) {
+    const hex = await this._ethCall(WebRtcSignalAbi.getChannelState(channelId));
+    return decodeChannelStateHex(hex);
+  }
+
+  async getChannelPairSignal(channelId, fromIdentity, toIdentity) {
+    const hex = await this._ethCall(
+      WebRtcSignalAbi.getChannelPairSignal(channelId, fromIdentity, toIdentity)
+    );
+    return decodePinnedPairSignalHex(hex);
+  }
+
+  async createChannel({
+    wallet,
+    creatorIdentity,
+    guildAddr = ZERO_ADDR,
+    channelKind = RTC_CHANNEL_KIND.VOICE,
+    name,
+    topic = '',
+  }) {
+    const cd = WebRtcSignalAbi.createChannel(creatorIdentity, guildAddr, channelKind, name, topic);
+    const { txHash, receipt } = await this._sendHubTx({
+      wallet,
+      identityAddr: creatorIdentity,
+      dataHex: cd,
+    });
+    let channelId = 0;
+    for (const log of receipt.logs || []) {
+      const t0 = String(log.topics?.[0] || '').toLowerCase();
+      if (t0 === WEBRTC_EVENT_TOPICS.ChannelCreated && log.topics?.[1]) {
+        channelId = Number(decodeUintWord(log.topics[1]));
+        break;
+      }
+    }
+    return { channelId, txHash, receipt };
+  }
+
+  async joinChannel({
+    wallet,
+    channelId,
+    peerIdentity,
+    dtlsFp = ZERO_BYTES32,
+    mediaFlags = 0,
+  }) {
+    const cd = WebRtcSignalAbi.joinChannel(channelId, peerIdentity, dtlsFp, mediaFlags);
+    return this._sendHubTx({ wallet, identityAddr: peerIdentity, dataHex: cd });
+  }
+
+  async updateChannelMedia({ wallet, channelId, peerIdentity, mediaFlags = 0 }) {
+    const cd = WebRtcSignalAbi.updateChannelMedia(channelId, peerIdentity, mediaFlags);
+    return this._sendHubTx({ wallet, identityAddr: peerIdentity, dataHex: cd });
+  }
+
+  async leaveChannel({ wallet, channelId, peerIdentity }) {
+    const cd = WebRtcSignalAbi.leaveChannel(channelId, peerIdentity);
+    return this._sendHubTx({ wallet, identityAddr: peerIdentity, dataHex: cd });
+  }
+
+  async postChannelSignal({
+    wallet,
+    channelId,
+    fromIdentity,
+    toIdentity,
+    signalType,
+    senderDtlsFp,
+    envelopeBytes,
+  }) {
+    const cd = WebRtcSignalAbi.postChannelSignal(
+      channelId,
+      fromIdentity,
+      toIdentity,
+      signalType,
+      senderDtlsFp,
+      envelopeBytes
+    );
+    return this._sendHubTx({
+      wallet,
+      identityAddr: fromIdentity,
+      dataHex: cd,
+      gasLimit: 6_000_000n,
+    });
+  }
+
+  // --- v2: Serverless K-ary P2P Fanout-Tree Live Broadcasts & Stage ---
+
+  async getBroadcasts(start = 0, limit = 24) {
+    const hex = await this._ethCall(WebRtcSignalAbi.getBroadcastsSlice(start, limit));
+    return decodeBroadcastsSliceHex(hex);
+  }
+
+  async getBroadcastState(streamId) {
+    const hex = await this._ethCall(WebRtcSignalAbi.getBroadcastState(streamId));
+    return decodeBroadcastStateHex(hex);
+  }
+
+  async getBroadcastPairSignal(streamId, fromIdentity, toIdentity) {
+    const hex = await this._ethCall(
+      WebRtcSignalAbi.getBroadcastPairSignal(streamId, fromIdentity, toIdentity)
+    );
+    return decodePinnedPairSignalHex(hex);
+  }
+
+  async createBroadcast({
+    wallet,
+    hostIdentity,
+    guildAddr = ZERO_ADDR,
+    mediaKind = RTC_MEDIA_KIND.VIDEO,
+    fanoutK = 4,
+    hostDtlsFp = ZERO_BYTES32,
+    title,
+  }) {
+    const cd = WebRtcSignalAbi.createBroadcast(
+      hostIdentity,
+      guildAddr,
+      mediaKind,
+      fanoutK,
+      hostDtlsFp,
+      title
+    );
+    const { txHash, receipt } = await this._sendHubTx({
+      wallet,
+      identityAddr: hostIdentity,
+      dataHex: cd,
+    });
+    let streamId = 0;
+    for (const log of receipt.logs || []) {
+      const t0 = String(log.topics?.[0] || '').toLowerCase();
+      if (t0 === WEBRTC_EVENT_TOPICS.BroadcastStarted && log.topics?.[1]) {
+        streamId = Number(decodeUintWord(log.topics[1]));
+        break;
+      }
+    }
+    return { streamId, txHash, receipt };
+  }
+
+  async joinBroadcast({ wallet, streamId, viewerIdentity, viewerDtlsFp = ZERO_BYTES32 }) {
+    const cd = WebRtcSignalAbi.joinBroadcast(streamId, viewerIdentity, viewerDtlsFp);
+    return this._sendHubTx({ wallet, identityAddr: viewerIdentity, dataHex: cd });
+  }
+
+  async reparentViewer({ wallet, streamId, viewerIdentity }) {
+    const cd = WebRtcSignalAbi.reparentViewer(streamId, viewerIdentity);
+    return this._sendHubTx({ wallet, identityAddr: viewerIdentity, dataHex: cd });
+  }
+
+  async leaveBroadcast({ wallet, streamId, peerIdentity }) {
+    const cd = WebRtcSignalAbi.leaveBroadcast(streamId, peerIdentity);
+    return this._sendHubTx({ wallet, identityAddr: peerIdentity, dataHex: cd });
+  }
+
+  async endBroadcast({ wallet, streamId, hostIdentity }) {
+    const cd = WebRtcSignalAbi.endBroadcast(streamId, hostIdentity);
+    return this._sendHubTx({ wallet, identityAddr: hostIdentity, dataHex: cd });
+  }
+
+  async setHandRaised({ wallet, streamId, viewerIdentity, raised }) {
+    const cd = WebRtcSignalAbi.setHandRaised(streamId, viewerIdentity, raised);
+    return this._sendHubTx({ wallet, identityAddr: viewerIdentity, dataHex: cd });
+  }
+
+  async setStageRole({ wallet, streamId, hostIdentity, targetIdentity, role }) {
+    const cd = WebRtcSignalAbi.setStageRole(streamId, hostIdentity, targetIdentity, role);
+    return this._sendHubTx({ wallet, identityAddr: hostIdentity, dataHex: cd });
+  }
+
+  async postBroadcastSignal({
+    wallet,
+    streamId,
+    fromIdentity,
+    toIdentity,
+    signalType,
+    senderDtlsFp,
+    envelopeBytes,
+  }) {
+    const cd = WebRtcSignalAbi.postBroadcastSignal(
+      streamId,
+      fromIdentity,
+      toIdentity,
+      signalType,
+      senderDtlsFp,
+      envelopeBytes
+    );
+    return this._sendHubTx({
+      wallet,
+      identityAddr: fromIdentity,
+      dataHex: cd,
+      gasLimit: 6_000_000n,
+    });
+  }
+}
+
+/**
+ * Reusable WebAudio `AnalyserNode` RMS voice-activity detector (`speaking: boolean`, `level: 0..1`)
+ * for Discord-style glowing green speaking rings around channel & stage avatars.
+ */
+export function createAudioLevelMonitor(
+  stream,
+  { onSpeakingChange = null, onLevel = null, intervalMs = 150, threshold = 0.016 } = {}
+) {
+  let actx = null;
+  let timer = null;
+  let speaking = false;
+
+  if (
+    stream &&
+    typeof window !== 'undefined' &&
+    (window.AudioContext || window.webkitAudioContext) &&
+    stream.getAudioTracks?.().length > 0
+  ) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      actx = new AudioCtx();
+      const src = actx.createMediaStreamSource(stream);
+      const analyser = actx.createAnalyser();
+      analyser.fftSize = 256;
+      src.connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+
+      timer = setInterval(() => {
+        const audioTrack = stream.getAudioTracks?.()[0];
+        if (!audioTrack || !audioTrack.enabled || audioTrack.readyState !== 'live') {
+          if (speaking) {
+            speaking = false;
+            onSpeakingChange?.(false, 0);
+          }
+          onLevel?.(0);
+          return;
+        }
+        if (actx.state === 'suspended') {
+          actx.resume().catch(() => {});
+        }
+        analyser.getByteTimeDomainData(buf);
+        let sumSq = 0;
+        for (let i = 0; i < buf.length; i++) {
+          const norm = (buf[i] - 128) / 128;
+          sumSq += norm * norm;
+        }
+        const rms = Math.sqrt(sumSq / buf.length);
+        onLevel?.(rms);
+        const nowSpeaking = rms >= threshold;
+        if (nowSpeaking !== speaking) {
+          speaking = nowSpeaking;
+          onSpeakingChange?.(speaking, rms);
+        }
+      }, intervalMs);
+    } catch {
+      // ignore WebAudio restrictions
+    }
+  }
+
+  return {
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (actx) {
+        try {
+          actx.close();
+        } catch {
+          // ignore
+        }
+        actx = null;
+      }
+    },
+  };
 }
 
 // ============================================================================

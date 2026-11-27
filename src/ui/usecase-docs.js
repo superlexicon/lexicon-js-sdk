@@ -1416,55 +1416,55 @@ export const USECASE_DESCRIPTIONS = {
   telephony: {
     id: 'telephony',
     icon: '📹',
-    title: 'EtherCall — Serverless WebRTC Voice, Video & Mesh Rooms',
+    title: 'EtherCall — Serverless WebRTC Calls, Discord Channels & P2P Broadcasts',
     href: '/telephony.html',
     tagline:
-      'Zero-cloud WebRTC voice, HD video, screen share, and 6-peer mesh rooms signaled via Halt-Free Subroutine (webrtc_signal.wasm) with Identity-pinned DTLS-SRTP certificates and secp256k1 ECDH envelopes.',
+      'Zero-cloud 1:1 WebRTC calls, persistent Discord voice/video/screen lounges, and K-ary P2P fanout-tree live broadcasts + stages signaled via Halt-Free Subroutine (webrtc_signal.wasm v2).',
     featurePills: [
-      { label: '0 Signaling Servers / 0 Socket.io', tone: 'emerald' },
+      { label: '0 Signaling / 0 SFU Cloud Servers', tone: 'emerald' },
+      { label: 'Discord Persistent Voice/Video Channels', tone: 'cyan' },
+      { label: 'K-ary P2P Broadcast Relay Tree', tone: 'rose' },
       { label: 'Identity-Pinned DTLS-SRTP SHA-256', tone: 'violet' },
-      { label: 'secp256k1 ECDH + Gzip SDP (~750 B)', tone: 'cyan' },
-      { label: 'Sub-Block eth_subscribe Ringing', tone: 'amber' },
-      { label: '0ms P2P Media & RTCDataChannel', tone: 'emerald' },
-      { label: '6-Peer Mesh Conference Rooms', tone: 'sky' },
+      { label: 'secp256k1 ECDH + Gzip SDP (~750 B)', tone: 'amber' },
+      { label: '0ms P2P Media & Flood DataChannel', tone: 'sky' },
     ],
     tabs: {
       codification: `
         <div class="slx-ucd-hero">
-          <div class="slx-ucd-hero-title">🛡️ Eliminating Centralized WebRTC Signaling &amp; Certificate MITM</div>
+          <div class="slx-ucd-hero-title">🛡️ Eliminating Centralized WebRTC Signaling, Discord SFUs &amp; Live-Stream CDNs</div>
           <p>
-            Even though WebRTC media flows peer-to-peer, virtually every WebRTC app today depends on centralized <strong>Socket.io / Twilio / Firebase / AWS API Gateway signaling servers</strong> to discover peers and exchange SDP Offer/Answer + ICE candidates. If that signaling server goes offline, calls fail—and worse, a compromised signaling server can silently rewrite <code>a=fingerprint:sha-256</code> in transit to mount a Man-in-the-Middle (MITM) wiretap!
-            <strong>EtherCall</strong> moves peer presence, E2EE key discovery, DTLS certificate pinning, 1:1 call setup, and multi-peer conference signaling into <code>webrtc_signal.wasm</code> (HPS #28).
+            Conventional communication apps (Discord, Zoom, Twitch, Twilio) rely on centralized <strong>Socket.io signaling brokers</strong> and <strong>cloud Selective Forwarding Units (SFUs)</strong> that log metadata, charge per-minute bandwidth fees, and can rewrite <code>a=fingerprint:sha-256</code> to MITM calls.
+            <strong>EtherCall v2</strong> moves 1:1 calls, 24/7 Discord-style voice/video lounges, and 1-to-many live stage broadcasts directly into <code>webrtc_signal.wasm</code> (HPS #28 v2) with zero cloud media servers!
           </p>
         </div>
         <table class="slx-ucd-table">
           <thead>
             <tr>
-              <th>Call Layer</th>
-              <th>Conventional Web2 WebRTC Stack</th>
-              <th>SuperLexicon EtherCall (HFS #28)</th>
+              <th>Communication Layer</th>
+              <th>Conventional Discord / Twitch / Twilio Stack</th>
+              <th>SuperLexicon EtherCall v2 (HFS #28)</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>Signaling Broker</strong></td>
-              <td>Node.js / Socket.io / Twilio servers ($/min + single point of outage &amp; metadata logging).</td>
-              <td><code>webrtc_signal.wasm</code> on Subnet 1 + <code>eth_subscribe("logs")</code> real-time ringing with <code>$0.00</code> gas.</td>
+              <td><strong>1:1 Voice &amp; Video Calls</strong></td>
+              <td>Socket.io / Twilio signaling ($/min + centralized outage &amp; call-graph surveillance).</td>
+              <td><code>webrtc_signal.wasm</code> + <code>eth_subscribe("logs")</code> real-time ringing with Identity-pinned DTLS-SRTP &amp; <code>$0.00</code> gas.</td>
             </tr>
             <tr>
-              <td><strong>DTLS-SRTP Key Authenticity</strong></td>
-              <td>Blindly trusts the signaling server not to swap <code>a=fingerprint:sha-256</code> lines.</td>
-              <td><code>callerDtlsFp</code> &amp; <code>calleeDtlsFp</code> (<code>bytes32</code>) are committed on-chain by each peer’s <code>Identity</code> HFS and verified before media unmutes.</td>
+              <td><strong>Discord Voice &amp; Video Channels</strong></td>
+              <td>Centralized guild voice servers that vanish if vendor region goes down.</td>
+              <td>Persistent on-chain channels (<code>createChannel</code> / <code>joinChannel</code>) staying open 24/7 even when empty, with instant drop-in P2P mesh &amp; WebAudio green speaking rings.</td>
             </tr>
             <tr>
-              <td><strong>IP &amp; ICE Candidate Privacy</strong></td>
-              <td>Cleartext SDP exposes LAN/WAN IPs, UDP ports, and <code>ice-pwd</code> to the server operator.</td>
-              <td>Gzipped + <code>secp256k1</code> ECDH-wrapped envelopes (<code>~680–900 B</code>) readable only by the intended callee.</td>
+              <td><strong>1-to-Many Live Broadcasting</strong></td>
+              <td>Expensive cloud SFU / RTMP-HLS CDN transcode clusters with 5–15s latency.</td>
+              <td>Cycle-free <strong>K-ary P2P WebRTC Fanout Tree</strong> (<code>K=4</code> → 1 Host feeds 4 Tier-1 viewers → 16 Tier-2 → 64+ viewers at sub-200ms P2P latency!) + Discord Stage ✋ Raise Hand promotion.</td>
             </tr>
             <tr>
-              <td><strong>Live Audio / Video / Chat</strong></td>
-              <td>Often hairpinned through cloud SFU/TURN servers for billing &amp; recording.</td>
-              <td>100% direct browser-to-browser <code>DTLS-SRTP</code> + <code>SCTP RTCDataChannel</code> at sub-millisecond LAN latency.</td>
+              <td><strong>IP Privacy &amp; Live Chat</strong></td>
+              <td>Cleartext SDP leaks LAN/WAN IPs; chat stored in vendor SQL databases.</td>
+              <td>Gzip + <code>secp256k1</code> ECDH SDP envelopes (<code>~750 B</code>) + <code>0 ms</code> SCTP <code>RTCDataChannel</code> mesh/tree chat.</td>
             </tr>
           </tbody>
         </table>
@@ -1472,48 +1472,50 @@ export const USECASE_DESCRIPTIONS = {
       primitives: `
         <div class="slx-ucd-grid">
           <div class="slx-ucd-card">
-            <h4>🔐 Zero-CA DTLS-SRTP Fingerprint Pinning</h4>
-            <p>Each browser generates an ephemeral ECDSA DTLS certificate inside <code>RTCPeerConnection</code>. Before <code>placeCall</code> or <code>answerCall</code> submits on-chain, the SDK extracts the 32-byte <code>a=fingerprint:sha-256</code> digest and binds it to the caller’s sovereign <code>Identity</code> HFS—eliminating certificate authorities and signaling MITMs.</p>
+            <h4>🔐 Per-Pair Identity-Pinned DTLS-SRTP</h4>
+            <p>Every 1:1 call, Discord channel pair, and P2P broadcast relay hop commits the sender’s 32-byte <code>a=fingerprint:sha-256</code> digest on-chain under their sovereign <code>Identity</code> HFS—making MITM wiretaps cryptographically impossible.</p>
           </div>
           <div class="slx-ucd-card">
-            <h4>📦 Gzip + <code>secp256k1</code> ECDH Signal Envelopes</h4>
-            <p>A raw 3.2 KB WebRTC SDP Offer + bundled host/STUN ICE candidates compresses via browser <code>CompressionStream("gzip")</code> and wraps under ephemeral <code>secp256k1</code> ECDH + 16-byte Keccak MAC into <strong>~750 bytes</strong>—small enough to traverse 915 MHz LR2021 FLRC radio links!</p>
+            <h4>🎧 Persistent 24/7 Discord Channels</h4>
+            <p>Channels remain <code>OPEN</code> permanently even at <code>0/8</code> occupants, track live per-peer media flags (<code>Mic Muted</code>, <code>Deafened</code>, <code>Cam On</code>, <code>Screen Share</code>), and link directly to <code>CommonsRF</code> / <code>CorporateCharter</code> guilds.</p>
           </div>
           <div class="slx-ucd-card">
-            <h4>⚡ Bundled Initial ICE + Bounded Trickle Batches</h4>
-            <p><code>SlxWebRtcPeerSession</code> gathers initial LAN <code>host</code> &amp; STUN <code>srflx</code> candidates for ~900 ms so 95%+ of calls establish in just <strong>1 Offer tx + 1 Answer tx</strong>, with up to 8 bounded <code>appendIceBatch</code> updates per side for roaming interfaces.</p>
+            <h4>🌳 Self-Healing K-ary P2P Broadcast Tree</h4>
+            <p><code>joinBroadcast</code> deterministically assigns each viewer an upstream parent with strictly smaller <code>slot_idx</code> (mathematically cycle-free!). Viewers watch with <strong>zero camera/mic prompts</strong> while relaying tracks to up to <code>K</code> downstream peers, and auto-heal via <code>reparentViewer</code> if an upstream viewer leaves.</p>
           </div>
           <div class="slx-ucd-card">
-            <h4>👥 6-Peer Deterministic Mesh Rooms</h4>
-            <p><code>createRoom</code>, <code>joinRoom</code>, and <code>postRoomSignal</code> coordinate pairwise <code>(fromIdentity → toIdentity)</code> WebRTC sessions for up to 6 participants without centralized SFU orchestration servers.</p>
+            <h4>🎤 Interactive Discord Stage Co-Speakers</h4>
+            <p>Audience members click <strong>✋ Raise Hand</strong> on-chain; the Broadcaster clicks <strong>🎤 Stage</strong> (<code>setStageRole</code>) to invite them onto the live Stage Speaker strip with bidirectional WebRTC audio &amp; video.</p>
           </div>
         </div>
       `,
       topology: `
         <table class="slx-ucd-table">
           <thead>
-            <tr><th>Component</th><th>Role in EtherCall</th></tr>
+            <tr><th>Component</th><th>Role in EtherCall v2</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>webrtc_signal.wasm</code></td><td>Halt-Free Subroutine (#28) storing E2EE RTC profiles, 1:1 call state machines, DTLS fingerprints, trickle ICE batches, and 6-peer mesh rooms.</td></tr>
-            <tr><td><code>identity.wasm</code></td><td>Authenticates caller/callee EOA &amp; device keys via <code>owner()</code> / <code>isOwnerDevice(address)</code>.</td></tr>
-            <tr><td><code>@superlexicon/sdk/webrtc</code></td><td>Shared submodule library providing ABI codecs, <code>secp256k1</code> ECDH + Gzip envelope sealing, DTLS verification, and <code>SlxWebRtcPeerSession</code>.</td></tr>
-            <tr><td><code>telephony.html.gz</code></td><td>Compact use-case-only App Store UI bundle cached locally in <code>CacheStorage</code> / <code>IndexedDB</code>.</td></tr>
+            <tr><td><code>webrtc_signal.wasm</code> (v2)</td><td>Halt-Free Subroutine (#28, <code>53.9 KB</code>) managing E2EE directory profiles, 1:1 calls, persistent Discord channels, and K-ary P2P broadcast relay trees + Stage roles.</td></tr>
+            <tr><td><code>identity.wasm</code></td><td>Authenticates caller, channel member, broadcaster, and viewer device keys via <code>owner()</code> / <code>isOwnerDevice(address)</code>.</td></tr>
+            <tr><td><code>@superlexicon/sdk/webrtc</code></td><td>Shared submodule library providing v2 ABI codecs, <code>secp256k1</code> ECDH + Gzip sealing, DTLS pinning, WebAudio speaking detection, and <code>SlxWebRtcPeerSession</code>.</td></tr>
+            <tr><td><code>telephony.html.gz</code></td><td>3-mode App Store bundle (1:1 Direct Calls, Discord Channels, and Live Broadcast &amp; Stage).</td></tr>
           </tbody>
         </table>
       `,
       verification: `
         <div class="slx-ucd-grid">
           <div class="slx-ucd-card">
-            <h4>🧪 1-Click Local P2P Loopback Verification</h4>
+            <h4>🧪 Instant Multi-Mode Verification</h4>
             <ul>
-              <li>Click <strong>🧪 Loopback Test</strong> in EtherCall to spin up two real <code>RTCPeerConnection</code> instances in your browser, seal Offer &amp; Answer through <code>secp256k1</code> ECDH + Gzip, verify both <code>sha-256</code> DTLS fingerprints, and stream live video + 0ms <code>RTCDataChannel</code> chat!</li>
+              <li>Click <strong>🧪 Loopback Test</strong> for a 1-second solo Caller ⇄ Callee DTLS-SRTP + ECDH check.</li>
+              <li>Open <strong>🎧 Discord Channels</strong> in 2+ browsers and click <code>#1 General Voice Lounge</code> or <code>#2 Video &amp; Screen Hangout</code> for zero-ringing instant mesh drop-in!</li>
+              <li>Open <strong>📡 Live Broadcast &amp; Stage</strong>, click <strong>🔴 Go Live</strong> (<code>Fanout K=2</code>), and watch from 3+ tabs to see multi-hop Tier-1 → Tier-2 P2P video relay + tree-flooded <code>0 ms</code> chat!</li>
             </ul>
           </div>
           <div class="slx-ucd-card">
             <h4>🔬 Live On-Chain Signaling Inspector</h4>
             <ul>
-              <li>Inspect raw vs. gzipped+ECDH byte counts, caller/callee on-chain DTLS hashes, candidate types (<code>host</code> / <code>srflx</code>), and live <code>RTCPeerConnection.getStats()</code> RTT in the right-hand inspector drawer.</li>
+              <li>Inspect raw vs. gzipped+ECDH byte counts, caller/callee on-chain DTLS hashes, candidate types (<code>host</code> / <code>srflx</code>), and live P2P tree depth &amp; relay hops in real time.</li>
             </ul>
           </div>
         </div>
@@ -1979,19 +1981,19 @@ export const USECASE_INSTRUCTIONS = {
   telephony: {
     id: 'telephony',
     icon: '📹',
-    title: 'EtherCall — WebRTC Voice & Video Instructions',
+    title: 'EtherCall — Calls, Discord Channels & Broadcasts Instructions',
     tagline:
-      'Place encrypted P2P voice & HD video calls, share screens, or host 6-peer mesh rooms with zero signaling servers and $0.00 gas.',
+      'Place encrypted 1:1 calls, drop into 24/7 Discord voice/video lounges, or stream live 1-to-many broadcasts via P2P relay trees with $0.00 gas.',
     tabs: {
       quickstart: `
         <div class="slx-ucd-hero">
-          <div class="slx-ucd-hero-title">🚀 30-Second Quick-Start</div>
-          <p>Connect directly browser-to-browser using <code>webrtc_signal.wasm</code> on Subnet 1 for peer discovery, ECDH-encrypted SDP/ICE exchange, and DTLS-SRTP identity verification.</p>
+          <div class="slx-ucd-hero-title">🚀 3-Mode Quick-Start</div>
+          <p>Connect directly browser-to-browser using <code>webrtc_signal.wasm</code> (v2) on Subnet 1 for 1:1 calls, persistent Discord lounges, and K-ary P2P live broadcasts.</p>
         </div>
         <div class="slx-ucd-steps">
-          <div class="slx-ucd-step"><span>STEP 1</span><h4>Publish Your E2EE Call Presence</h4><p>Click <strong>📡 Go Online (Publish E2EE Key)</strong> in the left sidebar to bind your <code>Identity</code> HFS to your compressed <code>secp256k1</code> signaling encryption key in the directory.</p></div>
-          <div class="slx-ucd-step"><span>STEP 2</span><h4>Dial Any Peer (or Run 1-Click Loopback)</h4><p>Click <strong>🎙️ Voice</strong> or <strong>📹 Video</strong> next to any online peer in the directory (or paste any <code>0x…</code> Identity address). Solo testing? Click <strong>🧪 Loopback Test</strong> to verify full P2P media + ECDH envelopes immediately!</p></div>
-          <div class="slx-ucd-step"><span>STEP 3</span><h4>Accept Ringing Call &amp; Verify DTLS Badge</h4><p>The callee receives a real-time ringing banner via <code>eth_subscribe("logs")</code>. Clicking <strong>✅ Accept</strong> posts the encrypted SDP Answer + DTLS fingerprint and opens direct 0ms P2P media + <code>RTCDataChannel</code> chat.</p></div>
+          <div class="slx-ucd-step"><span>MODE 1</span><h4>📹 1:1 Direct Voice &amp; Video Calls</h4><p>Your E2EE key auto-publishes on load (or click <strong>📡 Publish E2EE Presence</strong>). Click <strong>🎙️ Voice</strong> or <strong>📹 Video</strong> next to any online peer to ring them in real time!</p></div>
+          <div class="slx-ucd-step"><span>MODE 2</span><h4>🎧 Persistent Discord Channels</h4><p>Switch to <strong>🎧 Discord Channels</strong> and click <code>#1 General Voice Lounge</code> or <code>#2 Video &amp; Screen Hangout</code> (or create your own!). Drop in with zero ringing, see green WebAudio speaking rings, and share 1080p screens.</p></div>
+          <div class="slx-ucd-step"><span>MODE 3</span><h4>📡 Live Broadcast &amp; Stage</h4><p>Switch to <strong>📡 Live Broadcast &amp; Stage</strong> and click <strong>🔴 Go Live</strong> (<code>Camera+Mic</code>, <code>Screen+Voice</code>, or <code>Audio Stage</code>). Viewers click <strong>▶️ Watch</strong> with <strong>0 camera/mic prompts</strong>, relay media down the K-ary P2P tree, chat at <code>0 ms</code>, and <strong>✋ Raise Hand</strong> to join Stage!</p></div>
         </div>
       `,
       controls: `
@@ -2000,11 +2002,11 @@ export const USECASE_INSTRUCTIONS = {
             <tr><th>Control</th><th>Function</th></tr>
           </thead>
           <tbody>
-            <tr><td><strong>📡 Go Online / Status</strong></td><td>Publishes your compressed <code>secp256k1</code> signaling key and availability (<code>Online</code>, <code>Busy</code>, <code>DND</code>) to <code>webrtc_signal.wasm</code>.</td></tr>
-            <tr><td><strong>🎙️ Voice / 📹 Video</strong></td><td>Creates a bundled WebRTC Offer + host/STUN ICE candidates, seals it with Gzip + ECDH, pins your <code>sha-256</code> DTLS fingerprint, and rings the peer on-chain.</td></tr>
-            <tr><td><strong>🖥️ Share Screen</strong></td><td>Captures a window/screen via <code>getDisplayMedia</code> and hot-swaps the active RTP video track (or renegotiates via <code>renegotiateMedia</code>).</td></tr>
-            <tr><td><strong>🧪 Simulated Cam/Mic</strong></td><td>Uses a built-in animated radar <code>&lt;canvas&gt;</code> + gentle harmonic tone so desktops/VMs without webcams or 2-tab tests work effortlessly.</td></tr>
-            <tr><td><strong>👥 Mesh Rooms Tab</strong></td><td>Creates or joins a multi-peer conference room (up to 6 peers) with automatic pairwise WebRTC mesh negotiation.</td></tr>
+            <tr><td><strong>📡 Publish E2EE Presence</strong></td><td>Binds your compressed <code>secp256k1</code> signaling encryption key and availability (<code>Online</code>, <code>Busy</code>, <code>DND</code>) to <code>webrtc_signal.wasm</code>.</td></tr>
+            <tr><td><strong>🎧 Discord Channels Tab</strong></td><td>Click any channel on the left to drop in or switch instantly; toggle <strong>Mic Mute</strong>, <strong>Deafen</strong>, <strong>Cam</strong>, or <strong>Screen Share</strong> from the bottom dock.</td></tr>
+            <tr><td><strong>🔴 Go Live &amp; Fanout K</strong></td><td>Starts a serverless 1-to-many stream where each node forwards WebRTC tracks to at most <code>K</code> downstream peers (<code>K=4</code> scales 1 → 4 → 16 → 64+ viewers).</td></tr>
+            <tr><td><strong>✋ Raise Hand / 🎤 Stage</strong></td><td>Audience viewers raise their hand on-chain; the Host clicks <strong>🎤 Stage</strong> in the P2P Tree list to invite co-speakers onto the live Stage strip.</td></tr>
+            <tr><td><strong>🔄 Switch Relay Hop</strong></td><td>Triggers <code>reparentViewer</code> to seamlessly re-attach to a fresh upstream P2P tree parent (also runs automatically if an upstream viewer disconnects).</td></tr>
           </tbody>
         </table>
       `,
@@ -2014,16 +2016,16 @@ export const USECASE_INSTRUCTIONS = {
             <tr><th>Metric</th><th>Value</th></tr>
           </thead>
           <tbody>
-            <tr><td><strong>Signaling Subroutine</strong></td><td><code>webrtc_signal.wasm</code> (<code>29.6 KB</code> Halt-Free WASM, ABI v1)</td></tr>
+            <tr><td><strong>Signaling Subroutine</strong></td><td><code>webrtc_signal.wasm</code> (<code>53.9 KB</code> Halt-Free WASM, ABI v2)</td></tr>
             <tr><td><strong>Typical Sealed SDP+ICE Size</strong></td><td><code>~680 – 920 bytes</code> (Gzip + <code>secp256k1</code> ECDH + 16-byte MAC)</td></tr>
-            <tr><td><strong>Media Encryption</strong></td><td><code>DTLS-SRTP</code> (AES-GCM) with on-chain <code>Identity</code> SHA-256 fingerprint pinning</td></tr>
-            <tr><td><strong>Cloud / TURN / Twilio Cost</strong></td><td><strong>$0.00 / minute</strong> &amp; <strong>$0.00 gas</strong></td></tr>
+            <tr><td><strong>Media Encryption</strong></td><td><code>DTLS-SRTP</code> (AES-GCM) with per-pair on-chain <code>Identity</code> SHA-256 fingerprint pinning</td></tr>
+            <tr><td><strong>Cloud / SFU / CDN / Gas Cost</strong></td><td><strong>$0.00 / minute</strong> &amp; <strong>$0.00 gas</strong></td></tr>
           </tbody>
         </table>
       `,
       tips: `
         <div class="slx-ucd-callout">
-          <strong>💡 Two-Tab / Two-Device Testing Tip:</strong> Open <code>/telephony.html</code> in an Incognito window (or on a second laptop/phone on the same Wi-Fi/subnet), create a second <code>Identity</code>, click <strong>📡 Go Online</strong> in both windows, and dial between them!
+          <strong>💡 Multi-Tab Broadcast Tree Tip:</strong> Choose <strong>🌳 Fanout K=2 (Multi-Hop Test)</strong> when going live, then open 3 viewer tabs: Viewers 1 &amp; 2 connect at <code>Tier 1</code>, and Viewer 3 automatically connects at <code>Tier 2</code> relayed <em>through</em> Viewer 1 with zero cloud servers!
         </div>
       `,
     },
