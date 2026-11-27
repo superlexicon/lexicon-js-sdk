@@ -3840,6 +3840,7 @@ export function mountSlxUnifiedHeader({
             <span data-uh="appsIcon">${activeAppSpec ? activeAppSpec.icon : '📦'}</span>
             <span data-uh="appsLabel">${escapeHtmlText(activeAppSpec ? activeAppSpec.shortLabel : 'My Apps')}</span>
             <span data-uh="appsCountBadge" style="display:none;padding:1px 6px;border-radius:999px;background:rgba(16,185,129,0.25);border:1px solid rgba(52,211,153,0.55);color:#6ee7b7;font-size:0.63rem;font-weight:800;">0</span>
+            <span data-uh="appsUpdateBadge" style="display:none;padding:1px 6px;border-radius:999px;background:rgba(245,158,11,0.28);border:1px solid rgba(251,191,36,0.75);color:#fde68a;font-size:0.62rem;font-weight:800;">🔄 0</span>
             <span style="opacity:0.75;font-size:0.62rem;">▾</span>
           </button>
           <div class="slx-uh-apps-menu" data-uh="appsMenu" role="menu"></div>
@@ -3870,16 +3871,19 @@ export function mountSlxUnifiedHeader({
     appsIcon: hdr.querySelector('[data-uh="appsIcon"]'),
     appsLabel: hdr.querySelector('[data-uh="appsLabel"]'),
     appsCountBadge: hdr.querySelector('[data-uh="appsCountBadge"]'),
+    appsUpdateBadge: hdr.querySelector('[data-uh="appsUpdateBadge"]'),
     appsMenu: hdr.querySelector('[data-uh="appsMenu"]'),
     suitePills: hdr.querySelector('[data-uh="suitePills"]'),
     telemetryMount: hdr.querySelector('[data-uh="telemetryMount"]'),
   };
 
   let installingActiveBusy = false;
+  const updatingMenuSlugs = new Set();
 
   const renderPersonalAppsMenu = () => {
     if (!refs.appsMenu) return;
     const installed = SlxPersonalAppContainer.listInstalled();
+    const pendingUpdates = SlxPersonalAppContainer.listPendingUpdates();
     const cacheStats = SlxUiBundleCache.getCacheStats();
     const cachedKb = (cacheStats.totalCompressedBytes / 1024).toFixed(1);
 
@@ -3890,6 +3894,15 @@ export function mountSlxUnifiedHeader({
         refs.appsCountBadge.title = `${installed.length} app(s) installed in your Personal App Container`;
       } else {
         refs.appsCountBadge.style.display = 'none';
+      }
+    }
+    if (refs.appsUpdateBadge) {
+      if (pendingUpdates.length > 0) {
+        refs.appsUpdateBadge.style.display = 'inline-block';
+        refs.appsUpdateBadge.textContent = `🔄 ${pendingUpdates.length}`;
+        refs.appsUpdateBadge.title = `${pendingUpdates.length} installed app update(s) available — click to review & update`;
+      } else {
+        refs.appsUpdateBadge.style.display = 'none';
       }
     }
 
@@ -3933,22 +3946,45 @@ export function mountSlxUnifiedHeader({
           .map((app, idx) => {
             const isAct = app.slug === canonicalActiveId;
             const isCached = SlxUiBundleCache.isCachedSync(app.uiHash);
+            const upd = app.availableUpdate || null;
+            const isUpdatingThis = updatingMenuSlugs.has(app.slug);
             const href =
               app.route ||
               (app.isSystemCore ? `/${app.slug}.html` : `/apps.html?run=${encodeURIComponent(app.slug)}`);
+            const updScope = upd
+              ? [
+                  upd.hasNewUi ? 'UI' : '',
+                  upd.hasNewWasm ? 'WASM' : '',
+                  upd.hasNewHfsInstance ? 'HFS' : '',
+                ]
+                  .filter(Boolean)
+                  .join('+')
+              : '';
             return `
-              <div class="slx-uh-app-item ${isAct ? 'active' : ''}" style="padding:0.42rem 0.52rem;gap:0.4rem;">
+              <div class="slx-uh-app-item ${isAct ? 'active' : ''}" style="padding:0.42rem 0.52rem;gap:0.4rem;${upd ? 'border-color:rgba(251,191,36,0.55);' : ''}">
                 <a href="${escapeHtmlText(href)}" style="display:flex;align-items:center;gap:0.5rem;min-width:0;flex:1;color:inherit;text-decoration:none;">
                   <span style="font-size:0.95rem;flex-shrink:0;">${escapeHtmlText(app.icon || '🧩')}</span>
                   <div style="min-width:0;flex:1;">
                     <div style="font-size:0.74rem;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtmlText(app.title)}</div>
-                    <div style="font-size:0.61rem;color:${isCached ? '#6ee7b7' : '#94a3b8'};font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                      ${isCached ? '⚡ HTML Cached Locally' : `v${escapeHtmlText(app.version || '1.0')}`}
+                    <div style="font-size:0.61rem;color:${upd ? '#fde68a' : isCached ? '#6ee7b7' : '#94a3b8'};font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${
+                        upd
+                          ? `🔄 v${escapeHtmlText(app.version || '1.0')} → v${escapeHtmlText(upd.version)} (${updScope || 'New'})`
+                          : isCached
+                          ? `⚡ v${escapeHtmlText(app.version || '1.0')} Cached`
+                          : `v${escapeHtmlText(app.version || '1.0')}`
+                      }
                     </div>
                   </div>
                 </a>
                 <div style="display:inline-flex;align-items:center;gap:3px;flex-shrink:0;">
-                  ${isAct ? '<span style="font-family:monospace;font-size:0.56rem;font-weight:800;color:#6ee7b7;margin-right:2px;">ACTIVE</span>' : ''}
+                  ${
+                    upd
+                      ? `<button type="button" data-uh-update-slug="${escapeHtmlText(app.slug)}" ${isUpdatingThis ? 'disabled' : ''} title="Verify &amp; update to v${escapeHtmlText(upd.version)}" style="padding:2px 6px;border-radius:5px;border:1px solid rgba(251,191,36,0.75);background:rgba(245,158,11,0.24);color:#fef3c7;font-family:monospace;font-size:0.59rem;font-weight:800;cursor:pointer;line-height:1.2;">${isUpdatingThis ? '…' : 'Update'}</button>`
+                      : isAct
+                      ? '<span style="font-family:monospace;font-size:0.56rem;font-weight:800;color:#6ee7b7;margin-right:2px;">ACTIVE</span>'
+                      : ''
+                  }
                   ${
                     idx > 0
                       ? `<button type="button" data-uh-move-up="${escapeHtmlText(app.slug)}" title="Move up in My Apps" style="padding:2px 5px;border-radius:5px;border:1px solid rgba(100,116,139,0.4);background:rgba(15,23,42,0.8);color:#94a3b8;font-size:0.6rem;cursor:pointer;line-height:1;">↑</button>`
@@ -3985,7 +4021,14 @@ export function mountSlxUnifiedHeader({
       ${installActiveBarHtml}
       <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 6px 2px;margin-top:2px;border-top:1px solid rgba(51,65,85,0.6);">
         <span class="slx-uh-apps-group-lbl" style="padding:0;">📦 My App Container (${installed.length})</span>
-        <a href="/apps.html?view=installed" style="font-family:monospace;font-size:0.62rem;font-weight:700;color:#38bdf8;text-decoration:none;">Manage →</a>
+        <div style="display:inline-flex;align-items:center;gap:6px;">
+          ${
+            pendingUpdates.length > 0
+              ? `<button type="button" data-uh-update-all="1" style="padding:2px 6px;border-radius:5px;border:1px solid rgba(251,191,36,0.7);background:rgba(245,158,11,0.22);color:#fde68a;font-family:monospace;font-size:0.59rem;font-weight:800;cursor:pointer;">🔄 Update All (${pendingUpdates.length})</button>`
+              : ''
+          }
+          <a href="/apps.html?view=installed" style="font-family:monospace;font-size:0.62rem;font-weight:700;color:#38bdf8;text-decoration:none;">Manage →</a>
+        </div>
       </div>
       <div style="display:flex;flex-direction:column;gap:2px;max-height:42vh;overflow-y:auto;">
         ${installedListHtml}
@@ -4011,7 +4054,53 @@ export function mountSlxUnifiedHeader({
     renderPersonalAppsMenu();
   });
 
+  // Non-blocking background check for updates to installed apps on any page
+  setTimeout(() => {
+    if (SlxPersonalAppContainer.countInstalled() > 0) {
+      const sc = new AppStoreClient({ rpcUrl: rpcUrlFn() });
+      SlxPersonalAppContainer.checkForUpdates({ storeClient: sc }).catch(() => {});
+    }
+  }, 850);
+
   refs.appsMenu?.addEventListener('click', async (ev) => {
+    const updSlugBtn = ev.target.closest('[data-uh-update-slug]');
+    if (updSlugBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const targetSlug = updSlugBtn.getAttribute('data-uh-update-slug');
+      if (!targetSlug || updatingMenuSlugs.has(targetSlug)) return;
+      updatingMenuSlugs.add(targetSlug);
+      renderPersonalAppsMenu();
+      try {
+        const sc = new AppStoreClient({ rpcUrl: rpcUrlFn() });
+        await SlxPersonalAppContainer.updateApp(targetSlug, { storeClient: sc });
+        if (targetSlug === canonicalActiveId && typeof window !== 'undefined') {
+          window.location.reload();
+          return;
+        }
+      } catch (_) {
+      } finally {
+        updatingMenuSlugs.delete(targetSlug);
+        renderPersonalAppsMenu();
+      }
+      return;
+    }
+    const updAllBtn = ev.target.closest('[data-uh-update-all]');
+    if (updAllBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const pendingSlugs = SlxPersonalAppContainer.listPendingUpdates().map((x) => x.slug);
+      try {
+        const sc = new AppStoreClient({ rpcUrl: rpcUrlFn() });
+        await SlxPersonalAppContainer.updateAllApps({ storeClient: sc });
+        if (pendingSlugs.includes(canonicalActiveId) && typeof window !== 'undefined') {
+          window.location.reload();
+          return;
+        }
+      } catch (_) {}
+      renderPersonalAppsMenu();
+      return;
+    }
     const moveUpBtn = ev.target.closest('[data-uh-move-up]');
     if (moveUpBtn) {
       ev.preventDefault();

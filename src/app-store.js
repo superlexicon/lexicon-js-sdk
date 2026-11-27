@@ -1283,7 +1283,8 @@ export class AppStoreClient {
       { slug: cleanSlug, title }
     );
 
-    let resolvedWasmHash = wasmCodeHash || ZERO_BYTES32;
+    let resolvedWasmHash =
+      wasmBytes && wasmBytes.length > 0 ? keccak256Hex(wasmBytes) : wasmCodeHash || ZERO_BYTES32;
     let resolvedDefaultHfs = defaultHfsAddr || ZERO_ADDR;
 
     // If AppStore HFS is live on Subnet 1, publish on-chain!
@@ -1295,6 +1296,8 @@ export class AppStoreClient {
       });
       const myEoa = wallet.keypair.address;
       const myPriv = wallet.keypair.privateKey;
+
+      const prevOnChain = await this.fetchAppBySlug(cleanSlug).catch(() => null);
 
       if (wasmBytes && wasmBytes.length > 0) {
         resolvedWasmHash = keccak256Hex(wasmBytes);
@@ -1311,8 +1314,8 @@ export class AppStoreClient {
         await _waitReceipts(this.rpcUrl, [hW]);
       }
 
-      if (deployInstance && resolvedWasmHash !== ZERO_BYTES32 && resolvedDefaultHfs === ZERO_ADDR) {
-        emit('Instantiating default HFS subroutine instance…');
+      if (deployInstance && resolvedWasmHash !== ZERO_BYTES32) {
+        emit('Instantiating fresh HFS subroutine instance from codeHash…');
         const nI = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
         const pred = computeCreateAddress(myEoa, nI).toLowerCase();
         const sI = signOrderedLexiconTx({
@@ -1326,6 +1329,18 @@ export class AppStoreClient {
         const hI = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [sI.raw]);
         const [rI] = await _waitReceipts(this.rpcUrl, [hI]);
         resolvedDefaultHfs = (rI.contractAddress || pred).toLowerCase();
+      } else if (
+        prevOnChain &&
+        resolvedWasmHash !== ZERO_BYTES32 &&
+        prevOnChain.wasmCodeHash &&
+        prevOnChain.wasmCodeHash.toLowerCase() !== resolvedWasmHash.toLowerCase() &&
+        resolvedDefaultHfs !== ZERO_ADDR &&
+        prevOnChain.defaultHfsAddr &&
+        prevOnChain.defaultHfsAddr.toLowerCase() === resolvedDefaultHfs.toLowerCase()
+      ) {
+        throw new Error(
+          'HFS WASM codeHash changed from the previous release, so the old defaultHfsAddr no longer matches. Choose "Deploy Fresh HFS Instance" or enter the newly deployed 0x… HFS contract address.'
+        );
       }
 
       await this.uploadUiBundleOnChain({
@@ -1607,8 +1622,53 @@ function _normalizePersonalAppRecord(appMeta = {}, prev = null) {
     uncompressedLen: Number(appMeta.uncompressedLen || prev?.uncompressedLen || 0),
     wasmCodeHash: String(appMeta.wasmCodeHash || prev?.wasmCodeHash || ZERO_BYTES32).toLowerCase(),
     defaultHfsAddr: String(appMeta.defaultHfsAddr || prev?.defaultHfsAddr || ZERO_ADDR).toLowerCase(),
+    availableUpdate:
+      appMeta.availableUpdate !== undefined ? appMeta.availableUpdate : prev?.availableUpdate || null,
     installedAt: prev?.installedAt || Date.now(),
     updatedAt: Date.now(),
+  };
+}
+
+function _computeAvailableUpdate(installedRec, latestMeta) {
+  if (!installedRec || !latestMeta) return null;
+  const curUi = String(installedRec.uiHash || ZERO_BYTES32).toLowerCase();
+  const latUi = String(latestMeta.uiHash || ZERO_BYTES32).toLowerCase();
+  const hasNewUi = latUi !== ZERO_BYTES32 && curUi !== ZERO_BYTES32 && latUi !== curUi;
+
+  const curWasm = String(installedRec.wasmCodeHash || ZERO_BYTES32).toLowerCase();
+  const latWasm = String(latestMeta.wasmCodeHash || ZERO_BYTES32).toLowerCase();
+  const hasNewWasm = latWasm !== ZERO_BYTES32 && latWasm !== curWasm;
+
+  const curHfs = String(installedRec.defaultHfsAddr || ZERO_ADDR).toLowerCase();
+  const latHfs = String(latestMeta.defaultHfsAddr || ZERO_ADDR).toLowerCase();
+  const hasNewHfsInstance = latHfs !== ZERO_ADDR && latHfs !== curHfs;
+
+  if (!hasNewUi && !hasNewWasm && !hasNewHfsInstance) {
+    return null;
+  }
+
+  return {
+    slug: installedRec.slug,
+    appId: Number(latestMeta.appId || installedRec.appId || 0),
+    title: latestMeta.title || installedRec.title,
+    summary: latestMeta.summary ?? installedRec.summary ?? '',
+    icon: latestMeta.icon || installedRec.icon || '🧩',
+    category: Number(latestMeta.category || installedRec.category || 6),
+    version: latestMeta.version || installedRec.version || '1.0.0',
+    uiHash: latUi !== ZERO_BYTES32 ? latUi : curUi,
+    wasmCodeHash: latWasm !== ZERO_BYTES32 ? latWasm : curWasm,
+    defaultHfsAddr: latHfs !== ZERO_ADDR ? latHfs : curHfs,
+    compressedLen: Number(latestMeta.compressedLen || installedRec.compressedLen || 0),
+    uncompressedLen: Number(latestMeta.uncompressedLen || installedRec.uncompressedLen || 0),
+    bundleUrl:
+      hasNewUi && latestMeta.source && latestMeta.source !== 'genesis-cas'
+        ? ''
+        : latestMeta.bundleUrl || '',
+    releaseCount: Number(latestMeta.releaseCount || 0),
+    updatedBlock: Number(latestMeta.updatedBlock || 0),
+    hasNewUi,
+    hasNewWasm,
+    hasNewHfsInstance,
   };
 }
 
@@ -1680,7 +1740,7 @@ export const SlxPersonalAppContainer = {
     const list = _readPersonalContainerRaw();
     const idx = list.findIndex((a) => String(a.slug || '').toLowerCase() === cleanSlug);
     const prev = idx >= 0 ? list[idx] : null;
-    const normalized = _normalizePersonalAppRecord(appMeta, prev);
+    const normalized = _normalizePersonalAppRecord({ ...appMeta, availableUpdate: null }, prev);
 
     let cachedBundle = null;
     if (
@@ -1756,6 +1816,27 @@ export const SlxPersonalAppContainer = {
     return list;
   },
 
+  hasPendingUpdate(slug) {
+    return Boolean(this.getInstalled(slug)?.availableUpdate);
+  },
+
+  getPendingUpdate(slug) {
+    return this.getInstalled(slug)?.availableUpdate || null;
+  },
+
+  listPendingUpdates() {
+    return _readPersonalContainerRaw().filter((a) => Boolean(a.availableUpdate));
+  },
+
+  countPendingUpdates() {
+    return this.listPendingUpdates().length;
+  },
+
+  /**
+   * Compares installed apps against the latest catalog without overwriting the user's pinned
+   * `uiHash`, `version`, `wasmCodeHash`, or `defaultHfsAddr`. Any newer release is recorded under
+   * `app.availableUpdate` so the UI displays an opt-in "Update" button.
+   */
   syncCatalogMetadata(catalogApps = []) {
     if (!Array.isArray(catalogApps) || !catalogApps.length) return;
     const list = _readPersonalContainerRaw();
@@ -1768,21 +1849,189 @@ export const SlxPersonalAppContainer = {
       const cur = list[i];
       const latest = bySlug.get(String(cur.slug || '').toLowerCase());
       if (!latest) continue;
-      const next = _normalizePersonalAppRecord(latest, cur);
+
+      const nextUpdate = _computeAvailableUpdate(cur, latest);
+      const prevUpdateJson = JSON.stringify(cur.availableUpdate || null);
+      const nextUpdateJson = JSON.stringify(nextUpdate || null);
+
+      const nextRoute = latest.route || cur.route;
+      const nextCategory = Number(latest.category || cur.category || 6);
+
       if (
-        next.uiHash !== cur.uiHash ||
-        next.version !== cur.version ||
-        next.title !== cur.title ||
-        next.category !== cur.category ||
-        next.route !== cur.route
+        prevUpdateJson !== nextUpdateJson ||
+        nextRoute !== cur.route ||
+        nextCategory !== cur.category
       ) {
-        list[i] = next;
+        list[i] = {
+          ...cur,
+          route: nextRoute,
+          category: nextCategory,
+          availableUpdate: nextUpdate,
+        };
         mutated = true;
       }
     }
     if (mutated) {
       _writePersonalContainerRaw(list);
     }
+  },
+
+  /**
+   * Applies an available update for `slug` at the user's explicit request: fetches & `keccak256`-verifies
+   * the new `.html.gz` bundle, caches it locally, updates `uiHash`/`version`/`wasmCodeHash`/`defaultHfsAddr`,
+   * and evicts the superseded UI bundle if unreferenced.
+   */
+  async updateApp(
+    slug,
+    { storeClient = null, latestMeta = null, onStatus = null, evictPreviousCache = true } = {}
+  ) {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    const cur = this.getInstalled(cleanSlug);
+    if (!cur) {
+      throw new Error(`App "${cleanSlug}" is not installed.`);
+    }
+    const client = storeClient || new AppStoreClient();
+    let target = latestMeta || cur.availableUpdate || null;
+    if (!target) {
+      const onChain = await client.fetchAppBySlug(cleanSlug).catch(() => null);
+      if (onChain) {
+        target = _computeAvailableUpdate(cur, onChain) || onChain;
+      }
+    }
+    if (!target) {
+      return { app: cur, updated: false };
+    }
+
+    const prevUiHash = String(cur.uiHash || '').toLowerCase();
+    const res = await this.installApp(
+      {
+        ...cur,
+        ...target,
+        slug: cleanSlug,
+        availableUpdate: null,
+      },
+      { storeClient: client, onStatus, cacheHtml: true }
+    );
+
+    if (
+      evictPreviousCache &&
+      prevUiHash &&
+      prevUiHash !== ZERO_BYTES32 &&
+      prevUiHash !== String(res.app.uiHash || '').toLowerCase()
+    ) {
+      const remaining = _readPersonalContainerRaw();
+      const stillUsed = remaining.some(
+        (a) => String(a.uiHash || '').toLowerCase() === prevUiHash
+      );
+      if (!stillUsed) {
+        await SlxUiBundleCache.evictBundle(prevUiHash).catch(() => {});
+      }
+    }
+
+    return { ...res, updated: true, previousUiHash: prevUiHash, previousVersion: cur.version };
+  },
+
+  async updateAllApps({ storeClient = null, onStatus = null } = {}) {
+    const pending = this.listPendingUpdates();
+    const client = storeClient || new AppStoreClient();
+    const updatedApps = [];
+    for (let i = 0; i < pending.length; i += 1) {
+      const item = pending[i];
+      if (typeof onStatus === 'function') {
+        onStatus(
+          `Updating [${i + 1}/${pending.length}] "${item.title}" → v${
+            item.availableUpdate?.version || 'latest'
+          }…`
+        );
+      }
+      const res = await this.updateApp(item.slug, { storeClient: client, onStatus });
+      if (res?.app) updatedApps.push(res.app);
+    }
+    return updatedApps;
+  },
+
+  /**
+   * Background update detector across Genesis manifest, locally published releases, and live
+   * Subnet 1 `app_store.wasm`. Populates `availableUpdate` on any outdated installed apps.
+   */
+  async checkForUpdates({ storeClient = null, manifestUrl = '/app-bundles/manifest.json' } = {}) {
+    const installed = _readPersonalContainerRaw();
+    if (!installed.length) return [];
+
+    const bySlug = new Map();
+    const bySlugId = new Map();
+
+    const cachedManifest = getCachedCatalogManifestLocal();
+    for (const g of cachedManifest?.apps || []) {
+      const copy = { ...g, source: 'genesis-cas' };
+      bySlug.set(String(g.slug || '').toLowerCase(), copy);
+      if (g.slugId) bySlugId.set(String(g.slugId).toLowerCase(), copy);
+    }
+
+    if (typeof fetch === 'function' && manifestUrl) {
+      try {
+        const resp = await fetch(manifestUrl, { cache: 'no-cache' });
+        if (resp.ok) {
+          const fresh = await resp.json();
+          for (const g of fresh?.apps || []) {
+            const copy = { ...g, source: 'genesis-cas' };
+            bySlug.set(String(g.slug || '').toLowerCase(), copy);
+            if (g.slugId) bySlugId.set(String(g.slugId).toLowerCase(), copy);
+          }
+        }
+      } catch (_) {}
+    }
+
+    for (const loc of loadLocalPublishedApps()) {
+      const key = String(loc.slug || '').toLowerCase();
+      const prev = bySlug.get(key) || {};
+      const merged = { ...prev, ...loc };
+      if (prev.uiHash && merged.uiHash && prev.uiHash.toLowerCase() !== merged.uiHash.toLowerCase()) {
+        merged.bundleUrl = '';
+      }
+      bySlug.set(key, merged);
+      if (merged.slugId) bySlugId.set(String(merged.slugId).toLowerCase(), merged);
+    }
+
+    const client = storeClient || new AppStoreClient();
+    try {
+      const storeAddr = await client.resolveStoreAddress();
+      if (storeAddr) {
+        const onChainItems = await client.fetchOnChainApps();
+        for (const oc of onChainItems) {
+          const existing = bySlugId.get(String(oc.slugId || '').toLowerCase());
+          if (existing) {
+            const uiChanged =
+              existing.uiHash && oc.uiHash && existing.uiHash.toLowerCase() !== oc.uiHash.toLowerCase();
+            Object.assign(existing, {
+              appId: oc.appId,
+              title: oc.title || existing.title,
+              summary: oc.summary || existing.summary,
+              icon: oc.icon || existing.icon,
+              version: oc.version || existing.version,
+              category: oc.category || existing.category,
+              uiHash: oc.uiHash,
+              wasmCodeHash: oc.wasmCodeHash !== ZERO_BYTES32 ? oc.wasmCodeHash : existing.wasmCodeHash,
+              defaultHfsAddr: oc.defaultHfsAddr !== ZERO_ADDR ? oc.defaultHfsAddr : existing.defaultHfsAddr,
+              releaseCount: oc.releaseCount,
+              updatedBlock: oc.updatedBlock,
+              bundleUrl: uiChanged ? '' : existing.bundleUrl,
+              source: 'onchain',
+            });
+          } else {
+            const syn = `app-${oc.appId}`;
+            bySlug.set(syn, { ...oc, slug: syn, route: `/apps.html?run=${syn}`, source: 'onchain' });
+          }
+        }
+      }
+    } catch (_) {}
+
+    const mergedList = Array.from(bySlug.values());
+    if (mergedList.length > 0) {
+      cacheCatalogManifestLocal({ apps: mergedList });
+      this.syncCatalogMetadata(mergedList);
+    }
+    return this.listPendingUpdates();
   },
 
   async preCacheAllInstalled({ storeClient = null, onStatus = null } = {}) {
