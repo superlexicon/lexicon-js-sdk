@@ -1398,29 +1398,47 @@ export async function attachStreamToVideoElement(
 ) {
   if (!videoEl || !stream) return;
   const tracks = stream.getTracks ? stream.getTracks() : [];
-  const sig = tracks.map((t) => `${t.kind}:${t.id}:${t.readyState}`).join('|');
-  if (videoEl._slxTrackSig !== sig || !videoEl.srcObject) {
-    videoEl._slxTrackSig = sig;
-    videoEl.srcObject = new MediaStream(tracks);
+  const sig = tracks
+    .map((t) => `${t.kind}:${t.id}:${t.readyState}:${t.muted ? 'm' : 'u'}`)
+    .join('|');
+  if (videoEl.srcObject !== stream) {
+    videoEl.srcObject = stream;
   }
+  videoEl._slxTrackSig = sig;
   videoEl.playsInline = true;
-  videoEl.muted = Boolean(muted);
+  videoEl.setAttribute('playsinline', '');
+  videoEl.setAttribute('webkit-playsinline', '');
 
-  try {
-    await videoEl.play();
-  } catch {
-    if (!muted) {
-      // Autoplay with sound was blocked by browser policy — play muted immediately so video renders,
-      // and notify UI to display a 1-tap "🔊 Unmute Audio" pill!
-      videoEl.muted = true;
-      try {
-        await videoEl.play();
-      } catch {
-        // ignore
-      }
-      onAutoplayMuted?.(videoEl);
-    }
+  if (muted) {
+    videoEl._slxAutoplayMuted = false;
+    videoEl.muted = true;
+  } else if (!videoEl._slxAutoplayMuted) {
+    videoEl.muted = false;
   }
+
+  const tryPlay = async () => {
+    try {
+      await videoEl.play();
+    } catch {
+      if (!muted) {
+        // Autoplay with sound was blocked by browser policy — keep muted until user taps Unmute
+        // (never reset `muted = false` on subsequent `onunmute` events without a user gesture!).
+        videoEl._slxAutoplayMuted = true;
+        videoEl.muted = true;
+        try {
+          await videoEl.play();
+        } catch {
+          // wait for loadedmetadata / user tap
+        }
+        onAutoplayMuted?.(videoEl);
+      }
+    }
+  };
+
+  videoEl.onloadedmetadata = () => {
+    tryPlay();
+  };
+  await tryPlay();
 }
 
 export function stopCallMediaStream(stream) {
@@ -1502,10 +1520,10 @@ export class SlxWebRtcPeerSession {
     onDataChannelOpen = null,
   } = {}) {
     this._hasStunServers = Array.isArray(iceServers) && iceServers.length > 0;
+    // Use standard `balanced` bundle policy (do NOT set `max-bundle`, which causes Firefox's
+    // post-gathering `localDescription` to rewrite slave `m=video` / `m=application` ports to `0`).
     this.pc = new RTCPeerConnection({
       iceServers,
-      bundlePolicy: 'max-bundle',
-      rtcpMuxPolicy: 'require',
     });
     this.localStream = localStream;
     this.remoteStream = new MediaStream();
@@ -1520,26 +1538,24 @@ export class SlxWebRtcPeerSession {
     this._appliedCandidateKeys = new Set();
     this._pendingRemoteCandidates = [];
 
-    // Unified-Plan deterministic m-line ordering:
-    //  - Initiator adds [audio, video] transceivers in deterministic order up front so even
-    //    voice-only or camera-less callers negotiate bidirectional audio+video slots cleanly.
-    //  - Responder waits until `setRemoteDescription(offer)` creates transceivers, then binds
-    //    local tracks directly onto the Offer's matching transceivers!
+    // Unified-Plan cross-browser track negotiation (Firefox <-> Chrome <-> Safari/iOS):
+    //  - Initiator uses standard `addTrack(track, localStream)` when media tracks exist (preserving
+    //    `a=msid` + `a=ssrc`), falling back to `recvonly` transceivers only for missing tracks.
+    //  - Responder calls `addTrack(track, localStream)` after `setRemoteDescription(offer)`, which
+    //    per W3C WebRTC §5.1 attaches `track` + `localStream` (`a=msid`) directly onto the Offer's
+    //    matching transceivers and sets `direction = 'sendrecv'`.
     if (isInitiator) {
       const audioTrack = localStream?.getAudioTracks?.()[0] || null;
       const videoTrack = localStream?.getVideoTracks?.()[0] || null;
-      if (typeof this.pc.addTransceiver === 'function') {
-        this.pc.addTransceiver(audioTrack || 'audio', {
-          direction: audioTrack ? 'sendrecv' : 'recvonly',
-          streams: localStream ? [localStream] : [],
-        });
-        this.pc.addTransceiver(videoTrack || 'video', {
-          direction: videoTrack ? 'sendrecv' : 'recvonly',
-          streams: localStream ? [localStream] : [],
-        });
-      } else if (localStream) {
-        if (audioTrack) this.pc.addTrack(audioTrack, localStream);
-        if (videoTrack) this.pc.addTrack(videoTrack, localStream);
+      if (audioTrack && localStream) {
+        this.pc.addTrack(audioTrack, localStream);
+      } else if (typeof this.pc.addTransceiver === 'function') {
+        this.pc.addTransceiver('audio', { direction: 'recvonly' });
+      }
+      if (videoTrack && localStream) {
+        this.pc.addTrack(videoTrack, localStream);
+      } else if (typeof this.pc.addTransceiver === 'function') {
+        this.pc.addTransceiver('video', { direction: 'recvonly' });
       }
     }
 
@@ -1558,7 +1574,8 @@ export class SlxWebRtcPeerSession {
       };
       if (ev.streams && ev.streams[0]) {
         for (const tr of ev.streams[0].getTracks()) addOne(tr);
-      } else if (ev.track) {
+      }
+      if (ev.track) {
         addOne(ev.track);
       }
       notifyRemote();
@@ -1568,8 +1585,8 @@ export class SlxWebRtcPeerSession {
       if (!ev.candidate || !ev.candidate.candidate) return;
       const candObj = {
         candidate: ev.candidate.candidate,
-        sdpMid: ev.candidate.sdpMid,
-        sdpMLineIndex: ev.candidate.sdpMLineIndex,
+        sdpMid: ev.candidate.sdpMid ?? '0',
+        sdpMLineIndex: ev.candidate.sdpMLineIndex ?? 0,
       };
       if (!this._initialDone) {
         this.initialCandidates.push(candObj);
@@ -1645,23 +1662,12 @@ export class SlxWebRtcPeerSession {
     if (!this.localStream) return;
     const audioTrack = this.localStream.getAudioTracks?.()[0] || null;
     const videoTrack = this.localStream.getVideoTracks?.()[0] || null;
-    const transceivers = typeof this.pc.getTransceivers === 'function' ? this.pc.getTransceivers() : [];
-
-    const bindKind = async (kind, track) => {
-      if (!track) return;
-      const tr = transceivers.find(
-        (t) => !t.stopped && t.receiver?.track?.kind === kind && !t.sender?.track
-      );
-      if (tr && tr.sender) {
-        await tr.sender.replaceTrack(track);
-        tr.direction = 'sendrecv';
-      } else {
-        this.pc.addTrack(track, this.localStream);
-      }
-    };
-
-    await bindKind('audio', audioTrack);
-    await bindKind('video', videoTrack);
+    if (audioTrack) {
+      this.pc.addTrack(audioTrack, this.localStream);
+    }
+    if (videoTrack) {
+      this.pc.addTrack(videoTrack, this.localStream);
+    }
   }
 
   async _waitInitialIce(timeoutMs = 2400) {
@@ -1692,28 +1698,51 @@ export class SlxWebRtcPeerSession {
         const hasReflexiveOrRelay = this.initialCandidates.some((c) =>
           /\btyp\s+(srflx|relay)\b/i.test(c.candidate || '')
         );
-        // Once we have WAN STUN/TURN candidates (or if running pure LAN with no STUN servers),
-        // finish after a short 400ms settle window instead of waiting the full 2.4s cap.
+        // Settle window of 850ms after WAN STUN/TURN arrives so multi-NIC / Wi-Fi / IPv6 / TURN
+        // candidates all bundle into the single initial Offer/Answer tx.
         if (hasReflexiveOrRelay || !this._hasStunServers) {
           if (quietTimer) clearTimeout(quietTimer);
           quietTimer = setTimeout(() => {
             clearTimeout(maxTimer);
             finish();
-          }, 400);
+          }, this._hasStunServers ? 850 : 350);
         }
       };
       this.pc.addEventListener('icegatheringstatechange', check);
     });
   }
 
+  /**
+   * Strips any inline `a=candidate:` / `a=end-of-candidates` lines so SDP carries clean JSEP
+   * session/media/DTLS/SSRC/msid parameters (`m=video 9`, never Firefox's post-gathering `m=video 0`),
+   * while all ICE candidates travel explicitly in `candidates[]` for uniform cross-browser handling.
+   */
+  _cleanSessionSdp(preferredSdp, fallbackSdp = '') {
+    const base = String(preferredSdp || fallbackSdp || '');
+    const filtered = base
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .split('\n')
+      .filter(
+        (line) =>
+          line.length > 0 &&
+          !line.startsWith('a=candidate:') &&
+          !line.startsWith('a=end-of-candidates')
+      );
+    return filtered.join('\r\n') + '\r\n';
+  }
+
   async createBundledOffer({ iceWaitMs = 2400 } = {}) {
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     await this._waitInitialIce(iceWaitMs);
-    const localSdp = normalizeSdp(this.pc.localDescription?.sdp || offer.sdp);
-    const dtlsFp = extractSdpSha256Fingerprint(localSdp);
+    const cleanOfferSdp = this._cleanSessionSdp(offer.sdp, this.pc.localDescription?.sdp);
+    const dtlsFp =
+      extractSdpSha256Fingerprint(cleanOfferSdp) !== ZERO_BYTES32
+        ? extractSdpSha256Fingerprint(cleanOfferSdp)
+        : extractSdpSha256Fingerprint(this.pc.localDescription?.sdp || '');
     return {
-      sdp: localSdp,
+      sdp: cleanOfferSdp,
       dtlsFp,
       candidates: [...this.initialCandidates],
     };
@@ -1731,15 +1760,20 @@ export class SlxWebRtcPeerSession {
     }
     await this.pc.setRemoteDescription({ type: 'offer', sdp: normSdp });
     await this._attachResponderTracksAfterRemoteOffer();
-    await this.applyRemoteCandidates(remoteOfferPayload.candidates || []);
 
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
+    // Apply remote ICE candidates AFTER both remote Offer and local Answer descriptions are set!
+    await this.applyRemoteCandidates(remoteOfferPayload.candidates || []);
     await this._waitInitialIce(iceWaitMs);
-    const localSdp = normalizeSdp(this.pc.localDescription?.sdp || answer.sdp);
-    const dtlsFp = extractSdpSha256Fingerprint(localSdp);
+
+    const cleanAnswerSdp = this._cleanSessionSdp(answer.sdp, this.pc.localDescription?.sdp);
+    const dtlsFp =
+      extractSdpSha256Fingerprint(cleanAnswerSdp) !== ZERO_BYTES32
+        ? extractSdpSha256Fingerprint(cleanAnswerSdp)
+        : extractSdpSha256Fingerprint(this.pc.localDescription?.sdp || '');
     return {
-      sdp: localSdp,
+      sdp: cleanAnswerSdp,
       dtlsFp,
       candidates: [...this.initialCandidates],
       peerDtlsCheck: fpCheck,
