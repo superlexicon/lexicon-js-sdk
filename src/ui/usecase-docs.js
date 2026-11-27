@@ -31,9 +31,11 @@ const DOC_APP_ALIASES = {
   lexicall: 'telephony',
   ethercall: 'telephony',
   webrtc: 'telephony',
+  voles: 'volatile-voles',
+  volatile_voles: 'volatile-voles',
 };
 
-const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir']);
+const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir', 'volatile-voles']);
 
 export function normalizeUseCaseId(appId) {
   if (!appId) return '';
@@ -1177,6 +1179,72 @@ export const USECASE_DESCRIPTIONS = {
               <li>Claim a seat in <strong>Bletchley Park Tribunal #1</strong> (or spectate the 5 autonomous ZK bots on <strong>Zurych UBS Vault Case #2</strong>) and watch pure-JS <code>Bulletproofs</code> R1CS proofs generate in your browser in <code>~10 ms</code>!</li>
             </ul>
           </div>
+        </div>
+      `,
+    },
+  },
+
+  'volatile-voles': {
+    id: 'volatile-voles',
+    icon: '🐹',
+    title: 'Volatile Voles — Chaotic Burrow & Counter-Stack HFS Architecture',
+    href: '/volatile-voles.html',
+    tagline:
+      'How multi-seat tabletop card state, out-of-turn SQUEAK-NO! counter-stacks, Baby Vole Nest recycling, and hybrid PvP/AI turn resolution execute deterministically in a 31 KB Halt-Free Subroutine at $0.00 gas.',
+    featurePills: [
+      { label: 'SQUEAK-NO! Counter-Stack', tone: 'rose' },
+      { label: 'Viewer-Scoped Hand Masking', tone: 'cyan' },
+      { label: 'Hybrid 2–5p PvP + On-Chain AI', tone: 'amber' },
+      { label: '31 KB Halt-Proof WASM', tone: 'emerald' },
+    ],
+    tabs: {
+      codification: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🛡️ Tabletop Card Engine Without Game Servers</div>
+          <p>
+            Traditional digital card games rely on centralized WebSocket match servers to enforce turn phases, counter-windows, discard limits, and card triggers.
+            <strong>Volatile Voles</strong> codifies all <strong>25 card archetypes</strong> (<code>68</code>-card Main Deck + <code>8</code>-card Baby Vole Nest), multi-depth <code>SQUEAK-NO!</code> counter-chains, and autonomous tactical AI bots directly inside <code>volatile_voles.wasm</code>.
+          </p>
+        </div>
+      `,
+      crypto: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>🎲 Multi-Source Keccak-256 Deck Entropy</h4>
+            <p>Every player join, forage, and play mixes fresh <code>msg_sender</code>, block height, and monotonic nonce entropy into the table seed, automatically reshuffling the Scrap Heap when the 68-card Draw Pile empties.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🙈 Viewer-Scoped Hand Privacy &amp; Zero-Leak PvP</h4>
+            <p><code>getTableState(tableId, viewer)</code> reveals hand cards strictly to the owning seat while masking rival hands as <code>0xFE</code>, and multi-human PvP opens uniform reaction windows whenever rivals hold cards.</p>
+          </div>
+        </div>
+      `,
+      topology: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Subroutine / Component</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>volatile_voles.wasm</code> (<code>31 KB</code>)</td>
+              <td>Bounded <code>#![no_std]</code> state machine enforcing Dawn-of-Turn triggers, Baby Nest returns, Faraday Dome &amp; Hazmat immunities, Pandamonium-style Truffles victory caps, and <code>SQUEAK-NO!</code> counter-stacks.</td>
+            </tr>
+            <tr>
+              <td><code>HfsRegistry</code> + <code>AppStore</code></td>
+              <td>Registers public &amp; private Burrow Arena instances and serves the <code>keccak256</code>-verified gzipped tabletop UI bundle directly from chain.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      verification: `
+        <div class="slx-ucd-card">
+          <h4>✅ Deterministic Halt-Proof Guarantees</h4>
+          <ul>
+            <li><strong>Fixed-Bound Arrays:</strong> Max <code>5</code> seats, <code>16</code> hand slots, <code>12</code> Burrow Voles, <code>8</code> Perks/Hexes, and <code>14</code> bounded AI step iterations guarantee O(1) worst-case Wasmtime fuel execution.</li>
+          </ul>
         </div>
       `,
     },

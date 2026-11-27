@@ -1956,6 +1956,86 @@ export async function deployNewWebRtcSignalHfs({
   };
 }
 
+export async function deployNewVolatileVolesHfs({
+  wallet,
+  label = 'Volatile Voles Burrow Arena',
+  rpcUrl = getDefaultNodeWsUrl(),
+  onStatus = null,
+}) {
+  const { manifest } = await SlxHfsCache.hydrateWithManifest();
+  const codeHash = manifest?.codeHashes?.volatile_voles;
+  const reg = manifest?.hfsRegistry;
+  if (!codeHash || !reg) {
+    throw new Error('Missing volatile_voles codeHash or hfsRegistry in manifest');
+  }
+
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'Volatile Voles' });
+  const myEoa = wallet.keypair.address;
+  const myPriv = wallet.keypair.privateKey;
+
+  if (onStatus) onStatus('Block 1/2: Instantiating fresh volatile_voles.wasm Burrow Arena…');
+  const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const s0 = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0,
+    to: null,
+    data: codeHash,
+    gasLimit: 5_000_000n,
+  });
+  const [r0] = await waitReceipts(rpcUrl, [await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [s0.raw])]);
+  const newContractAddr = r0.contractAddress.toLowerCase();
+
+  const tableId = bytesToHex(concatBytes(utf8ToBytes('VOLES_TBL_'), randomBytes(22)));
+  if (onStatus) onStatus(`Block 2/2: Opening Burrow Table & registering ${shortHex(newContractAddr)}…`);
+
+  const n1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const txCreate = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1,
+    to: newContractAddr,
+    data: encodeSimpleAbi('createTable(bytes32,address,uint64)', [
+      ['bytes32', tableId],
+      ['address', idRec?.identityAddr || '0x0000000000000000000000000000000000000000'],
+      ['uint64', 7n],
+    ]),
+    gasLimit: 3_500_000n,
+    extraTargets: [newContractAddr],
+  });
+  const txReg = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 1n,
+    to: reg,
+    data: HfsRegistryAbi.registerInstance('VOLATILE_VOLES', newContractAddr, idRec?.identityAddr, label, {
+      tableId,
+    }),
+    gasLimit: 5_200_000n,
+    extraTargets: [reg, newContractAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
+    lowerBoundHashHex: txCreate.txHash,
+  });
+
+  await waitReceipts(rpcUrl, [
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txCreate.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txReg.raw]),
+  ]);
+
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: newContractAddr,
+      typeName: 'VOLATILE_VOLES',
+      status: 2,
+      label,
+      rpcUrl,
+    })
+    .catch(() => {});
+
+  return {
+    primaryAddr: newContractAddr,
+    label,
+    meta: { tableId },
+    selectionKey: makeHfsSelectionKey(newContractAddr, { tableId }),
+  };
+}
+
 function wrapWebGatedDeployer(fn) {
   return async (opts = {}) => {
     const candidateLabel = opts.companyName || opts.label || '';
@@ -1977,3 +2057,4 @@ registerHfsTypeDeployer("QUANTUM_LOTTERY", wrapWebGatedDeployer(deployNewQuantum
 registerHfsTypeDeployer("SECRET_BALLOT", wrapWebGatedDeployer(deployNewSecretBallotHfs));
 registerHfsTypeDeployer("IFRS_LEDGER", wrapWebGatedDeployer(deployNewIfrsLedgerHfs));
 registerHfsTypeDeployer("WEBRTC_SIGNAL", wrapWebGatedDeployer(deployNewWebRtcSignalHfs));
+registerHfsTypeDeployer("VOLATILE_VOLES", wrapWebGatedDeployer(deployNewVolatileVolesHfs));

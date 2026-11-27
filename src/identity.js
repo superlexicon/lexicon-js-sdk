@@ -1556,6 +1556,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Cipher Noir Sabotage Tribunal',
     placeholder: 'e.g. Geneva Clearinghouse Audit',
   },
+  VOLATILE_VOLES: {
+    typeName: 'VOLATILE_VOLES',
+    icon: '🐹',
+    shortLabel: 'Voles Burrow',
+    deployBtnText: '+ New Burrow Arena',
+    modalTitle: 'Deploy & Register New Volatile Voles Burrow Arena',
+    placeholder: 'e.g. High-Voltage Burrow Club #1',
+  },
   QUANTUM_LOTTERY: {
     typeName: 'QUANTUM_LOTTERY',
     icon: '🎰',

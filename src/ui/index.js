@@ -3676,6 +3676,15 @@ export const SLX_PLATFORM_APPS = [
     href: '/lottery.html',
     group: 'Multiplayer On-Chain Games',
   },
+  {
+    id: 'volatile-voles',
+    icon: '🐹',
+    label: 'Volatile Voles',
+    shortLabel: 'Volatile Voles',
+    sub: 'Chaotic Burrow Sabotage & Squeak-No! Cards',
+    href: '/volatile-voles.html',
+    group: 'Multiplayer On-Chain Games',
+  },
 ];
 
 const APP_ID_ALIASES = {
@@ -3688,6 +3697,8 @@ const APP_ID_ALIASES = {
   fleet: 'battleship',
   noir: 'cipher-noir',
   'quantum-lottery': 'lottery',
+  voles: 'volatile-voles',
+  volatile_voles: 'volatile-voles',
   'secret-ballot': 'ballot',
   ciphervote: 'ballot',
   'ifrs-ledger': 'accounting',

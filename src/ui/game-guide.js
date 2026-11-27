@@ -406,6 +406,90 @@ const GAME_MANUALS = {
       `,
     },
   },
+
+  'volatile-voles': {
+    icon: '🐹',
+    title: 'Volatile Voles — Chaotic Burrow Field Manual',
+    accent: '#f59e0b',
+    tagline:
+      'Chaotic tabletop creature-collection & out-of-turn counter-sabotage for 2–5 players — recruit 7 Voles into your Burrow while sawing Perks, swapping Hands, cursing rivals into Potatoes, and slamming SQUEAK-NO! at $0.00 gas.',
+    welcomePrimaryLabel: '⚡ Deal Me In — Start Quick Match',
+    quickSteps: [
+      {
+        num: '1',
+        title: 'Start With 1 Baby Vole + 5 Cards',
+        body: 'Click ⚡ Quick Match (1 Human + 3 AI Bots) or open a 2–5 player PvP Table. Every player begins with 1 adorable Baby Vole from The Nest in their Burrow and 5 cards in hand.',
+      },
+      {
+        num: '2',
+        title: 'Dawn & Draw → Play 1 Card OR Forage (+1)',
+        body: 'Your Dawn-of-Turn abilities & mandatory Draw run automatically! Then either click any playable card in your hand (Vole, Perk, Hex, or Chaos Spell) OR click 🌰 Forage (+1 Card).',
+      },
+      {
+        num: '3',
+        title: 'Slam SQUEAK-NO! & Race to 7 Voles',
+        body: 'First player with 7 effective Voles in their Burrow wins! Hold onto SQUEAK-NO! & APEX SQUEAK-NO! Instants to cancel a rival’s game-winning Vole or nasty Hex right out of turn!',
+      },
+    ],
+    tabs: {
+      quickstart: `
+        <div class="slx-gg-hero">
+          <div class="slx-gg-hero-title">🎯 Goal of Volatile Voles</div>
+          <p>
+            Be the first player to assemble <strong>7 effective Voles</strong> inside your <strong>Burrow</strong>!
+            Play cute-yet-unhinged <strong>Baby, Basic, and Volatile Mutant Voles</strong>, power up your engine with <strong>Perks</strong>, drop debilitating <strong>Hexes</strong> into opponents&rsquo; Burrows, unleash <strong>Chaos Spells</strong>, and counter ANY rival play out-of-turn with <strong><code>SQUEAK-NO!</code></strong>!
+          </p>
+        </div>
+        <div class="slx-gg-steps-grid">
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">ZONE 1</span>
+            <h4>🪺 The Nest (Baby Voles)</h4>
+            <p>Baby Voles live in <strong>The Nest</strong> — never the Draw Pile or Scrap Heap. If a Baby Vole is destroyed, sacrificed, or bounced, it safely bounces right back to The Nest!</p>
+          </div>
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">ZONE 2</span>
+            <h4>🏡 Your Burrow</h4>
+            <p>Holds your <strong>Voles</strong>, positive <strong>Perks</strong> (like <em>Overclocked Hamster Wheel</em>), and any nasty <strong>Hexes</strong> rivals dump on you (like <em>Hallucinogenic Truffles</em>)!</p>
+          </div>
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">ZONE 3</span>
+            <h4>🛑 SQUEAK-NO! Stack</h4>
+            <p>Whenever a card is played, rivals holding <strong><code>SQUEAK-NO!</code></strong> can cancel it — and you can counter-squeak their <code>SQUEAK-NO!</code> right back unless someone drops <strong><code>APEX SQUEAK-NO!</code></strong>!</p>
+          </div>
+        </div>
+      `,
+      controls: `
+        <div class="slx-gg-card">
+          <h4>🔄 4-Phase Turn Structure</h4>
+          <ul>
+            <li><strong>1. Dawn of Turn:</strong> Automatic! Triggers Burrow abilities like <em>Alpha Warlord Vole</em> (<code>+1</code> bonus card) and sets <code>2</code> plays if you own <em>Overclocked Hamster Wheel</em>.</li>
+            <li><strong>2. Draw Phase:</strong> Automatic! Draws <code>1</code> card from the 68-card Main Deck (reshuffling the Scrap Heap if empty).</li>
+            <li><strong>3. Action Phase:</strong> Play <strong>1 card</strong> from your hand (or <strong>2 cards</strong> with <em>Hamster Wheel</em>), OR click <strong>🌰 Forage (+1 Card)</strong> to draw an extra card and end your turn.</li>
+            <li><strong>4. End of Turn (7-Card Hand Limit):</strong> If you hold more than <code>7</code> cards, select excess cards to discard down to <code>7</code>.</li>
+          </ul>
+        </div>
+      `,
+      reference: `
+        <div class="slx-gg-card">
+          <h4>🃏 Card Categories &amp; Signature Tricks</h4>
+          <ul>
+            <li><strong>⚡ Mutant Voles:</strong> <em>Chainsaw Berserker</em> (destroy rival Vole/Perk — or saw off a Hex in your OWN Burrow!), <em>Klepto-Magnet</em> (steal from hand), <em>Necro-Spore</em> (revive Vole from Scrap), <em>Siren Hypno-Vole</em> (discard 1 to abduct a rival Vole), <em>Hazmat Bunker</em> (spell/destroy immune!), <em>Broodmother Mech</em> (+1 Baby from Nest).</li>
+            <li><strong>🧪 Chaos Spells:</strong> <em>Two-For-One Tunnel Collapse</em> (sacrifice 1 own Vole/Hex to destroy 2 rival cards!), <em>Grand Burrow Heist</em> (swap entire hands!), <em>Vole-nado Vortex</em> (bounce Vole + draw 1), <em>Doomsday EMP Reset</em> (wipe ALL Perks &amp; Hexes everywhere).</li>
+            <li><strong>☣️ Hexes:</strong> <em>Hallucinogenic Truffles</em> (&ldquo;Potato Delusion&rdquo; — caps victim&rsquo;s effective Voles at <code>5</code> so they CANNOT win until they saw/sacrifice/EMP the Hex!) &amp; <em>Tin-Foil Muzzle</em> (silences <code>SQUEAK-NO!</code> Instants).</li>
+          </ul>
+        </div>
+      `,
+      onchain: `
+        <div class="slx-gg-card">
+          <h4>⛓️ 100% Bounded On-Chain Engine (<code>volatile_voles.wasm</code>)</h4>
+          <ul>
+            <li><strong>Viewer-Scoped Hand Privacy:</strong> <code>getTableState(tableId, viewer)</code> reveals your own hand bytes while masking all rival hands as <code>0xFE</code> card backs until match completion.</li>
+            <li><strong>Zero-Stall Hybrid PvP + Tactical AI:</strong> Solo games against AI Bots resolve your uncountered plays in a single block and pause in <code>PHASE_REACTION</code> only when you actually hold a legal <code>SQUEAK-NO!</code> response, while multi-human PvP opens full zero-leak reaction windows at <strong>$0.00 gas</strong>.</li>
+          </ul>
+        </div>
+      `,
+    },
+  },
 };
 
 function injectGuideStyles() {
