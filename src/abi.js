@@ -39,6 +39,16 @@ export function u16BEBytes(n) {
   return new Uint8Array([(v >> 8) & 0xff, v & 0xff]);
 }
 
+export function u32BEBytes(n) {
+  const v = Number(n) >>> 0;
+  return new Uint8Array([
+    (v >>> 24) & 0xff,
+    (v >>> 16) & 0xff,
+    (v >>> 8) & 0xff,
+    v & 0xff,
+  ]);
+}
+
 export function u64BEBytes(n) {
   const b = new Uint8Array(8);
   let v = BigInt(n);
@@ -70,6 +80,34 @@ export function readU64BE(b, off = 0) {
   return Number(v);
 }
 
+export function readI64BE(b, off = 0) {
+  const hi = (b[off] << 24) | (b[off + 1] << 16) | (b[off + 2] << 8) | b[off + 3];
+  const lo = ((b[off + 4] << 24) | (b[off + 5] << 16) | (b[off + 6] << 8) | b[off + 7]) >>> 0;
+  return Number((BigInt(hi) << 32n) | BigInt(lo));
+}
+
+export function readU16LE(b, off = 0) {
+  return b[off] | (b[off + 1] << 8);
+}
+
+export function readU32LE(b, off = 0) {
+  return (
+    (b[off] |
+      (b[off + 1] << 8) |
+      (b[off + 2] << 16) |
+      (b[off + 3] << 24)) >>>
+    0
+  );
+}
+
+export function readU64LEBig(b, off = 0) {
+  let acc = 0n;
+  for (let i = 7; i >= 0; i--) {
+    acc = (acc << 8n) | BigInt(b[off + i]);
+  }
+  return acc;
+}
+
 export function wordU64(n) {
   const b = new Uint8Array(32);
   let v = BigInt(n);
@@ -78,6 +116,10 @@ export function wordU64(n) {
     v >>= 8n;
   }
   return b;
+}
+
+export function wordBool(flag) {
+  return wordU64(flag ? 1 : 0);
 }
 
 export function wordAddress(addrHex) {
@@ -94,6 +136,12 @@ export function wordBytes32(hex32) {
     b.set(hexToBytes(hex32).slice(0, 32), 0);
   }
   return b;
+}
+
+export function tailBytes(data) {
+  const raw = typeof data === 'string' ? utf8ToBytes(data) : data;
+  const pad = (32 - (raw.length % 32)) % 32;
+  return concatBytes(wordU64(raw.length), raw, new Uint8Array(pad));
 }
 
 /**

@@ -185,12 +185,16 @@ export const CONF_CAT_IDS = Object.freeze({
   VENDOR_OPEX: keccak256Hex('CONF_CAT:CONFIDENTIAL_VENDOR_OPEX'),
 });
 
-function mod(a, m) {
+export function edMod(a, m) {
   const r = a % m;
   return r < 0n ? r + m : r;
 }
 
-function modPow(base, exp, m) {
+function mod(a, m) {
+  return edMod(a, m);
+}
+
+export function edModPow(base, exp, m) {
   let res = 1n;
   let b = mod(base, m);
   let e = exp;
@@ -202,8 +206,16 @@ function modPow(base, exp, m) {
   return res;
 }
 
-function modInv(a, m) {
+function modPow(base, exp, m) {
+  return edModPow(base, exp, m);
+}
+
+export function edModInv(a, m) {
   return modPow(a, m - 2n, m);
+}
+
+function modInv(a, m) {
+  return edModInv(a, m);
 }
 
 const ED_D = mod(-121665n * modInv(121666n, ED25519_P), ED25519_P);
@@ -712,6 +724,97 @@ export function verifyDleq(G1, Y1, G2, Y2, auxCtx, proof64Input) {
     )
   );
   return c === leBytesToBigInt(digest) % ED25519_L;
+}
+
+/**
+ * Deterministic RFC-8032 / SuperLexicon Wasmtime `SLX_VM_VRF_H2C_V1` hash-to-curve with cofactor `8` clearing.
+ */
+export function vrfHashToCurve(alphaInput) {
+  const alphaBytes = alphaInput instanceof Uint8Array ? alphaInput : hexToBytes(alphaInput);
+  const prefix = utf8ToBytes('SLX_VM_VRF_H2C_V1');
+  const lenBe = u64BEBytes(alphaBytes.length);
+  for (let ctr = 0; ctr <= 255; ctr++) {
+    const digest = sha512Bytes(
+      concatBytes(prefix, lenBe, alphaBytes, new Uint8Array([ctr]))
+    );
+    const cand = digest.slice(0, 32);
+    cand[31] &= 0x7f;
+    const rawPt = edDecode(cand);
+    if (rawPt) {
+      const cleared = edMul(8n, rawPt);
+      if (!edIsIdentity(cleared)) return cleared;
+    }
+  }
+  return ED_BASE_PT;
+}
+
+/**
+ * Prime-field `Z_l` Lagrange interpolation at `x = 0` over `{ valIdx, pt | gammaPt }` shares.
+ */
+export function lagrangeCombinePoints(shares) {
+  let combined = ED_IDENTITY_PT;
+  for (let i = 0; i < shares.length; i++) {
+    const xi = BigInt(shares[i].valIdx + 1);
+    let num = 1n;
+    let den = 1n;
+    for (let j = 0; j < shares.length; j++) {
+      if (i === j) continue;
+      const xj = BigInt(shares[j].valIdx + 1);
+      num = mod(num * xj, ED25519_L);
+      den = mod(den * (xj - xi), ED25519_L);
+    }
+    const lambda = mod(num * modInv(den, ED25519_L), ED25519_L);
+    const pt = shares[i].pt || shares[i].gammaPt;
+    combined = edAdd(combined, edMul(lambda, pt));
+  }
+  return combined;
+}
+
+/**
+ * Builds a complete encrypted 3-option secret ballot (`Yes`/`No`/`Abstain`) with 3 × 128B CDS `0/1`
+ * OR-proofs and 1 × 64B `sum == 1` Chaum-Pedersen DLEQ proof (`secret_ballot.wasm`).
+ */
+export function buildEncryptedSecretBallot(epochPkInput, ballotAddrHex, pollId, voterAddrHex, choiceSlot) {
+  const epochPkBytes = epochPkInput instanceof Uint8Array ? epochPkInput : hexToBytes(epochPkInput);
+  const ballot20 = hexToBytes(ballotAddrHex).slice(-20);
+  const voter20 = hexToBytes(voterAddrHex).slice(-20);
+  const pollBe = u64BEBytes(pollId);
+  const cts = [];
+  const ors = [];
+  let rSum = 0n;
+  for (let s = 0; s < 3; s++) {
+    const bit = s === choiceSlot ? 1 : 0;
+    let r = randomEdScalar();
+    if (s === 2 && mod(rSum + r, ED25519_L) === 0n) {
+      r = mod(r + 1n, ED25519_L) || 1n;
+    }
+    rSum = mod(rSum + r, ED25519_L);
+    const orCtx = concatBytes(
+      utf8ToBytes('SLX_BALLOT_OR01_V1:'),
+      ballot20,
+      pollBe,
+      voter20,
+      new Uint8Array([s])
+    );
+    const { ct64, proof128 } = proveHeZeroOrOne(epochPkBytes, bit, r, orCtx);
+    cts.push(ct64);
+    ors.push(proof128);
+  }
+  const sumCtx = concatBytes(
+    utf8ToBytes('SLX_BALLOT_SUM1_V1:'),
+    ballot20,
+    pollBe,
+    voter20
+  );
+  const Y = edDecode(epochPkBytes);
+  const Csum1 = edMul(rSum, ED_BASE_PT);
+  const Csum2MinusB = edMul(rSum, Y);
+  const sumProof64 = proveDleq(rSum, ED_BASE_PT, Csum1, Y, Csum2MinusB, sumCtx);
+  return {
+    ciphertexts192: concatBytes(...cts),
+    orProofs384: concatBytes(...ors),
+    sumOneProof64: sumProof64,
+  };
 }
 
 export function proveHeZeroOrOne(pkInput, bit, rScalar, auxCtx) {

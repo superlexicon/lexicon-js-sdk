@@ -34,11 +34,20 @@
     "./crowdfunding": "./src/crowdfunding.js",
     "./app-store": "./src/app-store.js",
     "./charter-social": "./src/charter-social.js",
+    "./hfs-deployers": "./src/hfs-deployers.js",
+    "./inst-suite": "./src/inst-suite.js",
+    "./ifrs-valuation": "./src/ifrs-valuation.js",
+    "./ifrs-human-gl": "./src/ifrs-human-gl.js",
+    "./fleet-social": "./src/fleet-social.js",
     "./ui": {
       "types": "./src/ui/index.d.ts",
       "default": "./src/ui/index.js"
     },
-    "./ui/styles.css": "./src/ui/styles.css"
+    "./ui/game-guide": "./src/ui/game-guide.js",
+    "./ui/legal-consent": "./src/ui/legal-consent.js",
+    "./ui/styles.css": "./src/ui/styles.css",
+    "./ui/wallet.css": "./src/ui/wallet.css",
+    "./ui/inst.css": "./src/ui/inst.css"
   },
   "files": [
     "src",

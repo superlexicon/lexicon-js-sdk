@@ -62,6 +62,7 @@ import {
   openSlxSubnetRegistryModal,
 } from './subnet-world-map.js';
 import { mountSlxSubnetPhaseDiagram } from './subnet-phase-diagram.js';
+export * from './game-guide.js';
 
 export {
   USECASE_DESCRIPTIONS,
