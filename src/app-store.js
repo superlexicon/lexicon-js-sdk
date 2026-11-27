@@ -87,16 +87,78 @@ export const APP_STATUS = {
 };
 
 export const APP_CATEGORIES = {
-  1: { id: 1, key: 'defi', label: 'DeFi & Markets', icon: '📈' },
-  2: { id: 2, key: 'governance', label: 'Governance & IFRS', icon: '🏛️' },
-  3: { id: 3, key: 'commerce', label: 'Commerce & Crowdfunding', icon: '🚀' },
-  4: { id: 4, key: 'social', label: 'Social & Messaging', icon: '📡' },
-  5: { id: 5, key: 'games', label: 'Multiplayer Games & VRF', icon: '🎮' },
-  6: { id: 6, key: 'rf', label: 'RF & Utility Tools', icon: '⚡' },
+  1: {
+    id: 1,
+    key: 'defi',
+    label: 'Markets & DeFi',
+    shortLabel: 'DeFi & CLOB',
+    icon: '📈',
+    description: 'Central limit order books, batch auctions, liquidity & asset settlement',
+  },
+  2: {
+    id: 2,
+    key: 'governance',
+    label: 'Corporate, Governance & IFRS',
+    shortLabel: 'Gov & IFRS',
+    icon: '🏛️',
+    description: 'Statutory charters, quorums, secret ballots & double-entry ZK accounting',
+  },
+  3: {
+    id: 3,
+    key: 'commerce',
+    label: 'Commerce, Hardware & Rewards',
+    shortLabel: 'Commerce',
+    icon: '🚀',
+    description: 'Retail/B2B storefronts, milestone hardware pre-orders & validator vouchers',
+  },
+  4: {
+    id: 4,
+    key: 'social',
+    label: 'Social, Comms & Guilds',
+    shortLabel: 'Social & RF',
+    icon: '📡',
+    description: 'Radio-bounded communities, ECIES messaging, guilds & repeater walls',
+  },
+  5: {
+    id: 5,
+    key: 'games',
+    label: 'Multiplayer Games & VRF',
+    shortLabel: 'Games & VRF',
+    icon: '🎮',
+    description: 'Real-time naval arenas, grand strategy, ZK deduction & quorum-VRF jackpots',
+  },
+  6: {
+    id: 6,
+    key: 'rf',
+    label: 'RF, Civic & Dev Utilities',
+    shortLabel: 'Utilities',
+    icon: '⚡',
+    description: 'Mesh diagnostics, civic micro-polls, bounty splits & developer tools',
+  },
 };
+
+export function resolveAppCategory(catOrKey) {
+  if (catOrKey === null || catOrKey === undefined || catOrKey === '' || catOrKey === 0 || catOrKey === '0' || catOrKey === 'all') {
+    return null;
+  }
+  const asNum = Number(catOrKey);
+  if (Number.isInteger(asNum) && APP_CATEGORIES[asNum]) {
+    return APP_CATEGORIES[asNum];
+  }
+  const cleanKey = String(catOrKey).trim().toLowerCase();
+  return (
+    Object.values(APP_CATEGORIES).find(
+      (c) => c.key === cleanKey || c.label.toLowerCase() === cleanKey
+    ) || null
+  );
+}
 
 const STORAGE_APP_STORE_ADDR_KEY = 'slx_app_store_hfs_addr_v1';
 const STORAGE_LOCAL_PUBLISHED_APPS_KEY = 'slx_local_published_apps_v1';
+const STORAGE_CACHED_UI_INDEX_KEY = 'slx_cached_ui_index_v1';
+const STORAGE_MANIFEST_CACHE_KEY = 'slx_manifest_cache_v1';
+const STORAGE_PERSONAL_CONTAINER_KEY = 'slx_personal_app_container_v1';
+const CACHE_STORAGE_BUNDLES_NAME = 'slx-hfs-app-bundles-v1';
 const IDB_NAME = 'slx_app_bundle_cas_v1';
 const IDB_STORE_HTML = 'verified_html';
 const IDB_STORE_RAW = 'raw_bundles';
@@ -196,12 +258,40 @@ export function slugToBytes32(slug) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Immutable Content-Addressed `IndexedDB` UI Bundle Cache
+// 2. Persistent Content-Addressed Local UI Bundle Cache (`IndexedDB` + `CacheStorage` + Sync Index)
 // ---------------------------------------------------------------------------
 
 const _memHtmlCache = new Map();
 const _memRawBundleCache = new Map();
 let _idbPromise = null;
+
+function _loadUiCacheIndexMap() {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(STORAGE_CACHED_UI_INDEX_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function _saveUiCacheIndexMap(mapObj) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_CACHED_UI_INDEX_KEY, JSON.stringify(mapObj || {}));
+  } catch (_) {}
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(new CustomEvent('slx:ui-cache-changed'));
+    } catch (_) {}
+  }
+}
+
+function _syntheticBundleCacheUrl(cleanHash) {
+  return `/__slx_app_bundle_cas__/${cleanHash}.bin`;
+}
 
 function _openIdb() {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
@@ -227,10 +317,70 @@ function _openIdb() {
   return _idbPromise;
 }
 
+export function cacheCatalogManifestLocal(manifestObj) {
+  if (typeof localStorage === 'undefined' || !manifestObj || !Array.isArray(manifestObj.apps)) {
+    return;
+  }
+  try {
+    localStorage.setItem(
+      STORAGE_MANIFEST_CACHE_KEY,
+      JSON.stringify({
+        cachedAt: Date.now(),
+        apps: manifestObj.apps,
+      })
+    );
+  } catch (_) {}
+}
+
+export function getCachedCatalogManifestLocal() {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(STORAGE_MANIFEST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && Array.isArray(parsed.apps) ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 export const SlxUiBundleCache = {
+  isCachedSync(uiHash) {
+    if (!uiHash) return false;
+    const key = String(uiHash).trim().toLowerCase();
+    if (!key || key === ZERO_BYTES32) return false;
+    if (_memHtmlCache.has(key) || _memRawBundleCache.has(key)) return true;
+    const idx = _loadUiCacheIndexMap();
+    return Boolean(idx[key]);
+  },
+
+  getCacheEntryMetaSync(uiHash) {
+    if (!uiHash) return null;
+    const key = String(uiHash).trim().toLowerCase();
+    const idx = _loadUiCacheIndexMap();
+    return idx[key] || null;
+  },
+
+  getCacheStats() {
+    const idx = _loadUiCacheIndexMap();
+    const entries = Object.values(idx);
+    let totalCompressedBytes = 0;
+    let totalUncompressedBytes = 0;
+    for (const e of entries) {
+      totalCompressedBytes += Number(e?.compressedLen || 0);
+      totalUncompressedBytes += Number(e?.uncompressedLen || 0);
+    }
+    return {
+      count: entries.length,
+      totalCompressedBytes,
+      totalUncompressedBytes,
+      entries,
+    };
+  },
+
   async getVerifiedHtml(uiHash) {
     if (!uiHash) return null;
-    const key = String(uiHash).toLowerCase();
+    const key = String(uiHash).trim().toLowerCase();
     if (_memHtmlCache.has(key)) return _memHtmlCache.get(key);
     const db = await _openIdb();
     if (!db) return null;
@@ -249,51 +399,164 @@ export const SlxUiBundleCache = {
     });
   },
 
-  async putVerifiedHtml(uiHash, entry) {
+  async putVerifiedHtml(uiHash, entry, metaHint = {}) {
     if (!uiHash || !entry?.html) return;
-    const key = String(uiHash).toLowerCase();
-    _memHtmlCache.set(key, entry);
+    const key = String(uiHash).trim().toLowerCase();
+    const record = {
+      ...entry,
+      uiHash: key,
+      cachedAt: entry.cachedAt || Date.now(),
+    };
+    _memHtmlCache.set(key, record);
+
+    const idx = _loadUiCacheIndexMap();
+    const prev = idx[key] || {};
+    idx[key] = {
+      uiHash: key,
+      slug: metaHint.slug || entry.slug || prev.slug || '',
+      title: metaHint.title || entry.title || prev.title || '',
+      compressedLen: Number(entry.compressedLen || metaHint.compressedLen || prev.compressedLen || 0),
+      uncompressedLen: Number(
+        entry.uncompressedLen || metaHint.uncompressedLen || utf8ToBytes(entry.html).length
+      ),
+      cachedAt: record.cachedAt,
+    };
+    _saveUiCacheIndexMap(idx);
+
     const db = await _openIdb();
     if (!db) return;
-    try {
-      const tx = db.transaction(IDB_STORE_HTML, 'readwrite');
-      tx.objectStore(IDB_STORE_HTML).put(entry, key);
-    } catch (_) {}
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE_HTML, 'readwrite');
+        tx.objectStore(IDB_STORE_HTML).put(record, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
   },
 
   async putRawBundle(uiHash, bytes, encoding = APP_STORE_ENCODING.GZIP) {
     if (!uiHash || !bytes) return;
-    const key = String(uiHash).toLowerCase();
+    const key = String(uiHash).trim().toLowerCase();
     const u8 = bytes instanceof Uint8Array ? bytes : hexToBytes(bytes);
     const payload = { bytes: u8, encoding };
     _memRawBundleCache.set(key, payload);
+
+    // Mirror raw compressed bundle into browser CacheStorage when available
+    if (typeof globalThis.caches !== 'undefined' && typeof Response === 'function') {
+      try {
+        const cache = await globalThis.caches.open(CACHE_STORAGE_BUNDLES_NAME);
+        await cache.put(
+          _syntheticBundleCacheUrl(key),
+          new Response(u8, {
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'X-Slx-Encoding': String(encoding),
+            },
+          })
+        );
+      } catch (_) {}
+    }
+
     const db = await _openIdb();
     if (!db) return;
-    try {
-      const tx = db.transaction(IDB_STORE_RAW, 'readwrite');
-      tx.objectStore(IDB_STORE_RAW).put(payload, key);
-    } catch (_) {}
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE_RAW, 'readwrite');
+        tx.objectStore(IDB_STORE_RAW).put(payload, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
   },
 
   async getRawBundle(uiHash) {
     if (!uiHash) return null;
-    const key = String(uiHash).toLowerCase();
+    const key = String(uiHash).trim().toLowerCase();
     if (_memRawBundleCache.has(key)) return _memRawBundleCache.get(key);
     const db = await _openIdb();
-    if (!db) return null;
-    return new Promise((resolve) => {
+    if (db) {
+      const idbHit = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction(IDB_STORE_RAW, 'readonly');
+          const req = tx.objectStore(IDB_STORE_RAW).get(key);
+          req.onsuccess = () => {
+            if (req.result) _memRawBundleCache.set(key, req.result);
+            resolve(req.result || null);
+          };
+          req.onerror = () => resolve(null);
+        } catch (_) {
+          resolve(null);
+        }
+      });
+      if (idbHit) return idbHit;
+    }
+
+    // Fallback check in browser CacheStorage
+    if (typeof globalThis.caches !== 'undefined') {
       try {
-        const tx = db.transaction(IDB_STORE_RAW, 'readonly');
-        const req = tx.objectStore(IDB_STORE_RAW).get(key);
-        req.onsuccess = () => {
-          if (req.result) _memRawBundleCache.set(key, req.result);
-          resolve(req.result || null);
-        };
-        req.onerror = () => resolve(null);
+        const cache = await globalThis.caches.open(CACHE_STORAGE_BUNDLES_NAME);
+        const match = await cache.match(_syntheticBundleCacheUrl(key));
+        if (match) {
+          const bytes = new Uint8Array(await match.arrayBuffer());
+          const encoding = Number(match.headers.get('X-Slx-Encoding') ?? APP_STORE_ENCODING.GZIP);
+          const payload = { bytes, encoding };
+          _memRawBundleCache.set(key, payload);
+          return payload;
+        }
+      } catch (_) {}
+    }
+    return null;
+  },
+
+  async evictBundle(uiHash) {
+    if (!uiHash) return;
+    const key = String(uiHash).trim().toLowerCase();
+    _memHtmlCache.delete(key);
+    _memRawBundleCache.delete(key);
+
+    const idx = _loadUiCacheIndexMap();
+    if (idx[key]) {
+      delete idx[key];
+      _saveUiCacheIndexMap(idx);
+    }
+
+    if (typeof globalThis.caches !== 'undefined') {
+      try {
+        const cache = await globalThis.caches.open(CACHE_STORAGE_BUNDLES_NAME);
+        await cache.delete(_syntheticBundleCacheUrl(key));
+      } catch (_) {}
+    }
+
+    const db = await _openIdb();
+    if (!db) return;
+    await new Promise((resolve) => {
+      try {
+        const tx = db.transaction([IDB_STORE_HTML, IDB_STORE_RAW], 'readwrite');
+        tx.objectStore(IDB_STORE_HTML).delete(key);
+        tx.objectStore(IDB_STORE_RAW).delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
       } catch (_) {
-        resolve(null);
+        resolve();
       }
     });
+  },
+
+  async clearUnusedCache(keepUiHashes = []) {
+    const keepSet = new Set(
+      (keepUiHashes || []).map((h) => String(h || '').trim().toLowerCase()).filter(Boolean)
+    );
+    const idx = _loadUiCacheIndexMap();
+    const toEvict = Object.keys(idx).filter((k) => !keepSet.has(k));
+    for (const k of toEvict) {
+      await this.evictBundle(k);
+    }
+    return toEvict.length;
   },
 };
 
@@ -752,7 +1015,7 @@ export class AppStoreClient {
     });
   }
 
-  async uploadUiBundleOnChain({ wallet, htmlSource, onStatus = null }) {
+  async uploadUiBundleOnChain({ wallet, htmlSource, slug = '', title = '', onStatus = null }) {
     const emit = (m) => {
       if (typeof onStatus === 'function') onStatus(m);
     };
@@ -767,12 +1030,16 @@ export class AppStoreClient {
 
     const packed = await compressAppUiBundle(htmlSource);
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
-    await SlxUiBundleCache.putVerifiedHtml(packed.uiHash, {
-      uiHash: packed.uiHash,
-      compressedLen: packed.compressedLen,
-      uncompressedLen: packed.uncompressedLen,
-      html: htmlSource,
-    });
+    await SlxUiBundleCache.putVerifiedHtml(
+      packed.uiHash,
+      {
+        uiHash: packed.uiHash,
+        compressedLen: packed.compressedLen,
+        uncompressedLen: packed.uncompressedLen,
+        html: htmlSource,
+      },
+      { slug, title }
+    );
 
     if (!this.storeAddr) throw new Error('AppStore HFS address not connected.');
 
@@ -881,12 +1148,16 @@ export class AppStoreClient {
 
     const packed = await compressAppUiBundle(htmlSource);
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
-    await SlxUiBundleCache.putVerifiedHtml(packed.uiHash, {
-      uiHash: packed.uiHash,
-      compressedLen: packed.compressedLen,
-      uncompressedLen: packed.uncompressedLen,
-      html: htmlSource,
-    });
+    await SlxUiBundleCache.putVerifiedHtml(
+      packed.uiHash,
+      {
+        uiHash: packed.uiHash,
+        compressedLen: packed.compressedLen,
+        uncompressedLen: packed.uncompressedLen,
+        html: htmlSource,
+      },
+      { slug: cleanSlug, title }
+    );
 
     let resolvedWasmHash = wasmCodeHash || ZERO_BYTES32;
     let resolvedDefaultHfs = defaultHfsAddr || ZERO_ADDR;
@@ -1072,18 +1343,28 @@ export class AppStoreClient {
   /**
    * Fetches, cryptographically verifies (`keccak256(compressedBytes) === uiHash`), decompresses,
    * and caches an App UI bundle from:
-   *   1. `IndexedDB` Immutable CAS Cache (`0 ms`)
-   *   2. Local raw bundle store (offline/studio publish)
+   *   1. `IndexedDB` Immutable CAS Cache (`0–4 ms`, pre-verified HTML)
+   *   2. Local raw bundle store (`IndexedDB` / `CacheStorage`)
    *   3. Live Subnet 1 `AppStore.getBundle(uiHash)` (`1` single `eth_call`)
    *   4. Genesis static fallback URL (`/app-bundles/<slug>.html.gz`)
    */
-  async fetchVerifiedBundleHtml({ uiHash, fallbackBundleUrl = '' }) {
+  async fetchVerifiedBundleHtml({
+    uiHash,
+    fallbackBundleUrl = '',
+    slug = '',
+    title = '',
+    forceRevalidate = false,
+  }) {
     const cleanHash = String(uiHash || '').trim().toLowerCase();
+    const metaHint = { slug, title };
 
-    if (cleanHash && cleanHash !== ZERO_BYTES32) {
+    if (cleanHash && cleanHash !== ZERO_BYTES32 && !forceRevalidate) {
       const cached = await SlxUiBundleCache.getVerifiedHtml(cleanHash);
       if (cached?.html) {
-        return { ...cached, cacheHit: true };
+        if (!SlxUiBundleCache.isCachedSync(cleanHash)) {
+          await SlxUiBundleCache.putVerifiedHtml(cleanHash, cached, metaHint);
+        }
+        return { ...cached, cacheHit: true, loadedFrom: 'local-cache' };
       }
 
       const rawLocal = await SlxUiBundleCache.getRawBundle(cleanHash);
@@ -1093,10 +1374,12 @@ export class AppStoreClient {
           cleanHash,
           rawLocal.encoding
         );
-        await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
-        return { ...verified, cacheHit: false, loadedFrom: 'indexeddb-cas' };
+        await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified, metaHint);
+        return { ...verified, cacheHit: true, loadedFrom: 'indexeddb-cas' };
       }
+    }
 
+    if (cleanHash && cleanHash !== ZERO_BYTES32) {
       const storeAddr = await this.resolveStoreAddress();
       if (storeAddr) {
         try {
@@ -1114,7 +1397,8 @@ export class AppStoreClient {
           const rawBytes = hexToBytes(bundleHex);
           if (info.sealed && rawBytes.length > 0) {
             const verified = await verifyAndUnpackAppUiBundle(rawBytes, cleanHash, info.encoding);
-            await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
+            await SlxUiBundleCache.putRawBundle(cleanHash, rawBytes, info.encoding);
+            await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified, metaHint);
             return { ...verified, cacheHit: false, loadedFrom: 'onchain-appstore' };
           }
         } catch (_) {}
@@ -1132,8 +1416,10 @@ export class AppStoreClient {
         cleanHash,
         APP_STORE_ENCODING.GZIP
       );
-      if (cleanHash) {
-        await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified);
+      const effectiveHash = verified.uiHash || cleanHash;
+      if (effectiveHash) {
+        await SlxUiBundleCache.putRawBundle(effectiveHash, bytes, APP_STORE_ENCODING.GZIP);
+        await SlxUiBundleCache.putVerifiedHtml(effectiveHash, verified, metaHint);
       }
       return { ...verified, cacheHit: false, loadedFrom: 'genesis-cas' };
     }
@@ -1141,6 +1427,279 @@ export class AppStoreClient {
     throw new Error(`UI bundle ${shortHex(cleanHash)} not found in cache or on-chain AppStore.`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// 4B. Personal App Container ("My Installed Apps" + Eager Local HTML Pinning)
+// ---------------------------------------------------------------------------
+
+function _normalizePersonalAppRecord(appMeta = {}, prev = null) {
+  const cleanSlug = String(appMeta.slug || prev?.slug || '')
+    .trim()
+    .toLowerCase();
+  const isSystemCore = Boolean(
+    appMeta.isSystemCore ?? prev?.isSystemCore ?? appMeta.execMode === APP_EXEC_MODE.VERIFIED_HOST
+  );
+  const route =
+    appMeta.route ||
+    prev?.route ||
+    (isSystemCore && cleanSlug ? `/${cleanSlug}.html` : `/apps.html?run=${encodeURIComponent(cleanSlug)}`);
+  const bundleUrl =
+    appMeta.bundleUrl !== undefined
+      ? appMeta.bundleUrl
+      : prev?.bundleUrl || (cleanSlug ? `/app-bundles/${cleanSlug}.html.gz` : '');
+  return {
+    slug: cleanSlug,
+    slugId: appMeta.slugId || prev?.slugId || (cleanSlug ? slugToBytes32(cleanSlug) : ZERO_BYTES32),
+    appId: Number(appMeta.appId || prev?.appId || 0),
+    title: appMeta.title || prev?.title || cleanSlug || 'HFS App',
+    summary: appMeta.summary ?? prev?.summary ?? '',
+    icon: appMeta.icon || prev?.icon || '🧩',
+    version: appMeta.version || prev?.version || '1.0.0',
+    category: Number(appMeta.category || prev?.category || 6),
+    execMode:
+      appMeta.execMode !== undefined
+        ? Number(appMeta.execMode)
+        : prev?.execMode !== undefined
+        ? Number(prev.execMode)
+        : isSystemCore
+        ? APP_EXEC_MODE.VERIFIED_HOST
+        : APP_EXEC_MODE.SANDBOX_IFRAME,
+    isSystemCore,
+    route,
+    bundleUrl,
+    uiHash: String(appMeta.uiHash || prev?.uiHash || ZERO_BYTES32).toLowerCase(),
+    compressedLen: Number(appMeta.compressedLen || prev?.compressedLen || 0),
+    uncompressedLen: Number(appMeta.uncompressedLen || prev?.uncompressedLen || 0),
+    wasmCodeHash: String(appMeta.wasmCodeHash || prev?.wasmCodeHash || ZERO_BYTES32).toLowerCase(),
+    defaultHfsAddr: String(appMeta.defaultHfsAddr || prev?.defaultHfsAddr || ZERO_ADDR).toLowerCase(),
+    installedAt: prev?.installedAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+function _readPersonalContainerRaw() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_PERSONAL_CONTAINER_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x) => x && x.slug) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function _writePersonalContainerRaw(list) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_PERSONAL_CONTAINER_KEY, JSON.stringify(list || []));
+  } catch (_) {}
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('slx:personal-apps-changed', {
+          detail: { apps: list || [] },
+        })
+      );
+    } catch (_) {}
+  }
+}
+
+export const SlxPersonalAppContainer = {
+  listInstalled() {
+    return _readPersonalContainerRaw();
+  },
+
+  countInstalled() {
+    return _readPersonalContainerRaw().length;
+  },
+
+  isInstalled(slug) {
+    const clean = String(slug || '').trim().toLowerCase();
+    if (!clean) return false;
+    return _readPersonalContainerRaw().some((a) => String(a.slug || '').toLowerCase() === clean);
+  },
+
+  getInstalled(slug) {
+    const clean = String(slug || '').trim().toLowerCase();
+    if (!clean) return null;
+    return (
+      _readPersonalContainerRaw().find((a) => String(a.slug || '').toLowerCase() === clean) || null
+    );
+  },
+
+  /**
+   * Installs an app into the user's Personal App Container AND eagerly fetches, `keccak256`-verifies,
+   * decompresses, and caches its HTML bundle in persistent local storage (`IndexedDB` + `CacheStorage`)
+   * so all future loads open instantaneously with zero blocking network fetch.
+   */
+  async installApp(appMeta, { storeClient = null, onStatus = null, cacheHtml = true } = {}) {
+    const cleanSlug = String(appMeta?.slug || '').trim().toLowerCase();
+    if (!cleanSlug) {
+      throw new Error('Cannot install app without a valid slug.');
+    }
+    const emit = (msg) => {
+      if (typeof onStatus === 'function') onStatus(msg);
+    };
+
+    const list = _readPersonalContainerRaw();
+    const idx = list.findIndex((a) => String(a.slug || '').toLowerCase() === cleanSlug);
+    const prev = idx >= 0 ? list[idx] : null;
+    const normalized = _normalizePersonalAppRecord(appMeta, prev);
+
+    let cachedBundle = null;
+    if (
+      cacheHtml &&
+      ((normalized.uiHash && normalized.uiHash !== ZERO_BYTES32) || normalized.bundleUrl)
+    ) {
+      const client = storeClient || new AppStoreClient();
+      emit(`Verifying & caching "${normalized.title}" HTML locally…`);
+      try {
+        cachedBundle = await client.fetchVerifiedBundleHtml({
+          uiHash: normalized.uiHash,
+          fallbackBundleUrl: normalized.bundleUrl || '',
+          slug: normalized.slug,
+          title: normalized.title,
+        });
+        if (cachedBundle?.uiHash) {
+          normalized.uiHash = cachedBundle.uiHash;
+        }
+        if (cachedBundle?.compressedLen) {
+          normalized.compressedLen = cachedBundle.compressedLen;
+        }
+        if (cachedBundle?.uncompressedLen) {
+          normalized.uncompressedLen = cachedBundle.uncompressedLen;
+        }
+      } catch (cacheErr) {
+        // Still allow installing metadata if offline and bundle already cached or pending sync
+        if (!SlxUiBundleCache.isCachedSync(normalized.uiHash)) {
+          throw cacheErr;
+        }
+      }
+    }
+
+    if (idx >= 0) {
+      list[idx] = normalized;
+    } else {
+      list.push(normalized);
+    }
+    _writePersonalContainerRaw(list);
+    emit(`✓ Installed "${normalized.title}" in My Apps (HTML cached locally)`);
+    return { app: normalized, cachedBundle };
+  },
+
+  async uninstallApp(slug, { evictCache = false } = {}) {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    if (!cleanSlug) return false;
+    const list = _readPersonalContainerRaw();
+    const target = list.find((a) => String(a.slug || '').toLowerCase() === cleanSlug);
+    if (!target) return false;
+    const next = list.filter((a) => String(a.slug || '').toLowerCase() !== cleanSlug);
+    _writePersonalContainerRaw(next);
+
+    if (evictCache && target.uiHash && target.uiHash !== ZERO_BYTES32) {
+      const stillReferenced = next.some(
+        (a) => String(a.uiHash || '').toLowerCase() === String(target.uiHash).toLowerCase()
+      );
+      if (!stillReferenced) {
+        await SlxUiBundleCache.evictBundle(target.uiHash);
+      }
+    }
+    return true;
+  },
+
+  moveInstalledApp(slug, delta) {
+    const cleanSlug = String(slug || '').trim().toLowerCase();
+    const list = _readPersonalContainerRaw();
+    const idx = list.findIndex((a) => String(a.slug || '').toLowerCase() === cleanSlug);
+    if (idx < 0) return list;
+    const nextIdx = Math.max(0, Math.min(list.length - 1, idx + Number(delta || 0)));
+    if (nextIdx === idx) return list;
+    const [item] = list.splice(idx, 1);
+    list.splice(nextIdx, 0, item);
+    _writePersonalContainerRaw(list);
+    return list;
+  },
+
+  syncCatalogMetadata(catalogApps = []) {
+    if (!Array.isArray(catalogApps) || !catalogApps.length) return;
+    const list = _readPersonalContainerRaw();
+    if (!list.length) return;
+    const bySlug = new Map(
+      catalogApps.map((a) => [String(a.slug || '').toLowerCase(), a])
+    );
+    let mutated = false;
+    for (let i = 0; i < list.length; i += 1) {
+      const cur = list[i];
+      const latest = bySlug.get(String(cur.slug || '').toLowerCase());
+      if (!latest) continue;
+      const next = _normalizePersonalAppRecord(latest, cur);
+      if (
+        next.uiHash !== cur.uiHash ||
+        next.version !== cur.version ||
+        next.title !== cur.title ||
+        next.category !== cur.category ||
+        next.route !== cur.route
+      ) {
+        list[i] = next;
+        mutated = true;
+      }
+    }
+    if (mutated) {
+      _writePersonalContainerRaw(list);
+    }
+  },
+
+  async preCacheAllInstalled({ storeClient = null, onStatus = null } = {}) {
+    const list = _readPersonalContainerRaw();
+    const client = storeClient || new AppStoreClient();
+    let cachedCount = 0;
+    for (const app of list) {
+      if ((app.uiHash && app.uiHash !== ZERO_BYTES32) || app.bundleUrl) {
+        if (typeof onStatus === 'function') {
+          onStatus(`Caching [${cachedCount + 1}/${list.length}] "${app.title}"…`);
+        }
+        await client.fetchVerifiedBundleHtml({
+          uiHash: app.uiHash,
+          fallbackBundleUrl: app.bundleUrl || '',
+          slug: app.slug,
+          title: app.title,
+        });
+        cachedCount += 1;
+      }
+    }
+    return cachedCount;
+  },
+
+  onChange(listener) {
+    if (typeof window === 'undefined' || typeof listener !== 'function') {
+      return () => {};
+    }
+    const handler = () => {
+      try {
+        listener(_readPersonalContainerRaw());
+      } catch (_) {}
+    };
+    const onStorage = (ev) => {
+      if (
+        !ev ||
+        !ev.key ||
+        ev.key === STORAGE_PERSONAL_CONTAINER_KEY ||
+        ev.key === STORAGE_CACHED_UI_INDEX_KEY
+      ) {
+        handler();
+      }
+    };
+    window.addEventListener('slx:personal-apps-changed', handler);
+    window.addEventListener('slx:ui-cache-changed', handler);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('slx:personal-apps-changed', handler);
+      window.removeEventListener('slx:ui-cache-changed', handler);
+      window.removeEventListener('storage', onStorage);
+    };
+  },
+};
 
 // ---------------------------------------------------------------------------
 // 5. Zero-Trust Sandboxed Iframe Guest Shim (`window.slx`) & Host Bridge

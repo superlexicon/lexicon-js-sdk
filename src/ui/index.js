@@ -26,6 +26,14 @@ import {
 } from '../identity.js';
 import { SlxSocialClient } from '../social.js';
 import {
+  APP_CATEGORIES,
+  SlxUiBundleCache,
+  SlxPersonalAppContainer,
+  getCachedCatalogManifestLocal,
+  loadLocalPublishedApps,
+  AppStoreClient,
+} from '../app-store.js';
+import {
   USECASE_DESCRIPTIONS,
   USECASE_INSTRUCTIONS,
   openSlxUseCaseDescription,
@@ -204,7 +212,7 @@ const FALLBACK_CSS = `
 .slx-uh-apps-wrap{position:relative;display:inline-flex}
 .slx-uh-apps-btn{display:inline-flex;align-items:center;gap:.42rem;padding:.42rem .8rem;border-radius:.65rem;background:rgba(14,165,233,.16);border:1px solid rgba(56,189,248,.58);color:#e0f2fe;font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem;font-weight:700;cursor:pointer;transition:all .15s ease;white-space:nowrap}
 .slx-uh-apps-btn:hover,.slx-uh-apps-btn[aria-expanded='true']{background:rgba(14,165,233,.26);border-color:#38bdf8;color:#fff}
-.slx-uh-apps-menu{position:absolute;top:calc(100% + 6px);right:0;width:315px;max-height:82vh;overflow-y:auto;padding:.5rem;border-radius:.85rem;background:#0a1224;border:1.5px solid rgba(56,189,248,.52);box-shadow:0 20px 48px rgba(0,0,0,.78);display:none;flex-direction:column;gap:.2rem;z-index:9930}
+.slx-uh-apps-menu{position:absolute;top:calc(100% + 6px);right:0;width:348px;max-height:82vh;overflow-y:auto;padding:.55rem;border-radius:.85rem;background:#0a1224;border:1.5px solid rgba(56,189,248,.52);box-shadow:0 20px 48px rgba(0,0,0,.78);display:none;flex-direction:column;gap:.22rem;z-index:9930}
 .slx-uh-apps-menu.is-open{display:flex}
 .slx-uh-apps-group-lbl{padding:.3rem .52rem .14rem;font-family:monospace;font-size:.66rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#64748b}
 .slx-uh-app-item{display:flex;align-items:center;justify-content:space-between;gap:.55rem;padding:.48rem .6rem;border-radius:.55rem;border:1px solid transparent;color:#e2e8f0;text-decoration:none;transition:all .13s ease}
@@ -3739,42 +3747,43 @@ export function mountSlxUnifiedHeader({
   host.innerHTML = '';
 
   const canonicalActiveId = APP_ID_ALIASES[activeAppId] || activeAppId;
-  const activeAppSpec = effectiveAppsList.find((a) => a.id === canonicalActiveId) || null;
-
-  const groups = [];
-  for (const app of effectiveAppsList) {
-    let g = groups.find((x) => x.name === app.group);
-    if (!g) {
-      g = { name: app.group, items: [] };
-      groups.push(g);
+  const resolveKnownAppMeta = (slugId) => {
+    const clean = String(slugId || '').trim().toLowerCase();
+    const installedHit = SlxPersonalAppContainer.getInstalled(clean);
+    if (installedHit) {
+      return {
+        id: clean,
+        slug: clean,
+        icon: installedHit.icon || '🧩',
+        label: installedHit.title || clean,
+        shortLabel: installedHit.title || clean,
+        sub: installedHit.summary || '',
+        href: installedHit.route || `/${clean}.html`,
+        meta: installedHit,
+      };
     }
-    g.items.push(app);
-  }
+    const cachedCat = getCachedCatalogManifestLocal();
+    const catHit = (cachedCat?.apps || []).find((a) => String(a.slug || '').toLowerCase() === clean);
+    const locHit = loadLocalPublishedApps().find((a) => String(a.slug || '').toLowerCase() === clean);
+    const platHit = effectiveAppsList.find((a) => a.id === clean);
+    if (locHit || catHit) {
+      const m = { ...(catHit || {}), ...(locHit || {}) };
+      return {
+        id: clean,
+        slug: clean,
+        icon: m.icon || platHit?.icon || '🧩',
+        label: m.title || platHit?.label || clean,
+        shortLabel: platHit?.shortLabel || m.title || clean,
+        sub: m.summary || platHit?.sub || '',
+        href: m.route || platHit?.href || `/${clean}.html`,
+        meta: m,
+      };
+    }
+    return platHit || null;
+  };
 
-  const appsMenuHtml = groups
-    .map(
-      (g) => `
-      <div class="slx-uh-apps-group-lbl">${escapeHtmlText(g.name)}</div>
-      ${g.items
-        .map((it) => {
-          const isAct = it.id === canonicalActiveId;
-          return `
-            <a href="${escapeHtmlText(it.href)}" class="slx-uh-app-item ${isAct ? 'active' : ''}">
-              <div style="display:flex;align-items:center;gap:0.5rem;min-width:0;">
-                <span style="font-size:0.95rem;flex-shrink:0;">${it.icon}</span>
-                <div style="min-width:0;">
-                  <div style="font-size:0.74rem;font-weight:700;line-height:1.2;">${escapeHtmlText(it.label)}</div>
-                  <div style="font-size:0.63rem;color:#94a3b8;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtmlText(it.sub || '')}</div>
-                </div>
-              </div>
-              ${isAct ? '<span style="font-family:monospace;font-size:0.6rem;font-weight:800;color:#6ee7b7;">ACTIVE</span>' : '<span style="color:#64748b;font-size:0.72rem;">→</span>'}
-            </a>
-          `;
-        })
-        .join('')}
-    `
-    )
-    .join('');
+  const activeAppSpec = resolveKnownAppMeta(canonicalActiveId);
+  const NON_INSTALLABLE_PLATFORM_IDS = new Set(['deck', 'explorer', 'apps']);
 
   const hdr = document.createElement('header');
   hdr.className = 'slx-unified-header';
@@ -3801,18 +3810,13 @@ export function mountSlxUnifiedHeader({
         <div data-uh="mobileSlot" style="display:inline-flex;align-items:center;gap:0.35rem;"></div>
 
         <div class="slx-uh-apps-wrap">
-          <button type="button" class="slx-uh-apps-btn" data-uh="appsBtn" aria-expanded="false" title="Switch between Presentation Slides &amp; Live Subnet 1 HFS Apps">
-            <span>${activeAppSpec ? activeAppSpec.icon : '⊞'}</span>
-            <span data-uh="appsLabel">${escapeHtmlText(activeAppSpec ? activeAppSpec.shortLabel : 'Apps')}</span>
+          <button type="button" class="slx-uh-apps-btn" data-uh="appsBtn" aria-expanded="false" title="Open Personal App Container &amp; App Store Directory">
+            <span data-uh="appsIcon">${activeAppSpec ? activeAppSpec.icon : '📦'}</span>
+            <span data-uh="appsLabel">${escapeHtmlText(activeAppSpec ? activeAppSpec.shortLabel : 'My Apps')}</span>
+            <span data-uh="appsCountBadge" style="display:none;padding:1px 6px;border-radius:999px;background:rgba(16,185,129,0.25);border:1px solid rgba(52,211,153,0.55);color:#6ee7b7;font-size:0.63rem;font-weight:800;">0</span>
             <span style="opacity:0.75;font-size:0.62rem;">▾</span>
           </button>
-          <div class="slx-uh-apps-menu" data-uh="appsMenu" role="menu">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 8px 8px;margin-bottom:4px;border-bottom:1px solid rgba(56,189,248,0.25);">
-              <a href="/apps.html" style="flex:1;text-decoration:none;padding:5px 8px;border-radius:7px;background:rgba(14,165,233,0.16);border:1px solid rgba(56,189,248,0.45);color:#e0f2fe;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">🧩 App Directory</a>
-              <a href="/apps.html?create=1" style="flex:1;text-decoration:none;padding:5px 8px;border-radius:7px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.55);color:#d1fae5;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">➕ Publish App</a>
-            </div>
-            ${appsMenuHtml}
-          </div>
+          <div class="slx-uh-apps-menu" data-uh="appsMenu" role="menu"></div>
         </div>
 
         <div class="slx-uh-suite-pills" data-uh="suitePills"></div>
@@ -3837,10 +3841,182 @@ export function mountSlxUnifiedHeader({
     extra: hdr.querySelector('[data-uh="extra"]'),
     mobileSlot: hdr.querySelector('[data-uh="mobileSlot"]'),
     appsBtn: hdr.querySelector('[data-uh="appsBtn"]'),
+    appsIcon: hdr.querySelector('[data-uh="appsIcon"]'),
+    appsLabel: hdr.querySelector('[data-uh="appsLabel"]'),
+    appsCountBadge: hdr.querySelector('[data-uh="appsCountBadge"]'),
     appsMenu: hdr.querySelector('[data-uh="appsMenu"]'),
     suitePills: hdr.querySelector('[data-uh="suitePills"]'),
     telemetryMount: hdr.querySelector('[data-uh="telemetryMount"]'),
   };
+
+  let installingActiveBusy = false;
+
+  const renderPersonalAppsMenu = () => {
+    if (!refs.appsMenu) return;
+    const installed = SlxPersonalAppContainer.listInstalled();
+    const cacheStats = SlxUiBundleCache.getCacheStats();
+    const cachedKb = (cacheStats.totalCompressedBytes / 1024).toFixed(1);
+
+    if (refs.appsCountBadge) {
+      if (installed.length > 0) {
+        refs.appsCountBadge.style.display = 'inline-block';
+        refs.appsCountBadge.textContent = String(installed.length);
+        refs.appsCountBadge.title = `${installed.length} app(s) installed in your Personal App Container`;
+      } else {
+        refs.appsCountBadge.style.display = 'none';
+      }
+    }
+
+    const latestActiveSpec = resolveKnownAppMeta(canonicalActiveId);
+    const canInstallActive =
+      canonicalActiveId &&
+      !NON_INSTALLABLE_PLATFORM_IDS.has(canonicalActiveId) &&
+      !SlxPersonalAppContainer.isInstalled(canonicalActiveId) &&
+      latestActiveSpec;
+
+    const platformRowsHtml = `
+      ${
+        slidesMode
+          ? `<a href="/" class="slx-uh-app-item ${canonicalActiveId === 'deck' ? 'active' : ''}" style="padding:0.4rem 0.55rem;">
+              <div style="display:flex;align-items:center;gap:0.48rem;min-width:0;">
+                <span style="font-size:0.9rem;flex-shrink:0;">📽️</span>
+                <div style="font-size:0.73rem;font-weight:700;">Presentation Slides</div>
+              </div>
+              ${canonicalActiveId === 'deck' ? '<span style="font-family:monospace;font-size:0.58rem;font-weight:800;color:#6ee7b7;">ACTIVE</span>' : '<span style="color:#64748b;font-size:0.7rem;">→</span>'}
+            </a>`
+          : ''
+      }
+      <a href="${escapeHtmlText(effectiveExplorerHref)}" class="slx-uh-app-item ${canonicalActiveId === 'explorer' ? 'active' : ''}" style="padding:0.4rem 0.55rem;">
+        <div style="display:flex;align-items:center;gap:0.48rem;min-width:0;">
+          <span style="font-size:0.9rem;flex-shrink:0;">🔎</span>
+          <div style="font-size:0.73rem;font-weight:700;">Subnet Block Explorer</div>
+        </div>
+        ${canonicalActiveId === 'explorer' ? '<span style="font-family:monospace;font-size:0.58rem;font-weight:800;color:#6ee7b7;">ACTIVE</span>' : '<span style="color:#64748b;font-size:0.7rem;">→</span>'}
+      </a>
+    `;
+
+    const installActiveBarHtml = canInstallActive
+      ? `<button type="button" data-uh-install-active="1" ${installingActiveBusy ? 'disabled' : ''} style="margin:4px 2px 2px;padding:7px 10px;border-radius:8px;border:1px solid rgba(52,211,153,0.65);background:linear-gradient(135deg,rgba(16,185,129,0.24),rgba(14,165,233,0.18));color:#ecfdf5;font-family:monospace;font-size:0.68rem;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;text-align:left;">
+          <span>${installingActiveBusy ? '⏳ Caching HTML…' : `⬇ Install "${escapeHtmlText(latestActiveSpec.shortLabel || latestActiveSpec.label)}" to My Apps`}</span>
+          <span style="color:#6ee7b7;font-size:0.62rem;">+ Pin Cache</span>
+        </button>`
+      : '';
+
+    const installedListHtml = installed.length
+      ? installed
+          .map((app, idx) => {
+            const isAct = app.slug === canonicalActiveId;
+            const isCached = SlxUiBundleCache.isCachedSync(app.uiHash);
+            const href =
+              app.route ||
+              (app.isSystemCore ? `/${app.slug}.html` : `/apps.html?run=${encodeURIComponent(app.slug)}`);
+            return `
+              <div class="slx-uh-app-item ${isAct ? 'active' : ''}" style="padding:0.42rem 0.52rem;gap:0.4rem;">
+                <a href="${escapeHtmlText(href)}" style="display:flex;align-items:center;gap:0.5rem;min-width:0;flex:1;color:inherit;text-decoration:none;">
+                  <span style="font-size:0.95rem;flex-shrink:0;">${escapeHtmlText(app.icon || '🧩')}</span>
+                  <div style="min-width:0;flex:1;">
+                    <div style="font-size:0.74rem;font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtmlText(app.title)}</div>
+                    <div style="font-size:0.61rem;color:${isCached ? '#6ee7b7' : '#94a3b8'};font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${isCached ? '⚡ HTML Cached Locally' : `v${escapeHtmlText(app.version || '1.0')}`}
+                    </div>
+                  </div>
+                </a>
+                <div style="display:inline-flex;align-items:center;gap:3px;flex-shrink:0;">
+                  ${isAct ? '<span style="font-family:monospace;font-size:0.56rem;font-weight:800;color:#6ee7b7;margin-right:2px;">ACTIVE</span>' : ''}
+                  ${
+                    idx > 0
+                      ? `<button type="button" data-uh-move-up="${escapeHtmlText(app.slug)}" title="Move up in My Apps" style="padding:2px 5px;border-radius:5px;border:1px solid rgba(100,116,139,0.4);background:rgba(15,23,42,0.8);color:#94a3b8;font-size:0.6rem;cursor:pointer;line-height:1;">↑</button>`
+                      : ''
+                  }
+                  <button type="button" data-uh-uninstall="${escapeHtmlText(app.slug)}" title="Remove from My Apps Container" style="padding:2px 5px;border-radius:5px;border:1px solid rgba(244,63,94,0.38);background:rgba(127,29,29,0.25);color:#fda4af;font-size:0.6rem;cursor:pointer;line-height:1;">✕</button>
+                </div>
+              </div>
+            `;
+          })
+          .join('')
+      : `
+        <div style="margin:4px 2px;padding:10px 11px;border-radius:9px;border:1px dashed rgba(56,189,248,0.38);background:rgba(7,16,33,0.85);display:flex;flex-direction:column;gap:7px;">
+          <div style="font-size:0.7rem;color:#cbd5e1;line-height:1.42;">
+            <strong style="color:#7dd3fc;">No apps installed yet.</strong> Browse the categorized App Directory and click <strong>⬇ Install</strong> on any use case to pin it here &amp; cache its HTML locally.
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;">
+            ${Object.values(APP_CATEGORIES)
+              .map(
+                (c) =>
+                  `<a href="/apps.html?cat=${encodeURIComponent(c.key)}" style="text-decoration:none;padding:3px 7px;border-radius:999px;border:1px solid rgba(71,85,105,0.75);background:#050c1a;color:#bae6fd;font-family:monospace;font-size:0.61rem;font-weight:700;">${c.icon} ${escapeHtmlText(c.shortLabel || c.label)}</a>`
+              )
+              .join('')}
+          </div>
+        </div>
+      `;
+
+    refs.appsMenu.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 4px 8px;border-bottom:1px solid rgba(56,189,248,0.24);">
+        <a href="/apps.html" style="flex:1;text-decoration:none;padding:6px 8px;border-radius:7px;background:rgba(14,165,233,0.18);border:1px solid rgba(56,189,248,0.5);color:#e0f2fe;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">🧩 Browse Directory</a>
+        <a href="/apps.html?create=1" style="flex:1;text-decoration:none;padding:6px 8px;border-radius:7px;background:rgba(16,185,129,0.2);border:1px solid rgba(52,211,153,0.55);color:#d1fae5;font-family:monospace;font-size:0.68rem;font-weight:800;text-align:center;">➕ Publish App</a>
+      </div>
+      ${platformRowsHtml}
+      ${installActiveBarHtml}
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 6px 2px;margin-top:2px;border-top:1px solid rgba(51,65,85,0.6);">
+        <span class="slx-uh-apps-group-lbl" style="padding:0;">📦 My App Container (${installed.length})</span>
+        <a href="/apps.html?view=installed" style="font-family:monospace;font-size:0.62rem;font-weight:700;color:#38bdf8;text-decoration:none;">Manage →</a>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px;max-height:42vh;overflow-y:auto;">
+        ${installedListHtml}
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:6px 6px 2px;margin-top:3px;border-top:1px solid rgba(51,65,85,0.6);font-family:monospace;font-size:0.61rem;color:#94a3b8;">
+        <span title="Verified &amp; gunzipped HTML UI bundles stored in browser local cache for instant loads">⚡ ${cacheStats.count} cached (${cachedKb} KiB)</span>
+        <a href="/apps.html?view=installed" style="color:#6ee7b7;text-decoration:none;font-weight:700;">Cache &amp; Order →</a>
+      </div>
+    `;
+  };
+
+  renderPersonalAppsMenu();
+  const unsubPersonalApps = SlxPersonalAppContainer.onChange(() => {
+    renderPersonalAppsMenu();
+  });
+
+  refs.appsMenu?.addEventListener('click', async (ev) => {
+    const moveUpBtn = ev.target.closest('[data-uh-move-up]');
+    if (moveUpBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      SlxPersonalAppContainer.moveInstalledApp(moveUpBtn.getAttribute('data-uh-move-up'), -1);
+      return;
+    }
+    const uninstBtn = ev.target.closest('[data-uh-uninstall]');
+    if (uninstBtn) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      await SlxPersonalAppContainer.uninstallApp(uninstBtn.getAttribute('data-uh-uninstall'));
+      return;
+    }
+    const instActiveBtn = ev.target.closest('[data-uh-install-active]');
+    if (instActiveBtn && !installingActiveBusy) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      installingActiveBusy = true;
+      renderPersonalAppsMenu();
+      try {
+        const specNow = resolveKnownAppMeta(canonicalActiveId);
+        const appMeta = specNow?.meta || {
+          slug: canonicalActiveId,
+          title: specNow?.label || canonicalActiveId,
+          summary: specNow?.sub || '',
+          icon: specNow?.icon || '🧩',
+          route: specNow?.href || `/${canonicalActiveId}.html`,
+          bundleUrl: `/app-bundles/${canonicalActiveId}.html.gz`,
+          isSystemCore: true,
+        };
+        const sc = new AppStoreClient({ rpcUrl: rpcUrlFn() });
+        await SlxPersonalAppContainer.installApp(appMeta, { storeClient: sc });
+      } catch (_) {
+      } finally {
+        installingActiveBusy = false;
+        renderPersonalAppsMenu();
+      }
+    }
+  });
 
   // Adopt any caller-provided DOM elements (preserving IDs & event listeners!)
   for (const el of mobileElements || []) {
@@ -3971,11 +4147,13 @@ export function mountSlxUnifiedHeader({
       if (refs.subtitle && nextSub !== undefined) refs.subtitle.textContent = nextSub;
     },
     refresh: () => {
+      renderPersonalAppsMenu();
       chainBar?.refresh?.();
       walletUi?.refresh?.();
       socialUi?.refresh?.();
     },
     destroy: () => {
+      unsubPersonalApps();
       document.removeEventListener('click', onDocClick);
       document.removeEventListener('keydown', onDocKey);
       ro?.disconnect();
