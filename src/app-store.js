@@ -249,6 +249,112 @@ export function splitBundleIntoChunks(compressedBytes) {
   return chunks;
 }
 
+/**
+ * Audits unpacked HTML for external `http(s)://` runtime dependencies (`<script src>`,
+ * `<link href>`, `<img src>`, `<iframe src>`, CSS `@import`) that would fail when running
+ * offline over `LR2021` Sub-GHz RF without internet access.
+ */
+export function auditHtmlOfflineReadiness(htmlString) {
+  const html = String(htmlString || '');
+  const externalUrls = [];
+  const pushUnique = (u) => {
+    const clean = String(u || '').trim();
+    if (clean && !externalUrls.includes(clean)) externalUrls.push(clean);
+  };
+
+  const tagRe = /<(script|link|img|iframe)\b([^>]*)>/gi;
+  let m;
+  while ((m = tagRe.exec(html)) !== null) {
+    const tagName = m[1].toLowerCase();
+    const attrs = m[2] || '';
+    if (tagName === 'link') {
+      const relMatch = attrs.match(/\brel\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+      const relVal = (relMatch?.[1] || relMatch?.[2] || '').trim().toLowerCase();
+      if (relVal === 'preconnect' || relVal === 'dns-prefetch') continue;
+    }
+    const attrName = tagName === 'link' ? 'href' : 'src';
+    const valRe = new RegExp(`\\b${attrName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'i');
+    const vm = attrs.match(valRe);
+    const val = (vm?.[1] || vm?.[2] || '').trim();
+    if (/^(https?:)?\/\//i.test(val)) {
+      pushUnique(val);
+    }
+  }
+
+  const importRe = /@import\s+(?:url\(\s*)?(?:"([^"]*)"|'([^']*)'|([^"');\s]+))/gi;
+  while ((m = importRe.exec(html)) !== null) {
+    const val = (m[1] || m[2] || m[3] || '').trim();
+    if (/^(https?:)?\/\//i.test(val)) {
+      pushUnique(val);
+    }
+  }
+
+  return {
+    rfOfflineReady: externalUrls.length === 0,
+    externalUrls,
+  };
+}
+
+/**
+ * Inspects & validates an uploaded `.html.gz` archive (or fallback `.html` file).
+ * When a `.html.gz` archive (`0x1f 0x8b` magic, e.g. produced by `cargo hps bundle`) is supplied,
+ * its exact compressed bytes and `keccak256` `uiHash` are preserved verbatim without browser
+ * re-compression so reproducible CLI builds match on-chain `uiHash` bit-for-bit.
+ */
+export async function inspectUploadedUiArchive(fileBytes) {
+  const u8 = fileBytes instanceof Uint8Array ? fileBytes : new Uint8Array(fileBytes || []);
+  if (!u8.length) {
+    throw new Error('Uploaded UI archive is empty (0 bytes).');
+  }
+
+  const isGzipMagic = u8.length >= 2 && u8[0] === 0x1f && u8[1] === 0x8b;
+  if (isGzipMagic) {
+    if (u8.length > APP_STORE_MAX_CHUNKS * APP_STORE_CHUNK_BYTES) {
+      throw new Error(
+        `Compressed .html.gz archive (${(u8.length / 1024).toFixed(1)} KiB) exceeds ${
+          (APP_STORE_MAX_CHUNKS * APP_STORE_CHUNK_BYTES) / 1024
+        } KiB AppStore maximum.`
+      );
+    }
+    const html = await decompressAppUiBundle(u8, APP_STORE_ENCODING.GZIP);
+    const rawUtf8 = utf8ToBytes(html);
+    const uiHash = keccak256Hex(u8);
+    const chunkCount = Math.max(1, Math.ceil(u8.length / APP_STORE_CHUNK_BYTES));
+    const offline = auditHtmlOfflineReadiness(html);
+    return {
+      bytes: u8,
+      encoding: APP_STORE_ENCODING.GZIP,
+      html,
+      uiHash,
+      compressedLen: u8.length,
+      uncompressedLen: rawUtf8.length,
+      chunkCount,
+      isPrebuiltGzip: true,
+      deterministicMtimeZero:
+        u8.length >= 10 && u8[4] === 0 && u8[5] === 0 && u8[6] === 0 && u8[7] === 0,
+      rfOfflineReady: offline.rfOfflineReady,
+      externalUrls: offline.externalUrls,
+    };
+  }
+
+  const html = bytesToUtf8(u8);
+  const packed = await compressAppUiBundle(html);
+  const offline = auditHtmlOfflineReadiness(html);
+  return {
+    bytes: packed.bytes,
+    encoding: packed.encoding,
+    html,
+    uiHash: packed.uiHash,
+    compressedLen: packed.compressedLen,
+    uncompressedLen: packed.uncompressedLen,
+    chunkCount: packed.chunkCount,
+    isPrebuiltGzip: false,
+    deterministicMtimeZero: false,
+    rfOfflineReady: offline.rfOfflineReady,
+    externalUrls: offline.externalUrls,
+  };
+}
+
 export function slugToBytes32(slug) {
   const clean = String(slug || '')
     .trim()
@@ -1015,7 +1121,14 @@ export class AppStoreClient {
     });
   }
 
-  async uploadUiBundleOnChain({ wallet, htmlSource, slug = '', title = '', onStatus = null }) {
+  async uploadUiBundleOnChain({
+    wallet,
+    gzBytes = null,
+    htmlSource = '',
+    slug = '',
+    title = '',
+    onStatus = null,
+  }) {
     const emit = (m) => {
       if (typeof onStatus === 'function') onStatus(m);
     };
@@ -1028,7 +1141,12 @@ export class AppStoreClient {
       );
     }
 
-    const packed = await compressAppUiBundle(htmlSource);
+    const packed =
+      gzBytes && gzBytes.length > 0
+        ? await inspectUploadedUiArchive(gzBytes)
+        : await compressAppUiBundle(htmlSource);
+    const unpackedHtml = packed.html ?? String(htmlSource || '');
+
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
     await SlxUiBundleCache.putVerifiedHtml(
       packed.uiHash,
@@ -1036,7 +1154,7 @@ export class AppStoreClient {
         uiHash: packed.uiHash,
         compressedLen: packed.compressedLen,
         uncompressedLen: packed.uncompressedLen,
-        html: htmlSource,
+        html: unpackedHtml,
       },
       { slug, title }
     );
@@ -1121,7 +1239,8 @@ export class AppStoreClient {
     version = '1.0.0',
     category = 6,
     execMode = APP_EXEC_MODE.SANDBOX_IFRAME,
-    htmlSource,
+    gzBytes = null,
+    htmlSource = '',
     wasmBytes = null,
     wasmCodeHash = ZERO_BYTES32,
     defaultHfsAddr = ZERO_ADDR,
@@ -1146,7 +1265,12 @@ export class AppStoreClient {
       );
     }
 
-    const packed = await compressAppUiBundle(htmlSource);
+    const packed =
+      gzBytes && gzBytes.length > 0
+        ? await inspectUploadedUiArchive(gzBytes)
+        : await compressAppUiBundle(htmlSource);
+    const unpackedHtml = packed.html ?? String(htmlSource || '');
+
     await SlxUiBundleCache.putRawBundle(packed.uiHash, packed.bytes, packed.encoding);
     await SlxUiBundleCache.putVerifiedHtml(
       packed.uiHash,
@@ -1154,7 +1278,7 @@ export class AppStoreClient {
         uiHash: packed.uiHash,
         compressedLen: packed.compressedLen,
         uncompressedLen: packed.uncompressedLen,
-        html: htmlSource,
+        html: unpackedHtml,
       },
       { slug: cleanSlug, title }
     );
@@ -1204,7 +1328,14 @@ export class AppStoreClient {
         resolvedDefaultHfs = (rI.contractAddress || pred).toLowerCase();
       }
 
-      await this.uploadUiBundleOnChain({ wallet, htmlSource, onStatus });
+      await this.uploadUiBundleOnChain({
+        wallet,
+        gzBytes: packed.bytes,
+        htmlSource: unpackedHtml,
+        slug: cleanSlug,
+        title,
+        onStatus,
+      });
 
       emit(`Registering "${title}" (${version}) in AppStore HFS…`);
       const pubCd = AppStoreAbi.publishApp({
