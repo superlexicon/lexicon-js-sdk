@@ -195,6 +195,17 @@ export function decodeAddrWord(hex, wordIdx = 0) {
   return bytesToHex(b.slice(base + 12, base + 32), true).toLowerCase();
 }
 
+export function decodeAbiBytesHex(hex) {
+  if (!hex || hex === '0x') return new Uint8Array(0);
+  const b = hexToBytes(hex);
+  if (b.length < 64) return new Uint8Array(0);
+  const offset = readU64BE(b, 24);
+  if (offset + 32 > b.length) return new Uint8Array(0);
+  const byteLen = readU64BE(b, offset + 24);
+  if (byteLen === 0 || offset + 32 + byteLen > b.length) return new Uint8Array(0);
+  return b.slice(offset + 32, offset + 32 + byteLen);
+}
+
 export function decodeAbiStringHex(hex) {
   if (!hex || hex === '0x') return '';
   const b = hexToBytes(hex);
