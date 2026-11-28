@@ -1564,6 +1564,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Volatile Voles Burrow Arena',
     placeholder: 'e.g. High-Voltage Burrow Club #1',
   },
+  RIDE_EXCHANGE: {
+    typeName: 'RIDE_EXCHANGE',
+    icon: '🚖',
+    shortLabel: 'Ride Exchange',
+    deployBtnText: '+ New Metro Exchange',
+    modalTitle: 'Deploy & Register New Metro Ride Service Futures Exchange',
+    placeholder: 'e.g. Singapore Metro Ride Exchange',
+  },
   QUANTUM_LOTTERY: {
     typeName: 'QUANTUM_LOTTERY',
     icon: '🎰',

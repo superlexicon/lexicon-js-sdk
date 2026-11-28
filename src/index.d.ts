@@ -1102,3 +1102,31 @@ export class AppStoreClient {
     wasmCodeHash: string;
   }>;
 }
+
+// Multi-Regime Discrete-Time AON Ride Service Futures Exchange HFS (ride-exchange)
+export const RIDE_EXCHANGE_CODE_HASH: string;
+export const SG_REGIMES: ReadonlyArray<Record<string, any>>;
+export const SG_LANDMARKS: ReadonlyArray<Record<string, any>>;
+export const RideExchangeAbi: Record<string, (...args: any[]) => string>;
+export function classifySgRegime(lat: number, lon: number): number;
+export function computeRoadDistanceM(
+  latA: number,
+  lonA: number,
+  latB: number,
+  lonB: number,
+  cosLatBps?: number,
+  roadFactorBps?: number
+): number;
+export function computeTripFareCeilCents(ratePerKmCents: number, tripM: number): number;
+export function computeDefaultSgTollCents(origRegime: number, destRegime: number): number;
+export class RideExchangeClient {
+  constructor(opts?: { rpcUrlFn?: () => string; exchangeAddr?: string });
+  resolveAddress(): Promise<string>;
+  fetchFullState(myIdentityAddr?: string): Promise<Record<string, any> | null>;
+  executeViaIdentity(
+    wallet: SlxWalletManager,
+    innerCalldataHex: string,
+    opts?: Record<string, any>
+  ): Promise<{ txHash: string; receipt: any; identityAddr: string }>;
+  triggerMatchBlock(wallet: SlxWalletManager): Promise<{ txHash: string; receipt: any }>;
+}

@@ -36,6 +36,7 @@
     "./charter-social": "./src/charter-social.js",
     "./webrtc": "./src/webrtc.js",
     "./webrtc-call": "./src/webrtc-call.js",
+    "./ride-exchange": "./src/ride-exchange.js",
     "./hfs-deployers": "./src/hfs-deployers.js",
     "./inst-suite": "./src/inst-suite.js",
     "./ifrs-valuation": "./src/ifrs-valuation.js",

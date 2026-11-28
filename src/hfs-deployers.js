@@ -283,9 +283,9 @@ export async function deployNewDexMarketHfs({
   const ZERO = '0x0000000000000000000000000000000000000000';
 
   const perms = concatBytes(
-    packPerm(kH('SUPER'), inst.corporateCharter, kH('SUPER_GOVERNANCE')),
-    packPerm(kH('ISSUE'), inst.corporateCharter, kH('BANK_ORACLE')),
-    packPerm(kH('CANCEL'), inst.corporateCharter, kH('BANK_ORACLE')),
+    packPerm(kH('SUPER'), newDex, kH('SUPER_GOVERNANCE')),
+    packPerm(kH('ISSUE'), newDex, kH('BANK_ORACLE')),
+    packPerm(kH('CANCEL'), newDex, kH('BANK_ORACLE')),
     packPerm(kH('TRANSFER'), ZERO, kH('HOLDER_SELF')),
     packPerm(kH('APPROVE'), ZERO, kH('HOLDER_SELF'))
   );
@@ -2036,6 +2036,191 @@ export async function deployNewVolatileVolesHfs({
   };
 }
 
+export async function deployNewRideExchangeHfs({
+  wallet,
+  label = 'Singapore Metro Ride Exchange',
+  quoteSymbol = 'SGD-RIDE',
+  rpcUrl = getDefaultNodeWsUrl(),
+  manifestOverride = null,
+  onStatus = null,
+}) {
+  const manifest = manifestOverride || (await SlxHfsCache.hydrateWithManifest()).manifest;
+  const inst = manifest?.institutional;
+  const chLedger = manifest?.codeHashes?.asset_ledger;
+  const chRide =
+    manifest?.codeHashes?.ride_exchange ||
+    '0xd92f9b0e1577d5fbe1d79970de65850d8e09911c0f0830d54c3786ad949f0ebc';
+  const reg = manifest?.hfsRegistry;
+  if (!inst || !chLedger || !reg) {
+    throw new Error('Missing institutional suite or codeHashes in manifest');
+  }
+
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'Ride Exchange' });
+  const myEoa = wallet.keypair.address;
+  const myPriv = wallet.keypair.privateKey;
+  const ZERO = '0x0000000000000000000000000000000000000000';
+
+  if (onStatus) onStatus(`Block 1/2: Instantiating ${quoteSymbol} AssetLedger & ride_exchange.wasm…`);
+  const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const sFiat = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0,
+    to: null,
+    data: chLedger,
+    gasLimit: 2_000_000n,
+  });
+  const sRide = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0 + 1n,
+    to: null,
+    data: chRide,
+    gasLimit: 2_500_000n,
+    lowerBoundHashHex: sFiat.txHash,
+  });
+  const [rFiat, rRide] = await waitReceipts(rpcUrl, [
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [sFiat.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [sRide.raw]),
+  ]);
+  const newFiat = rFiat.contractAddress.toLowerCase();
+  const newRide = rRide.contractAddress.toLowerCase();
+
+  const u64BE = (v) => {
+    const b = new Uint8Array(8);
+    let x = BigInt(v);
+    for (let i = 7; i >= 0; i--) {
+      b[i] = Number(x & 0xffn);
+      x >>= 8n;
+    }
+    return b;
+  };
+  const packAlloc = (a, amt) => concatBytes(hexToBytes(a).slice(-20), u64BE(amt));
+  const packPerm = (act, chr, pol) =>
+    concatBytes(
+      hexToBytes(act).slice(0, 32),
+      hexToBytes(chr).slice(-20),
+      hexToBytes(pol).slice(0, 32)
+    );
+  const kH = (s) => keccak256Hex(utf8ToBytes(s));
+  const perms = concatBytes(
+    packPerm(kH('SUPER'), newRide, kH('SUPER_GOVERNANCE')),
+    packPerm(kH('ISSUE'), newRide, kH('BANK_ORACLE')),
+    packPerm(kH('CANCEL'), newRide, kH('BANK_ORACLE')),
+    packPerm(kH('TRANSFER'), ZERO, kH('HOLDER_SELF')),
+    packPerm(kH('APPROVE'), ZERO, kH('HOLDER_SELF'))
+  );
+
+  const sameAsEscrow =
+    idRec.identityAddr.toLowerCase() === String(inst.dexEscrowIdentity || '').toLowerCase();
+  const fiatAllocs = sameAsEscrow
+    ? packAlloc(inst.dexEscrowIdentity, 90_050_000n)
+    : concatBytes(
+        packAlloc(inst.dexEscrowIdentity, 90_000_000n),
+        packAlloc(idRec.identityAddr, 50_000n)
+      );
+
+  const targets = [
+    inst.registry,
+    inst.corporateCharter,
+    inst.dexEscrowIdentity,
+    idRec.identityAddr,
+    newFiat,
+    newRide,
+    reg,
+  ];
+  const execWrap = (target, innerHex) =>
+    encodeSimpleAbi('execute(address,bytes)', [
+      ['address', target],
+      ['bytes', hexToBytes(innerHex)],
+    ]);
+
+  if (onStatus) onStatus(`Block 2/2: Initializing ${label} & registering in HfsRegistry…`);
+  const n1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const txInitFiat = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1,
+    to: idRec.identityAddr,
+    data: execWrap(
+      newFiat,
+      encodeSimpleAbi('initialize(address,string,uint64,bytes,bytes)', [
+        ['address', inst.registry],
+        ['string', quoteSymbol],
+        ['uint64', 2n],
+        ['bytes', fiatAllocs],
+        ['bytes', perms],
+      ])
+    ),
+    gasLimit: 2_500_000n,
+    extraTargets: targets,
+  });
+  const txAttach = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 1n,
+    to: idRec.identityAddr,
+    data: execWrap(
+      newFiat,
+      encodeSimpleAbi('setAttachedDex(address,address)', [
+        ['address', newRide],
+        ['address', ZERO],
+      ])
+    ),
+    gasLimit: 2_000_000n,
+    extraTargets: targets,
+    lowerBoundHashHex: txInitFiat.txHash,
+  });
+  const txInitRide = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 2n,
+    to: newRide,
+    data: encodeSimpleAbi('initialize(address,address,address,string,uint64,uint64)', [
+      ['address', inst.registry],
+      ['address', newFiat],
+      ['address', inst.dexEscrowIdentity],
+      ['string', label],
+      ['uint64', 9997n],
+      ['uint64', 12800n],
+    ]),
+    gasLimit: 3_000_000n,
+    extraTargets: targets,
+    lowerBoundHashHex: txAttach.txHash,
+  });
+  const txReg = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 3n,
+    to: reg,
+    data: HfsRegistryAbi.registerInstance('RIDE_EXCHANGE', newRide, idRec.identityAddr, label, {
+      quoteLedger: newFiat,
+      quoteSymbol,
+    }),
+    gasLimit: 5_000_000n,
+    extraTargets: targets,
+    lowerBoundHashHex: txInitRide.txHash,
+  });
+
+  await waitReceipts(rpcUrl, [
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txInitFiat.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txAttach.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txInitRide.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txReg.raw]),
+  ]);
+
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: newRide,
+      typeName: 'RIDE_EXCHANGE',
+      status: 2,
+      label,
+      rpcUrl,
+    })
+    .catch(() => {});
+
+  return {
+    primaryAddr: newRide,
+    label,
+    meta: { quoteLedger: newFiat, quoteSymbol },
+    selectionKey: makeHfsSelectionKey(newRide, {}),
+  };
+}
+
 function wrapWebGatedDeployer(fn) {
   return async (opts = {}) => {
     const candidateLabel = opts.companyName || opts.label || '';
@@ -2058,3 +2243,4 @@ registerHfsTypeDeployer("SECRET_BALLOT", wrapWebGatedDeployer(deployNewSecretBal
 registerHfsTypeDeployer("IFRS_LEDGER", wrapWebGatedDeployer(deployNewIfrsLedgerHfs));
 registerHfsTypeDeployer("WEBRTC_SIGNAL", wrapWebGatedDeployer(deployNewWebRtcSignalHfs));
 registerHfsTypeDeployer("VOLATILE_VOLES", wrapWebGatedDeployer(deployNewVolatileVolesHfs));
+registerHfsTypeDeployer("RIDE_EXCHANGE", wrapWebGatedDeployer(deployNewRideExchangeHfs));

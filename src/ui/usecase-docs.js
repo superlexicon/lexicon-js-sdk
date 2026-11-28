@@ -33,6 +33,10 @@ const DOC_APP_ALIASES = {
   webrtc: 'telephony',
   voles: 'volatile-voles',
   volatile_voles: 'volatile-voles',
+  'ride-exchange': 'rides',
+  ride_exchange: 'rides',
+  transitdex: 'rides',
+  uber: 'rides',
 };
 
 const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir', 'volatile-voles']);
@@ -1244,6 +1248,118 @@ export const USECASE_DESCRIPTIONS = {
           <h4>✅ Deterministic Halt-Proof Guarantees</h4>
           <ul>
             <li><strong>Fixed-Bound Arrays:</strong> Max <code>5</code> seats, <code>16</code> hand slots, <code>12</code> Burrow Voles, <code>8</code> Perks/Hexes, and <code>14</code> bounded AI step iterations guarantee O(1) worst-case Wasmtime fuel execution.</li>
+          </ul>
+        </div>
+      `,
+    },
+  },
+
+  rides: {
+    id: 'rides',
+    icon: '🚖',
+    title: 'TransitDEX — Multi-Regime Ride Service Futures Exchange',
+    href: '/rides.html',
+    tagline:
+      'Replacing opaque 30%-commission ride-hailing dispatch black-boxes with a Multi-Regime Discrete-Time All-Or-Nothing (AON) Orderbook & Physically-Settled Service Futures Escrow on Layer 1.',
+    featurePills: [
+      { label: '6-Regime Metro Orderbooks', tone: 'amber' },
+      { label: 'All-Or-Nothing (AON) Range Gate', tone: 'emerald' },
+      { label: 'Meter-at-Pickup Clean $/km', tone: 'cyan' },
+      { label: 'Resting-Maker Clearing Price', tone: 'violet' },
+      { label: 'Clean Rate + Statutory Toll Pass-Through', tone: 'sky' },
+      { label: 'Service Futures Escrow (Rider Sign-Off)', tone: 'indigo' },
+    ],
+    tabs: {
+      codification: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🚖 From Black-Box Surge Monopolies to Transparent Commodity-Style Service Futures</div>
+          <p>
+            Centralized ride-hailing platforms extract <code>25–35%</code> take-rates while hiding supply/demand depth behind proprietary surge algorithms that charge riders one price and pay drivers another.
+            <strong>TransitDEX</strong> (<a href="https://github.com/superlexicon/haltproof-subroutines/tree/main/examples/ride-exchange" target="_blank" rel="noopener"><code>examples/ride-exchange</code></a> + <a href="https://github.com/superlexicon/haltproof-subroutines/blob/main/crates/hps-sdk/src/spatial.rs" target="_blank" rel="noopener"><code>hps_sdk::spatial</code></a>) models urban mobility as a <strong>Class II Multi-Parameter Constrained Bilateral Exchange</strong> with <code>0%</code> platform rent: drivers quote <code>ask_per_km</code> + <code>max_distance</code> from live GPS coordinates, customers quote <code>bid_per_km</code> on their <code>from &rarr; to</code> route, and matched orders lock into a <strong>Physically-Settled Taxi Service Futures Contract</strong> until the passenger signs <code>completeRide</code>!
+          </p>
+        </div>
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Market Dimension</th>
+              <th>Centralized Ride-Hailing App / Naive 1D Token CLOB</th>
+              <th>TransitDEX Multi-Regime Haltproof Subroutine (<code>ride_exchange.wasm</code>)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Non-Fungible Geography</strong></td>
+              <td>Opaque surge multipliers; separate per-neighborhood DEX contracts risk double-booking one car across borders.</td>
+              <td><strong>Single Metro HFS with <code>6</code> Price-Regime Sub-Books</strong> (<code>CBD</code>, <code>Fringe</code>, <code>Changi</code>, <code>Remote</code>, <code>Jurong</code>, <code>Heartland</code>) sharing <strong>one atomic Car Inventory slot</strong>.</td>
+            </tr>
+            <tr>
+              <td><strong>Total-Fare Consistency</strong></td>
+              <td>Charging per-km on approach deadhead can make a distant <code>$1.00/km</code> car cost more than a nearby <code>$1.20/km</code> car.</td>
+              <td><strong>Meter Starts at Pickup (<code>Q_billed = L_trip</code> Only):</strong> lowest <code>ask_per_km</code> strictly equals lowest total bill; <code>L_pickup</code> acts purely as a pickup-radius &amp; AON range gate + proximity tie-breaker!</td>
+            </tr>
+            <tr>
+              <td><strong>Tolls &amp; Remote Dropoffs</strong></td>
+              <td>Flat ERP / Airport tolls distort short-trip vs. long-trip per-km quotes; drivers get lemon-picked into dead-end remote zones.</td>
+              <td><strong>Clean Rate vs. Dirty Invoice:</strong> books match on clean <code>$/km</code>, pass through statutory ERP/Airport tolls separately, and apply each driver's <code>dest_mask</code> &amp; <code>remote_basis_cents</code>.</td>
+            </tr>
+            <tr>
+              <td><strong>Settlement Custody</strong></td>
+              <td>Instant token swap settles before physical service is delivered, or centralized processor holds funds for days.</td>
+              <td><strong>Service Futures Escrow:</strong> Resting-Maker fare locks in <code>escrowIdentity</code> on <code>AssetLedger</code> (unused Rider margin refunded immediately on match) and releases to Driver <strong>only when Customer signs <code>completeRide</code></strong>.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      mechanics: `
+        <div class="slx-ucd-grid">
+          <div class="slx-ucd-card">
+            <h4>📐 Integer Planar Geometry (<code>hps_sdk::spatial</code>)</h4>
+            <p>Signed microdegrees (<code>1e-6&deg; &approx; 0.11m</code>) projected via equirectangular <code>cos(&phi;<sub>0</sub>)</code> scaling and exact <code>u128::isqrt</code> (<code>1.28&times;</code> urban road factor) — zero <code>f64</code> drift across architectures.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🌲 6-Regime Static AVL Price Trees + O(1) GPS Heartbeats</h4>
+            <p>Each Regime maintains <code>AskTree (ask_per_km ASC)</code> and <code>BidTree (bid_per_km DESC)</code>. Calling <code>updateDriverLocation</code> updates vehicle GPS in <code>O(1)</code> while preserving <code>seniority_block</code>.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>🎯 All-Or-Nothing (AON) + Resting-Maker Execution</h4>
+            <p><code>matchBlock()</code> requires a single car to satisfy <code>L_pickup + L_trip &le; d.max_distance</code> and <code>L_pickup &le; max_pickup</code>, executing at whichever party's order rested earlier in the book.</p>
+          </div>
+          <div class="slx-ucd-card">
+            <h4>📜 Physical Delivery Futures Lifecycle</h4>
+            <p><code>MATCHED</code> (fare locked, excess margin refunded) &rarr; <code>IN_PROGRESS</code> (<code>confirmPickup</code>) &rarr; <code>SETTLED</code> (passenger signs <code>completeRide</code> &rarr; atomic <code>AssetLedger.dexTransfer</code> to driver).</p>
+          </div>
+        </div>
+      `,
+      topology: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Subroutine / Module</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ride_exchange.wasm</code> (<code>53 KB</code>)</td>
+              <td>6-Regime AVL Orderbooks, MEV-proof prior-block intake, AON spatial matcher, statutory toll matrix, and Ride Futures escrow state machine (<a href="https://github.com/superlexicon/haltproof-subroutines/tree/main/examples/ride-exchange" target="_blank" rel="noopener">GitHub source</a>).</td>
+            </tr>
+            <tr>
+              <td><code>asset_ledger.wasm</code> (<code>SGD-RIDE</code>)</td>
+              <td>Verified-Identity quote currency ledger executing atomic margin escrow, price-improvement refunds, and rider-authorized delivery payouts via <code>dexTransfer</code>.</td>
+            </tr>
+            <tr>
+              <td><code>identity.wasm</code> + <code>IdentityRegistry</code></td>
+              <td>Authenticates every Driver &amp; Customer via <code>Identity.execute(...)</code> and resolves on-chain driver/passenger handles.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      verification: `
+        <div class="slx-ucd-card">
+          <h4>✅ Deterministic Halt-Proof &amp; Solvency Invariants</h4>
+          <ul>
+            <li><strong>Segregated Futures Margin:</strong> <code>KEY_LOCKED_ESCROW</code> tracks every cent of active Rider Bids and un-settled Ride Futures separately from unencumbered demo liquidity, guaranteeing 100% solvency.</li>
+            <li><strong>Bounded Worst-Case Fuel:</strong> Static arenas (<code>6</code> regimes &times; <code>64</code> price levels, max <code>192</code> active orders/side) and early AVL termination once <code>base_ask &gt; bid_per_km</code> bound worst-case execution well inside a single FLRC radio block.</li>
           </ul>
         </div>
       `,

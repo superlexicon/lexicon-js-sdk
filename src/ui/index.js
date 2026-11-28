@@ -3569,6 +3569,15 @@ export const SLX_PLATFORM_APPS = [
     group: 'Institutional & Social HFS',
   },
   {
+    id: 'rides',
+    icon: '🚖',
+    label: 'TransitDEX — Ride Futures',
+    shortLabel: 'Ride Futures',
+    sub: 'Multi-Regime AON Ride Orderbook & Escrow',
+    href: '/rides.html',
+    group: 'Institutional & Social HFS',
+  },
+  {
     id: 'charter',
     icon: '🏛️',
     label: 'CorporateCharter',
@@ -3706,6 +3715,10 @@ const APP_ID_ALIASES = {
   lexicall: 'telephony',
   ethercall: 'telephony',
   webrtc: 'telephony',
+  'ride-exchange': 'rides',
+  ride_exchange: 'rides',
+  transitdex: 'rides',
+  uber: 'rides',
 };
 
 /**
