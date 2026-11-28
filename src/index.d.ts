@@ -1046,3 +1046,59 @@ export function probeSubnetNodeStats(
   totalCount: number;
   quorumMatched: boolean;
 }>;
+
+// L1 content-addressed UI bundle store (0x0101) & pure hash-pointer AppStore HFS
+export const UI_BUNDLE_STORE_ADDRESS: string;
+export const APP_STORE_CODE_HASH: string;
+export const UI_BUNDLE_MULTIPART_MAGIC: Uint8Array;
+export const UI_BUNDLE_RADIO_SAFE_PART_BYTES: number;
+export const AppStoreAbi: Record<string, (...args: any[]) => string>;
+export class AppStoreClient {
+  constructor(opts?: {
+    rpcUrlFn?: () => string;
+    appStoreAddr?: string;
+    hfsRegistryAddr?: string;
+    staticManifestUrl?: string;
+  });
+  resolveAddress(): Promise<string>;
+  deployAppStoreOnChain(opts?: Record<string, any>): Promise<{
+    txHash: string;
+    contractAddress: string;
+    codeHash: string;
+  }>;
+  fetchBytecode(codeHash: string): Promise<{
+    codeHash: string;
+    exists: boolean;
+    size: number;
+    bytes: Uint8Array | null;
+  }>;
+  fetchUiBundle(uiHash: string): Promise<{
+    uiHash: string;
+    exists: boolean;
+    size: number;
+    encoding: string;
+    bytes: Uint8Array | null;
+  }>;
+  uploadUiBundleOnChain(opts: Record<string, any>): Promise<{
+    uiHash: string;
+    compressedBytes: Uint8Array;
+    chunkCount: number;
+    alreadyExisted: boolean;
+    txHashes: string[];
+  }>;
+  fetchVerifiedBundleHtml(opts: Record<string, any>): Promise<{
+    html: string;
+    uiHash: string;
+    loadedFrom: string;
+    byteSize: number;
+  }>;
+  fetchOnChainApps(): Promise<Array<Record<string, any>>>;
+  fetchAppById(appId: number): Promise<Record<string, any> | null>;
+  fetchMergedDirectory(opts?: Record<string, any>): Promise<Record<string, any>>;
+  publishAppOnChain(opts: Record<string, any>): Promise<{
+    txHash: string;
+    appStoreAddr: string;
+    uiHash: string;
+    wasmCodeHash: string;
+  }>;
+}

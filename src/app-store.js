@@ -28,7 +28,12 @@ import {
   decodeUintWord,
   decodeAddrWord,
 } from './abi.js';
-import { getDefaultNodeWsUrl, SlxHfsCache, slxNodeRpc } from './rpc.js';
+import {
+  BYTECODE_STORE_ADDRESS,
+  getDefaultNodeWsUrl,
+  SlxHfsCache,
+  slxNodeRpc,
+} from './rpc.js';
 import { slxWaitForReceipt } from './events.js';
 import {
   encodeHfsTypeId,
@@ -65,10 +70,13 @@ export {
 };
 
 export const APP_STORE_CODE_HASH =
-  '0xee9d0de546e867f3a564e67cca86ea8988b965246b240eb93c9c2fc83ee90646';
-export const BYTECODE_STORE_ADDRESS = '0x0000000000000000000000000000000000000100';
+  '0xeb4814dda67ae256ea63bf3d7b2154d24352368f8538faa250e7fbc380c2a07a';
+export { BYTECODE_STORE_ADDRESS };
+export const UI_BUNDLE_STORE_ADDRESS = '0x0000000000000000000000000000000000000101';
 
-export const APP_STORE_CHUNK_BYTES = 32_768; // 32 KiB per chunk (up to 8 chunks = 256 KiB compressed)
+export const UI_BUNDLE_MULTIPART_MAGIC = new Uint8Array([0x53, 0x4c, 0x58, 0x55, 0x49, 0x01]); // "SLXUI\x01"
+export const UI_BUNDLE_RADIO_SAFE_PART_BYTES = 40_960; // 40 KiB per radio-safe burst
+export const APP_STORE_CHUNK_BYTES = UI_BUNDLE_RADIO_SAFE_PART_BYTES;
 export const APP_STORE_MAX_CHUNKS = 8;
 
 export const APP_STORE_ENCODING = {
@@ -691,23 +699,8 @@ export const AppStoreAbi = {
   canPublish: (actorAddr) => encodeAbi('canPublish(address)', [['address', actorAddr]]),
   abiVersion: () => bytesToHex(selectorBytes('abiVersion()')),
   admin: () => bytesToHex(selectorBytes('admin()')),
-  uploadBundleChunk: ({ uiHash, chunkIndex, totalChunks, encoding, uncompressedLen, chunkBytes }) =>
-    encodeAbi('uploadBundleChunk(bytes32,uint64,uint64,uint64,uint64,bytes)', [
-      ['bytes32', uiHash],
-      ['uint64', chunkIndex],
-      ['uint64', totalChunks],
-      ['uint64', encoding],
-      ['uint64', uncompressedLen],
-      ['bytes', chunkBytes instanceof Uint8Array ? chunkBytes : hexToBytes(chunkBytes)],
-    ]),
   hasBundle: (uiHash) => encodeAbi('hasBundle(bytes32)', [['bytes32', uiHash]]),
-  getBundleInfo: (uiHash) => encodeAbi('getBundleInfo(bytes32)', [['bytes32', uiHash]]),
-  getBundleChunk: (uiHash, chunkIndex) =>
-    encodeAbi('getBundleChunk(bytes32,uint64)', [
-      ['bytes32', uiHash],
-      ['uint64', chunkIndex],
-    ]),
-  getBundle: (uiHash) => encodeAbi('getBundle(bytes32)', [['bytes32', uiHash]]),
+  getBundleSize: (uiHash) => encodeAbi('getBundleSize(bytes32)', [['bytes32', uiHash]]),
   publishApp: ({
     slugId,
     publisherIdentity = ZERO_ADDR,
@@ -1159,74 +1152,82 @@ export class AppStoreClient {
       { slug, title }
     );
 
-    if (!this.storeAddr) throw new Error('AppStore HFS address not connected.');
-
-    const hasHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
-      { to: this.storeAddr, data: AppStoreAbi.hasBundle(packed.uiHash) },
-      'latest',
-    ]);
-    if (decodeUintWord(hasHex) === 1) {
-      emit(`✓ UI bundle ${shortHex(packed.uiHash)} already verified on-chain (deduplicated)!`);
+    // Check L1 UI_BUNDLE_STORE_ADDRESS (0x0101) via slx_getUiBundle for instant deduplication!
+    const existingBundle = await this.fetchUiBundle(packed.uiHash).catch(() => null);
+    if (existingBundle?.exists && existingBundle.bytes?.length > 0) {
+      emit(`✓ UI bundle ${shortHex(packed.uiHash)} already sealed in UI_BUNDLE_STORE (0x0101)!`);
       return packed;
     }
 
-    const chunks = splitBundleIntoChunks(packed.bytes);
-    if (chunks.length > APP_STORE_MAX_CHUNKS) {
+    if (packed.bytes.length > 262_144) {
       throw new Error(
-        `Compressed UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB) exceeds ${
-          (APP_STORE_MAX_CHUNKS * APP_STORE_CHUNK_BYTES) / 1024
-        } KiB on-chain cap.`
+        `Compressed UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB) exceeds 256 KiB cap.`
       );
     }
 
     const myEoa = wallet.keypair.address;
     const myPriv = wallet.keypair.privateKey;
-    let curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
-    let prevHash = '0x' + '00'.repeat(32);
+    const hashBytes = hexToBytes(packed.uiHash);
 
-    emit(
-      `Uploading & keccak256-sealing UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB gzip in ${
-        chunks.length
-      } chunk${chunks.length === 1 ? '' : 's'})…`
-    );
-    const txs = chunks.map((chunkBytes, idx) => {
-      const cd = AppStoreAbi.uploadBundleChunk({
-        uiHash: packed.uiHash,
-        chunkIndex: idx,
-        totalChunks: chunks.length,
-        encoding: packed.encoding,
-        uncompressedLen: packed.uncompressedLen,
-        chunkBytes,
-      });
+    if (packed.bytes.length <= UI_BUNDLE_RADIO_SAFE_PART_BYTES) {
+      emit(
+        `Uploading UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB gzip) to UI_BUNDLE_STORE (0x0101)…`
+      );
+      const curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+      const payload = concatBytes(hashBytes, packed.bytes);
+      const dataHex = bytesToHex(payload);
       const signed = signOrderedLexiconTx({
         privateKey: myPriv,
         nonce: curNonce,
-        to: this.storeAddr,
-        data: cd,
-        gasLimit: 8_500_000n,
-        extraTargets: [this.storeAddr],
-        lowerBoundHashHex: prevHash,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        data: dataHex,
+        gasLimit: 8_000_000n,
       });
-      curNonce += 1n;
-      prevHash = signed.txHash;
-      return { signed, cd, idx };
-    });
-
-    const hashes = [];
-    for (const item of txs) {
-      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [item.signed.raw]);
-      hashes.push(h);
+      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
       wallet.recordExternalRpcTx({
         txHash: h,
-        rawTx: item.signed.raw,
+        rawTx: signed.raw,
         from: myEoa,
-        to: this.storeAddr,
-        contractLabel: 'AppStore',
-        fnLabel: `uploadBundleChunk(${item.idx + 1}/${chunks.length})`,
-        dataHex: item.cd,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        contractLabel: 'UiBundleStore',
+        fnLabel: `storeUiBundle(${shortHex(packed.uiHash)})`,
+        dataHex,
       });
+      await _waitReceipts(this.rpcUrl, [h]);
+      return packed;
     }
-    await _waitReceipts(this.rpcUrl, hashes);
+
+    const parts = splitBundleIntoChunks(packed.bytes, UI_BUNDLE_RADIO_SAFE_PART_BYTES);
+    emit(
+      `Uploading UI bundle (${(packed.compressedLen / 1024).toFixed(1)} KiB gzip in ${parts.length} radio-safe parts) to UI_BUNDLE_STORE (0x0101)…`
+    );
+    for (let idx = 0; idx < parts.length; idx += 1) {
+      const curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+      const hdr = new Uint8Array(4);
+      hdr[0] = (idx >> 8) & 0xff;
+      hdr[1] = idx & 0xff;
+      hdr[2] = (parts.length >> 8) & 0xff;
+      hdr[3] = parts.length & 0xff;
+      const dataHex = bytesToHex(concatBytes(UI_BUNDLE_MULTIPART_MAGIC, hashBytes, hdr, parts[idx]));
+      const signed = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: curNonce,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        data: dataHex,
+        gasLimit: 8_000_000n,
+      });
+      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+      wallet.recordExternalRpcTx({
+        txHash: h,
+        rawTx: signed.raw,
+        from: myEoa,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        contractLabel: 'UiBundleStore',
+        fnLabel: `storeUiBundlePart(${idx + 1}/${parts.length})`,
+        dataHex,
+      });
+      await _waitReceipts(this.rpcUrl, [h]);
+    }
     return packed;
   }
 
@@ -1446,12 +1447,21 @@ export class AppStoreClient {
     const storeAddr = await this.resolveStoreAddress();
     if (!storeAddr) return [];
     try {
-      const sliceHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
-        { to: storeAddr, data: AppStoreAbi.getAppsSlice(0, 24) },
-        'latest',
-      ]);
-      const { items } = decodeAppsSliceHex(sliceHex);
-      return items.filter((a) => a.status === APP_STATUS.ACTIVE);
+      const all = [];
+      let offset = 0;
+      for (let page = 0; page < 8; page += 1) {
+        const sliceHex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+          { to: storeAddr, data: AppStoreAbi.getAppsSlice(offset, 24) },
+          'latest',
+        ]);
+        const { total, items } = decodeAppsSliceHex(sliceHex);
+        for (const it of items) {
+          if (it.status === APP_STATUS.ACTIVE) all.push(it);
+        }
+        offset += items.length;
+        if (!items.length || offset >= total) break;
+      }
+      return all;
     } catch (_) {
       return [];
     }
@@ -1464,6 +1474,21 @@ export class AppStoreClient {
       const slugId = slugToBytes32(slug);
       const hex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
         { to: storeAddr, data: AppStoreAbi.getAppBySlug(slugId) },
+        'latest',
+      ]);
+      return decodeSingleAppHex(hex);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async fetchAppById(appId) {
+    const storeAddr = await this.resolveStoreAddress();
+    const idNum = Number(appId);
+    if (!storeAddr || !Number.isInteger(idNum) || idNum <= 0) return null;
+    try {
+      const hex = await slxNodeRpc(this.rpcUrl, 'eth_call', [
+        { to: storeAddr, data: AppStoreAbi.getApp(idNum) },
         'latest',
       ]);
       return decodeSingleAppHex(hex);
@@ -1490,8 +1515,54 @@ export class AppStoreClient {
    * Fetches, cryptographically verifies (`keccak256(compressedBytes) === uiHash`), decompresses,
    * and caches an App UI bundle from:
    *   1. `IndexedDB` Immutable CAS Cache (`0–4 ms`, pre-verified HTML)
+  /**
+   * Retrieves compiled Haltproof Subroutine `.wasm` bytecode directly from the node's native
+   * `BYTECODE_STORE_ADDRESS` (`0x0100`) via dedicated `slx_getBytecode(codeHash)` RPC.
+   */
+  async fetchBytecode(codeHash) {
+    const cleanHash = String(codeHash || '').trim().toLowerCase();
+    if (!cleanHash || cleanHash === ZERO_BYTES32) {
+      return { codeHash: cleanHash, exists: false, size: 0, bytes: new Uint8Array(0) };
+    }
+    const res = await slxNodeRpc(this.rpcUrl, 'slx_getBytecode', [cleanHash]);
+    const bytes = res?.bytecode && res.bytecode !== '0x' ? hexToBytes(res.bytecode) : new Uint8Array(0);
+    return {
+      codeHash: res?.codeHash || cleanHash,
+      exists: Boolean(res?.exists && bytes.length > 0),
+      size: bytes.length,
+      bytes,
+    };
+  }
+
+  /**
+   * Retrieves compressed `.html.gz` UI bundle bytes directly from the node's native
+   * `UI_BUNDLE_STORE_ADDRESS` (`0x0101`) via dedicated `slx_getUiBundle(uiHash)` RPC.
+   */
+  async fetchUiBundle(uiHash) {
+    const cleanHash = String(uiHash || '').trim().toLowerCase();
+    if (!cleanHash || cleanHash === ZERO_BYTES32) {
+      return { uiHash: cleanHash, exists: false, size: 0, encoding: APP_STORE_ENCODING.GZIP, bytes: new Uint8Array(0) };
+    }
+    const res = await slxNodeRpc(this.rpcUrl, 'slx_getUiBundle', [cleanHash]);
+    const bytes = res?.data && res.data !== '0x' ? hexToBytes(res.data) : new Uint8Array(0);
+    const enc =
+      res?.encoding === 'raw' && !(bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b)
+        ? APP_STORE_ENCODING.RAW_UTF8
+        : APP_STORE_ENCODING.GZIP;
+    return {
+      uiHash: res?.uiHash || cleanHash,
+      exists: Boolean(res?.exists && bytes.length > 0),
+      size: bytes.length,
+      encoding: enc,
+      bytes,
+    };
+  }
+
+  /**
+   * Content-addressed UI loader with 4-tier fallback:
+   *   1. Verified local HTML cache (`SlxUiBundleCache` in-memory + `IndexedDB`)
    *   2. Local raw bundle store (`IndexedDB` / `CacheStorage`)
-   *   3. Live Subnet 1 `AppStore.getBundle(uiHash)` (`1` single `eth_call`)
+   *   3. Dedicated node RPC `slx_getUiBundle(uiHash)` (`UI_BUNDLE_STORE` `0x0101`)
    *   4. Genesis static fallback URL (`/app-bundles/<slug>.html.gz`)
    */
   async fetchVerifiedBundleHtml({
@@ -1526,29 +1597,15 @@ export class AppStoreClient {
     }
 
     if (cleanHash && cleanHash !== ZERO_BYTES32) {
-      const storeAddr = await this.resolveStoreAddress();
-      if (storeAddr) {
-        try {
-          const [infoHex, bundleHex] = await Promise.all([
-            slxNodeRpc(this.rpcUrl, 'eth_call', [
-              { to: storeAddr, data: AppStoreAbi.getBundleInfo(cleanHash) },
-              'latest',
-            ]),
-            slxNodeRpc(this.rpcUrl, 'eth_call', [
-              { to: storeAddr, data: AppStoreAbi.getBundle(cleanHash) },
-              'latest',
-            ]),
-          ]);
-          const info = decodeBundleInfoHex(infoHex);
-          const rawBytes = hexToBytes(bundleHex);
-          if (info.sealed && rawBytes.length > 0) {
-            const verified = await verifyAndUnpackAppUiBundle(rawBytes, cleanHash, info.encoding);
-            await SlxUiBundleCache.putRawBundle(cleanHash, rawBytes, info.encoding);
-            await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified, metaHint);
-            return { ...verified, cacheHit: false, loadedFrom: 'onchain-appstore' };
-          }
-        } catch (_) {}
-      }
+      try {
+        const remote = await this.fetchUiBundle(cleanHash);
+        if (remote.exists && remote.bytes.length > 0) {
+          const verified = await verifyAndUnpackAppUiBundle(remote.bytes, cleanHash, remote.encoding);
+          await SlxUiBundleCache.putRawBundle(cleanHash, remote.bytes, remote.encoding);
+          await SlxUiBundleCache.putVerifiedHtml(cleanHash, verified, metaHint);
+          return { ...verified, cacheHit: false, loadedFrom: 'onchain-ui-bundle-store' };
+        }
+      } catch (_) {}
     }
 
     if (fallbackBundleUrl) {

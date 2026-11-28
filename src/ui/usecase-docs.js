@@ -1455,11 +1455,11 @@ export const USECASE_DESCRIPTIONS = {
             <tr><th>Component</th><th>Role in Zero-Server App Execution</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>app_store.wasm</code> (HPS #27)</td><td>Stores immutable <code>keccak256</code>-verified gzipped UI chunks, <code>Superlexicon · Developers</code>-gated app listings, release counters, and <code>0x…</code> instance-to-UI bindings.</td></tr>
+            <tr><td><code>app_store.wasm</code> (HPS #27)</td><td>Stores pure 32-byte <code>uiHash</code> &amp; <code>wasmCodeHash</code> pointers (zero smart-contract blob bloat), <code>Superlexicon · Developers</code>-gated app listings, release counters, and <code>0x…</code> instance-to-UI bindings.</td></tr>
             <tr><td><code>corporate_charter.wasm</code> (Sovereign Root)</td><td>Casts <strong>Superlexicon Pte. Ltd.</strong> (Singapore; Directors: Manogaran Thanabalan &amp; Sarah Jean Rodrigues; <code>100,000</code> <code>SLX-ORD</code> shares) in stone at protocol level, blocks confusable entity names, auto-creates company social groups, and governs the <code>Superlexicon · Developers</code> subgroup.</td></tr>
-            <tr><td><code>BYTECODE_STORE</code> (<code>0x0100</code>)</td><td>Content-addressed L1 store holding each app’s compiled <code>.wasm</code> Halt-Free Subroutine bytecode once per subnet.</td></tr>
+            <tr><td><code>BYTECODE_STORE</code> (<code>0x0100</code>) &amp; <code>UI_BUNDLE_STORE</code> (<code>0x0101</code>)</td><td>Content-addressed L1 stores holding compiled <code>.wasm</code> Halt-Free Subroutine bytecodes (<code>slx_getBytecode</code>) and compressed <code>.html.gz</code> UI bundles (<code>slx_getUiBundle</code>) once per subnet.</td></tr>
             <tr><td><code>identity.wasm</code></td><td>Authenticates app publishers on update and guards user transaction signing via the Host Wallet Confirmation Sheet.</td></tr>
-            <tr><td><code>app-host-boot.js</code> &amp; <code>/apps.html</code></td><td>Universal Host Shell that resolves <code>uiHash</code>, verifies <code>keccak256</code> client-side, decompresses <code>gzip</code>, caches in <code>IndexedDB</code>, and mounts all 12 core apps + community apps dynamically.</td></tr>
+            <tr><td><code>/app.html</code> &amp; <code>/apps.html</code></td><td>Single Universal Host Shell that resolves <code>uiHash</code>, fetches via <code>slx_getUiBundle</code>, verifies <code>keccak256</code> client-side, decompresses <code>gzip</code>, caches in <code>IndexedDB</code>, and mounts all core + community apps dynamically.</td></tr>
           </tbody>
         </table>
       `,
@@ -1468,7 +1468,7 @@ export const USECASE_DESCRIPTIONS = {
           <div class="slx-ucd-card">
             <h4>✅ End-to-End Dual <code>keccak256</code> Verification</h4>
             <ul>
-              <li><strong>On-Chain Seal:</strong> <code>uploadBundleChunk</code> reverts with <code>-34</code> unless the assembled chunks hash to <code>expectedUiHash</code>.</li>
+              <li><strong>L1 Store Seal:</strong> <code>UI_BUNDLE_STORE</code> (<code>0x0101</code>) verifies <code>keccak256(gzBytes) == uiHash</code> in native Rust before sealing into <code>ConsensusStorage</code>, and <code>app_store.wasm</code> verifies <code>hasBundle(uiHash)</code> before publishing.</li>
               <li><strong>Client-Side Verify:</strong> <code>verifyAndUnpackAppUiBundle</code> recomputes <code>keccak256(bytes)</code> in your browser before decompressing or rendering a single byte of HTML.</li>
             </ul>
           </div>
