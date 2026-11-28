@@ -2524,7 +2524,12 @@ export function attachSandboxedAppBridge({
           dataHex: innerData,
         });
         const [rcpt] = await _waitReceipts(rpcUrl, [txHash]);
-        reply(id, { txHash, status: rcpt.status, blockNumber: Number(BigInt(rcpt.blockNumber || 0)) });
+        reply(id, {
+          txHash,
+          status: rcpt.status,
+          blockNumber: Number(BigInt(rcpt.blockNumber || 0)),
+          logs: rcpt.logs || [],
+        });
         return;
       }
 

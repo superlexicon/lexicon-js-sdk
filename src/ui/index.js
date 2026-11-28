@@ -3713,6 +3713,15 @@ export const SLX_PLATFORM_APPS = [
     href: '/haltfree-ecosystem.html',
     group: 'Educational & Science Labs',
   },
+  {
+    id: 'hfs-studio',
+    icon: '🛠️',
+    label: 'HFS WonderLab Studio',
+    shortLabel: 'HFS Studio',
+    sub: 'Kid & Creator Visual Block-to-WASM App Builder',
+    href: '/hfs-studio.html',
+    group: 'Educational & Science Labs',
+  },
 ];
 
 const APP_ID_ALIASES = {

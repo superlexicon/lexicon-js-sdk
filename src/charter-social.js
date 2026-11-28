@@ -536,6 +536,15 @@ export async function checkSuperlexiconDeveloperStanding({
           reason:
             'Publishing apps & deploying HFS over Web RPC requires membership in the Superlexicon · Developers social group (governed by Superlexicon Pte. Ltd. CorporateCharter).',
         };
+      } else if (!sovCharter) {
+        return {
+          authorized: true,
+          inDevelopersGroup: false,
+          isDirectRf,
+          sovereignCharter: '',
+          subgroupSlug: SUBGROUP_DEVELOPERS_SLUG,
+          reason: 'Open community sandboxed AppStore mode active on Subnet 1',
+        };
       }
     } catch (_) {}
   }
