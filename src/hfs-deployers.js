@@ -2221,6 +2221,90 @@ export async function deployNewRideExchangeHfs({
   };
 }
 
+export async function deployNewJonesBlockchainHfs({
+  wallet,
+  label = 'Sunnyvale Family Town Board',
+  rpcUrl = getDefaultNodeWsUrl(),
+  manifestOverride = null,
+  onStatus = null,
+}) {
+  const manifest = manifestOverride || (await SlxHfsCache.hydrateWithManifest()).manifest;
+  const codeHash =
+    manifest?.codeHashes?.jones_blockchain ||
+    '0xec36f6ca98b7f8e7eb55f0bc279066d3f02070dffd50768a26654d3038695dcf';
+  const reg = manifest?.hfsRegistry;
+  if (!reg) throw new Error('Missing hfsRegistry in manifest');
+
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'Jones in the Blockchain' });
+  const myEoa = wallet.keypair.address;
+  const myPriv = wallet.keypair.privateKey;
+
+  if (onStatus) onStatus('Block 1/2: Instantiating jones_blockchain.wasm Town Board…');
+  const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const s0 = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0,
+    to: null,
+    data: codeHash,
+    gasLimit: 5_000_000n,
+  });
+  const [r0] = await waitReceipts(rpcUrl, [await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [s0.raw])]);
+  const newContractAddr = r0.contractAddress.toLowerCase();
+
+  const gameId = bytesToHex(concatBytes(utf8ToBytes('JONES_BRD_'), randomBytes(22)));
+  if (onStatus) onStatus(`Block 2/2: Opening Sunnyvale Lobby & registering ${shortHex(newContractAddr)}…`);
+
+  const n1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const txCreate = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1,
+    to: newContractAddr,
+    data: encodeSimpleAbi('createGame(bytes32,address,uint64,uint64,uint64,uint64)', [
+      ['bytes32', gameId],
+      ['address', idRec?.identityAddr || '0x0000000000000000000000000000000000000000'],
+      ['uint64', 5000n],
+      ['uint64', 65n],
+      ['uint64', 30n],
+      ['uint64', 60n],
+    ]),
+    gasLimit: 3_500_000n,
+    extraTargets: [newContractAddr],
+  });
+  const txReg = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 1n,
+    to: reg,
+    data: HfsRegistryAbi.registerInstance('JONES_BLOCKCHAIN', newContractAddr, idRec?.identityAddr, label, {
+      gameId,
+    }),
+    gasLimit: 5_200_000n,
+    extraTargets: [reg, newContractAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
+    lowerBoundHashHex: txCreate.txHash,
+  });
+
+  await waitReceipts(rpcUrl, [
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txCreate.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txReg.raw]),
+  ]);
+
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: newContractAddr,
+      typeName: 'JONES_BLOCKCHAIN',
+      status: 2,
+      label,
+      rpcUrl,
+    })
+    .catch(() => {});
+
+  return {
+    primaryAddr: newContractAddr,
+    label,
+    meta: { gameId },
+    selectionKey: makeHfsSelectionKey(newContractAddr, { gameId }),
+  };
+}
+
 function wrapWebGatedDeployer(fn) {
   return async (opts = {}) => {
     const candidateLabel = opts.companyName || opts.label || '';
@@ -2244,3 +2328,4 @@ registerHfsTypeDeployer("IFRS_LEDGER", wrapWebGatedDeployer(deployNewIfrsLedgerH
 registerHfsTypeDeployer("WEBRTC_SIGNAL", wrapWebGatedDeployer(deployNewWebRtcSignalHfs));
 registerHfsTypeDeployer("VOLATILE_VOLES", wrapWebGatedDeployer(deployNewVolatileVolesHfs));
 registerHfsTypeDeployer("RIDE_EXCHANGE", wrapWebGatedDeployer(deployNewRideExchangeHfs));
+registerHfsTypeDeployer("JONES_BLOCKCHAIN", wrapWebGatedDeployer(deployNewJonesBlockchainHfs));

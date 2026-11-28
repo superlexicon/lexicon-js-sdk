@@ -3694,6 +3694,15 @@ export const SLX_PLATFORM_APPS = [
     href: '/volatile-voles.html',
     group: 'Multiplayer On-Chain Games',
   },
+  {
+    id: 'jones',
+    icon: '🕰️',
+    label: 'Jones in the Blockchain',
+    shortLabel: 'Jones Town',
+    sub: 'Cozy 1–4P Career, University & Life-Sim Strategy',
+    href: '/jones.html',
+    group: 'Multiplayer On-Chain Games',
+  },
 ];
 
 const APP_ID_ALIASES = {
@@ -3708,6 +3717,9 @@ const APP_ID_ALIASES = {
   'quantum-lottery': 'lottery',
   voles: 'volatile-voles',
   volatile_voles: 'volatile-voles',
+  'jones-in-the-blockchain': 'jones',
+  jones_blockchain: 'jones',
+  'fast-lane': 'jones',
   'secret-ballot': 'ballot',
   ciphervote: 'ballot',
   'ifrs-ledger': 'accounting',

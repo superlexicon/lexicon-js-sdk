@@ -490,6 +490,88 @@ const GAME_MANUALS = {
       `,
     },
   },
+
+  jones: {
+    icon: '🕰️',
+    title: 'Jones in the Blockchain — Sunnyvale Town Field Manual',
+    accent: '#fbbf24',
+    tagline:
+      'A cozy, unhurried life-simulation board game for all ages — balance Wealth, Happiness, University Degrees, and your Career across 60-hour weeks to reach 100% before Jones does!',
+    welcomePrimaryLabel: '☀️ Start Week 1 vs. Jones',
+    quickSteps: [
+      {
+        num: '1',
+        title: 'Get Your First Job & Grab a Meal',
+        body: 'Click Employment Office to apply for Fry Cook or Stock Clerk, visit your new workplace to work 6-hour shifts for cash, and grab a Burger or Groceries before the weekend!',
+      },
+      {
+        num: '2',
+        title: 'Study Degrees & Buy Time-Saving Tech',
+        body: 'Enroll at Haltproof University to unlock higher-paying careers! A Fridge stores groceries, a Microwave adds +4 hours/week, an E-Scooter halves walking time, and a Home Computer doubles study speed!',
+      },
+      {
+        num: '3',
+        title: 'Bank Your Cash & Seal Your Week in 1 Click',
+        body: 'Deposit spare cash at First Consensus Bank (2%/wk interest — and safe from Sneaky Sam!), then click 🌙 Finish Week & Roll Weekend to commit your whole 60h week at $0.00 gas!',
+      },
+    ],
+    tabs: {
+      quickstart: `
+        <div class="slx-gg-hero">
+          <div class="slx-gg-hero-title">🏆 How to Win: Reach 100% in All Four Life Pillars!</div>
+          <p>
+            Unlike cutthroat elimination games, <strong>Jones in the Blockchain</strong> is a joyful race to build a well-rounded life!
+            The first player to reach <strong>100%</strong> in <strong>💰 Wealth</strong>, <strong>😊 Happiness</strong>, <strong>🎓 Education</strong>, and <strong>💼 Career</strong> at the end of a week wins the town trophy!
+          </p>
+        </div>
+        <div class="slx-gg-steps-grid">
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">PILLAR 1 &amp; 2</span>
+            <h4>💰 Wealth &amp; 😊 Happiness</h4>
+            <p><strong>Wealth</strong> counts your Cash + Bank Savings + Town Stocks minus Rent Debt. <strong>Happiness</strong> grows from diplomas, promotions, appliances, tasty meals, and free Plaza Picnics!</p>
+          </div>
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">PILLAR 3</span>
+            <h4>🎓 Haltproof University</h4>
+            <p>Complete up to <strong>4 Degrees</strong> (<code>10</code> lectures each — or just <code>5</code> lectures once you own a <strong>Home Computer</strong>!) to unlock top engineering, academic, and banking jobs.</p>
+          </div>
+          <div class="slx-gg-step-card">
+            <span class="slx-gg-step-num">PILLAR 4</span>
+            <h4>💼 12 Town Careers</h4>
+            <p>Start at <em>Burger Bytes</em> or <em>Z-Mart</em>, build <strong>Experience</strong> &amp; <strong>Dependability</strong>, upgrade your outfit at <em>CryptoThreads</em>, and climb all the way to <em>Chief Wasm Architect</em> or <em>Bank President</em>!</p>
+          </div>
+        </div>
+      `,
+      controls: `
+        <div class="slx-gg-card">
+          <h4>🕰️ Your 60-Hour Weekly Pocket-Watch (Zero Popup Fatigue!)</h4>
+          <ul>
+            <li><strong>Click Any Building Around the 12-Tile Ring:</strong> Walking costs <code>2h</code> per tile along the shortest path around town — or just <strong><code>1h</code> per tile</strong> once you buy an <strong>Electric Scooter</strong>!</li>
+            <li><strong>Instant Planning + Undo:</strong> Every visit, shift, lecture, or purchase updates your live 60-hour planner immediately with zero blockchain delay. Changed your mind? Click <strong>↩ Undo Last Step</strong> or <strong>↺ Reset Week</strong> anytime before Friday night!</li>
+            <li><strong>1-Click Atomic Weekend:</strong> When your hours run low, click <strong>🌙 Finish Week &amp; Roll Weekend!</strong> to seal your whole week, read the <em>&ldquo;Oh, What a Weekend!&rdquo;</em> Gazette, and watch <strong>Jones</strong> take his turn!</li>
+          </ul>
+        </div>
+      `,
+      reference: `
+        <div class="slx-gg-card">
+          <h4>🏘️ Smart Town Tips for Kids &amp; Grown-Ups Alike</h4>
+          <ul>
+            <li><strong>🍔 Don&rsquo;t Forget Dinner:</strong> Make sure you have at least <code>1</code> week of food before finishing your week! Once you buy a <strong>Refrigerator</strong> (check <em>Z-Mart</em> for 15%-off refurbished deals!), you can buy cheaper 2-week crates at <em>FreshBlock Market</em>.</li>
+            <li><strong>🦝 Watch Out for Sneaky Sam:</strong> Carrying over <code>$260</code> in loose cash while living at <em>Shady Acres</em> invites goofy cartoon burglar <strong>Sneaky Sam</strong>! Deposit spare cash at <strong>First Consensus Bank</strong> (earns <code>2%</code> interest every weekend!) or move into bandit-proof <strong>LeSecurity Condo</strong>.</li>
+            <li><strong>👔 Dress for the Job You Want:</strong> Mid-tier jobs require <em>Smart Dress</em> and executive roles require an <em>Executive Suit</em> from <em>CryptoThreads</em>.</li>
+          </ul>
+        </div>
+      `,
+      onchain: `
+        <div class="slx-gg-card">
+          <h4>⛓️ Immortal Family Boards (<a href="https://github.com/superlexicon/haltproof-subroutines/tree/main/examples/jones-blockchain" target="_blank" rel="noopener"><code>jones_blockchain.wasm</code></a>)</h4>
+          <ul>
+            <li><strong>Play at Your Own Pace:</strong> Play a quick 15-minute <em>Afternoon Stroll</em> solo against Jones, or open a 2–4 player family PvP board that stays saved on Subnet 1 forever at <strong>$0.00 gas</strong>!</li>
+          </ul>
+        </div>
+      `,
+    },
+  },
 };
 
 function injectGuideStyles() {

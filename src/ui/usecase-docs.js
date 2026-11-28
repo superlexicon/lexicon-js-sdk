@@ -37,9 +37,12 @@ const DOC_APP_ALIASES = {
   ride_exchange: 'rides',
   transitdex: 'rides',
   uber: 'rides',
+  'jones-in-the-blockchain': 'jones',
+  jones_blockchain: 'jones',
+  'fast-lane': 'jones',
 };
 
-const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir', 'volatile-voles']);
+const GAME_GUIDE_IDS = new Set(['battleship', 'hegemony', 'cipher-noir', 'volatile-voles', 'jones']);
 
 export function normalizeUseCaseId(appId) {
   if (!appId) return '';
@@ -1360,6 +1363,103 @@ export const USECASE_DESCRIPTIONS = {
           <ul>
             <li><strong>Segregated Futures Margin:</strong> <code>KEY_LOCKED_ESCROW</code> tracks every cent of active Rider Bids and un-settled Ride Futures separately from unencumbered demo liquidity, guaranteeing 100% solvency.</li>
             <li><strong>Bounded Worst-Case Fuel:</strong> Static arenas (<code>6</code> regimes &times; <code>64</code> price levels, max <code>192</code> active orders/side) and early AVL termination once <code>base_ask &gt; bid_per_km</code> bound worst-case execution well inside a single FLRC radio block.</li>
+          </ul>
+        </div>
+      `,
+    },
+  },
+
+  jones: {
+    id: 'jones',
+    icon: '🕰️',
+    title: 'Jones in the Blockchain — Cozy Life-Sim HFS Architecture',
+    href: '/jones.html',
+    tagline:
+      'How a slow-paced, multi-decade family life-simulation inspired by Jones in the Fast Lane runs immortally on Layer 1 with zero-fatigue 60-hour weekly batch commits, deterministic AI rivals, and $0.00 gas.',
+    featurePills: [
+      { label: '100% Bounded Halt-Free WASM (29 KB)', tone: 'emerald' },
+      { label: 'Zero-Fatigue Weekly Plan Commits', tone: 'amber' },
+      { label: '4-Pillar Life Goal Engine', tone: 'cyan' },
+      { label: 'On-Chain Rival "Jones" + 2 Personas', tone: 'violet' },
+      { label: 'Dynamic Macro-Cycle & 3 Town Stocks', tone: 'sky' },
+      { label: '$0.00-Gas Multi-Year Persistence', tone: 'emerald' },
+    ],
+    tabs: {
+      codification: `
+        <div class="slx-ucd-hero">
+          <div class="slx-ucd-hero-title">🕰️ Keeping Up With Jones — Immortal Family Board Games Without Central Servers</div>
+          <p>
+            Classic life-simulation board games like <em>Jones in the Fast Lane</em> (1990) were designed as unhurried, cozy multi-hour or multi-evening games for children and adults alike—yet modern Web2 multiplayer adaptations vanish whenever a publisher shuts down its matchmaking server, while naive smart-contract ports ruin the relaxed pace by forcing a wallet popup on every single step around town.
+            <strong>Jones in the Blockchain</strong> (<a href="https://github.com/superlexicon/haltproof-subroutines/tree/main/examples/jones-blockchain" target="_blank" rel="noopener"><code>jones_blockchain.wasm</code></a>) solves both: players stroll around the 12-building town ring at <strong>0ms instant responsiveness</strong> during their <code>60</code>-hour week and seal their entire week + weekend gazette + AI Rival <em>Jones</em> turns in <strong>one atomic $0.00-gas transaction</strong>!
+          </p>
+        </div>
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Game Dimension</th>
+              <th>Web2 / Naive EVM Port</th>
+              <th>Jones in the Blockchain (HFS)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Weekly Turn UX</strong></td>
+              <td>10–15 separate transactions &amp; gas fees per week just to walk, eat, study, and work.</td>
+              <td><strong>Atomic Week Planner (<code>submitWeekPlan</code>):</strong> Queue up to <code>32</code> <code>[op, arg]</code> steps locally and commit the whole week in 1 block at <code>$0.00</code> gas.</td>
+            </tr>
+            <tr>
+              <td><strong>Long-Running Persistence</strong></td>
+              <td>Session state expires if cloud DB or room server restarts.</td>
+              <td><strong>Permanent State-Rooted Boards:</strong> Pick up a family game hours, weeks, or years later from any browser via <code>0x0100</code> + <code>0x0101</code>!</td>
+            </tr>
+            <tr>
+              <td><strong>Solo &amp; Family Modes</strong></td>
+              <td>Off-chain bot scripts that go offline when nobody hosts them.</td>
+              <td><strong>Consensus-Native AI Personas:</strong> Rival <em>Jones</em>, <em>Penny Hodl</em>, and <em>Sunny Wheeler</em> execute deterministically inside WASM!</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      primitives: `
+        <div class="slx-ucd-card">
+          <h4>🔐 Deterministic Economic Simulation &amp; Identity Primitives</h4>
+          <ul>
+            <li><strong>4-Pillar Simultaneous Victory Condition:</strong> First player to reach <code>100%</code> across <strong>Wealth</strong> (<code>Cash + Bank Savings + Stock Portfolio - Rent Debt</code>), <strong>Happiness</strong>, <strong>Education</strong> (4 Degrees &times; 10 credits), and <strong>Career</strong> (12 progressive town jobs + Dependability &amp; Experience) wins.</li>
+            <li><strong>Macroeconomic Cycle &amp; Securities Engine:</strong> Every round rolls Sunnyvale&rsquo;s <code>economy_index</code> (<code>78..=128</code>), scaling wages, tuition, appliances, and 3 distinct securities (<em>Sunnyvale T-Bills</em>, <em>Burger Bytes Corp</em>, and high-beta <em>QuantumChip Foundry</em>).</li>
+            <li><strong>Verified Identity HFS Integration:</strong> Every human seat binds its on-chain <code>Identity</code> HFS handle so family/friends leaderboards and multi-device sessions stay human-readable.</li>
+          </ul>
+        </div>
+      `,
+      topology: `
+        <table class="slx-ucd-table">
+          <thead>
+            <tr>
+              <th>Artifact / Store</th>
+              <th>Role in Jones in the Blockchain</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>jones_blockchain.wasm</code> (<code>29 KB</code>)</td>
+              <td>12-building town state machine, 16 action opcodes, 12 careers, 4 university degrees, 6 appliances, weekend gazette, and 3 AI personas (<a href="https://github.com/superlexicon/haltproof-subroutines/tree/main/examples/jones-blockchain" target="_blank" rel="noopener">GitHub source</a>).</td>
+            </tr>
+            <tr>
+              <td><code>0x0101</code> UI Bundle Store</td>
+              <td>Serves the gzipped Storybook UI (<a href="https://github.com/superlexicon/lexicon-client-web/tree/main/app-sources/jones" target="_blank" rel="noopener"><code>app-sources/jones</code></a>) via <code>slx_getUiBundle(uiHash)</code> with zero smart-contract blob bloat.</td>
+            </tr>
+            <tr>
+              <td><code>HfsRegistry</code> + <code>AppStore</code></td>
+              <td>Lists community &amp; family town boards and binds the verified 32-byte <code>uiHash</code> pointer.</td>
+            </tr>
+          </tbody>
+        </table>
+      `,
+      verification: `
+        <div class="slx-ucd-card">
+          <h4>🔬 Bounded Worst-Case Execution &amp; Soft-Lock Prevention</h4>
+          <ul>
+            <li><strong>Zero-Revert Step Replay:</strong> <code>MAX_PLAN_STEPS = 32</code> bounds every transaction to a tiny fixed fuel ceiling, while unaffordable or over-budget sub-steps gracefully no-op instead of reverting a child&rsquo;s turn.</li>
+            <li><strong>Zero Soft-Locks:</strong> Entry-level jobs at <em>Burger Bytes</em> &amp; <em>Z-Mart</em> require zero degrees, <em>Civic Commons Picnics</em> grant free Happiness, and <em>Hashrate Pawn &amp; Repair</em> lets strapped players turn appliances back into cash anytime.</li>
           </ul>
         </div>
       `,

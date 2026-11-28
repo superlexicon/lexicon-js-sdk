@@ -1564,6 +1564,14 @@ export const HFS_TYPES = {
     modalTitle: 'Deploy & Register New Volatile Voles Burrow Arena',
     placeholder: 'e.g. High-Voltage Burrow Club #1',
   },
+  JONES_BLOCKCHAIN: {
+    typeName: 'JONES_BLOCKCHAIN',
+    icon: '🕰️',
+    shortLabel: 'Jones Town',
+    deployBtnText: '+ New Town Board',
+    modalTitle: 'Deploy & Register New Jones in the Blockchain Town Board',
+    placeholder: 'e.g. Sunnyvale Family Board #2',
+  },
   RIDE_EXCHANGE: {
     typeName: 'RIDE_EXCHANGE',
     icon: '🚖',
