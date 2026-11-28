@@ -2314,7 +2314,7 @@ export async function deployNewHaltfreeEcosystemHfs({
   const { manifest } = await SlxHfsCache.hydrateWithManifest();
   const codeHash =
     manifest?.codeHashes?.haltfree_ecosystem ||
-    '0x1dac7fd5b6db276f75127d7d9c82f633ae92a5b6a029202ba44c12ddc0deedda';
+    '0x72fd4e0042e42792037251cdfb96ba931c4009640932487f2d00110b41d51d91';
   const reg = manifest?.hfsRegistry;
   if (!reg) {
     throw new Error('Missing hfsRegistry in manifest');
