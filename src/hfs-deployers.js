@@ -1999,7 +1999,7 @@ export async function deployNewVolatileVolesHfs({
       ['uint64', 7n],
     ]),
     gasLimit: 3_500_000n,
-    extraTargets: [newContractAddr],
+    extraTargets: [newContractAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
   });
   const txReg = signOrderedTx({
     privateKey: myPriv,
@@ -2231,7 +2231,7 @@ export async function deployNewJonesBlockchainHfs({
   const manifest = manifestOverride || (await SlxHfsCache.hydrateWithManifest()).manifest;
   const codeHash =
     manifest?.codeHashes?.jones_blockchain ||
-    '0xec36f6ca98b7f8e7eb55f0bc279066d3f02070dffd50768a26654d3038695dcf';
+    '0x00cdcbfe6f094d77487ec418907918ba069145269780574b531bf2811c3c11e8';
   const reg = manifest?.hfsRegistry;
   if (!reg) throw new Error('Missing hfsRegistry in manifest');
 
@@ -2268,7 +2268,7 @@ export async function deployNewJonesBlockchainHfs({
       ['uint64', 60n],
     ]),
     gasLimit: 3_500_000n,
-    extraTargets: [newContractAddr],
+    extraTargets: [newContractAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
   });
   const txReg = signOrderedTx({
     privateKey: myPriv,
