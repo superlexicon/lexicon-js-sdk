@@ -3697,12 +3697,21 @@ export const SLX_PLATFORM_APPS = [
   },
   {
     id: 'jones',
-    icon: '🕰️',
+    icon: '⚡',
     label: 'Jones in the Blockchain',
-    shortLabel: 'Jones Town',
-    sub: 'Cozy 1–4P Career, University & Life-Sim Strategy',
+    shortLabel: 'Jones Sector',
+    sub: 'Cyberpunk 1–4P Career, Cyber-U. & Life-Sim Map',
     href: '/jones.html',
     group: 'Multiplayer On-Chain Games',
+  },
+  {
+    id: 'haltfree-ecosystem',
+    icon: '🌿',
+    label: 'Haltfree Ecosystem',
+    shortLabel: 'Haltfree Eco',
+    sub: '2,400-Yr Closed-Loop Permaculture & Biodome Sim',
+    href: '/haltfree-ecosystem.html',
+    group: 'Educational & Science Labs',
   },
 ];
 
@@ -3721,6 +3730,8 @@ const APP_ID_ALIASES = {
   'jones-in-the-blockchain': 'jones',
   jones_blockchain: 'jones',
   'fast-lane': 'jones',
+  ecosystem: 'haltfree-ecosystem',
+  haltfree_ecosystem: 'haltfree-ecosystem',
   'secret-ballot': 'ballot',
   ciphervote: 'ballot',
   'ifrs-ledger': 'accounting',

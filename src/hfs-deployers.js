@@ -2305,6 +2305,87 @@ export async function deployNewJonesBlockchainHfs({
   };
 }
 
+export async function deployNewHaltfreeEcosystemHfs({
+  wallet,
+  label = 'Haltfree Ecosystem Sanctuary',
+  rpcUrl = getDefaultNodeWsUrl(),
+  onStatus = null,
+}) {
+  const { manifest } = await SlxHfsCache.hydrateWithManifest();
+  const codeHash =
+    manifest?.codeHashes?.haltfree_ecosystem ||
+    '0x1dac7fd5b6db276f75127d7d9c82f633ae92a5b6a029202ba44c12ddc0deedda';
+  const reg = manifest?.hfsRegistry;
+  if (!reg) {
+    throw new Error('Missing hfsRegistry in manifest');
+  }
+
+  const idRec = await wallet.ensureIdentityWithPrompt({ rpcUrl, appName: 'Haltfree Ecosystem' });
+  const myEoa = wallet.keypair.address;
+  const myPriv = wallet.keypair.privateKey;
+
+  if (onStatus) onStatus('Block 1/2: Instantiating haltfree_ecosystem.wasm Sanctuary…');
+  const n0 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const s0 = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n0,
+    to: null,
+    data: codeHash,
+    gasLimit: 4_500_000n,
+  });
+  const [r0] = await waitReceipts(rpcUrl, [await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [s0.raw])]);
+  const newContractAddr = r0.contractAddress.toLowerCase();
+
+  if (onStatus) onStatus(`Block 2/2: Initializing Sanctuary & registering ${shortHex(newContractAddr)}…`);
+  const n1 = BigInt(await slxNodeRpc(rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+  const cleanLabel = String(label || 'Haltfree Ecosystem Sanctuary').slice(0, 64);
+  const txInit = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1,
+    to: newContractAddr,
+    data: encodeSimpleAbi('initialize(string)', [['string', cleanLabel]]),
+    gasLimit: 3_500_000n,
+    extraTargets: [newContractAddr],
+  });
+  const txReg = signOrderedTx({
+    privateKey: myPriv,
+    nonce: n1 + 1n,
+    to: reg,
+    data: HfsRegistryAbi.registerInstance(
+      'HALTFREE_ECOSYSTEM',
+      newContractAddr,
+      idRec?.identityAddr,
+      cleanLabel,
+      {}
+    ),
+    gasLimit: 5_200_000n,
+    extraTargets: [reg, newContractAddr, ...(idRec?.identityAddr ? [idRec.identityAddr] : [])],
+    lowerBoundHashHex: txInit.txHash,
+  });
+
+  await waitReceipts(rpcUrl, [
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txInit.raw]),
+    await slxNodeRpc(rpcUrl, 'eth_sendRawTransaction', [txReg.raw]),
+  ]);
+
+  await wallet
+    .setHfsAssociation({
+      hfsAddr: newContractAddr,
+      typeName: 'HALTFREE_ECOSYSTEM',
+      status: 2,
+      label: cleanLabel,
+      rpcUrl,
+    })
+    .catch(() => {});
+
+  return {
+    primaryAddr: newContractAddr,
+    label: cleanLabel,
+    meta: {},
+    selectionKey: makeHfsSelectionKey(newContractAddr, {}),
+  };
+}
+
 function wrapWebGatedDeployer(fn) {
   return async (opts = {}) => {
     const candidateLabel = opts.companyName || opts.label || '';
@@ -2329,3 +2410,4 @@ registerHfsTypeDeployer("WEBRTC_SIGNAL", wrapWebGatedDeployer(deployNewWebRtcSig
 registerHfsTypeDeployer("VOLATILE_VOLES", wrapWebGatedDeployer(deployNewVolatileVolesHfs));
 registerHfsTypeDeployer("RIDE_EXCHANGE", wrapWebGatedDeployer(deployNewRideExchangeHfs));
 registerHfsTypeDeployer("JONES_BLOCKCHAIN", wrapWebGatedDeployer(deployNewJonesBlockchainHfs));
+registerHfsTypeDeployer("HALTFREE_ECOSYSTEM", wrapWebGatedDeployer(deployNewHaltfreeEcosystemHfs));

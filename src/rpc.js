@@ -915,6 +915,7 @@ function _scopedCacheStorageKey() {
 
 const _SLUG_MANIFEST_BINDINGS = Object.freeze({
   jones: { objKey: 'jonesBlockchain', addrField: 'contractAddr', wasmKey: 'jones_blockchain' },
+  'haltfree-ecosystem': { objKey: 'haltfreeEcosystem', addrField: 'contractAddr', wasmKey: 'haltfree_ecosystem' },
   'volatile-voles': { objKey: 'volatileVoles', addrField: 'contractAddr', wasmKey: 'volatile_voles' },
   rides: { objKey: 'rideExchange', addrField: 'contractAddr', wasmKey: 'ride_exchange' },
   battleship: { objKey: 'battleship', addrField: 'contractAddr', cacheField: 'battleshipAddr', wasmKey: 'zk_battleship' },
