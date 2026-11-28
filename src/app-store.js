@@ -1633,6 +1633,140 @@ export class AppStoreClient {
 
     throw new Error(`UI bundle ${shortHex(cleanHash)} not found in cache or on-chain AppStore.`);
   }
+
+  /**
+   * Fetches and `keccak256`-verifies an immutable binary media/artwork asset (e.g. `.jpg`, `.webp`, `.svg`)
+   * from local `IndexedDB` CAS (`0 ms` repeat visits) or Subnet 1 `UI_BUNDLE_STORE` (`0x0101`) via
+   * `slx_getUiBundle(assetHash)` — eliminating static `/assets/...` web server redeploys.
+   */
+  async fetchVerifiedAssetBytes({ assetHash, fallbackUrl = '' }) {
+    const cleanHash = String(assetHash || '').trim().toLowerCase();
+    if (cleanHash && cleanHash !== ZERO_BYTES32) {
+      const rawLocal = await SlxUiBundleCache.getRawBundle(cleanHash);
+      if (rawLocal?.bytes && rawLocal.bytes.length > 0) {
+        const actual = keccak256Hex(rawLocal.bytes).toLowerCase();
+        if (actual === cleanHash) {
+          return {
+            hash: cleanHash,
+            bytes: rawLocal.bytes,
+            cacheHit: true,
+            loadedFrom: 'indexeddb-cas',
+          };
+        }
+      }
+
+      try {
+        const remote = await this.fetchUiBundle(cleanHash);
+        if (remote.exists && remote.bytes.length > 0) {
+          const actual = keccak256Hex(remote.bytes).toLowerCase();
+          if (actual !== cleanHash) {
+            throw new Error(
+              `Asset integrity mismatch: expected ${shortHex(cleanHash)}, got ${shortHex(actual)}`
+            );
+          }
+          await SlxUiBundleCache.putRawBundle(cleanHash, remote.bytes, APP_STORE_ENCODING.RAW_UTF8);
+          return {
+            hash: cleanHash,
+            bytes: remote.bytes,
+            cacheHit: false,
+            loadedFrom: 'onchain-ui-bundle-store',
+          };
+        }
+      } catch (_) {}
+    }
+
+    if (fallbackUrl && typeof fetch !== 'undefined') {
+      const resp = await fetch(fallbackUrl, { cache: 'force-cache' });
+      if (resp.ok) {
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        const actual = keccak256Hex(bytes).toLowerCase();
+        if (!cleanHash || cleanHash === ZERO_BYTES32 || actual === cleanHash) {
+          await SlxUiBundleCache.putRawBundle(actual, bytes, APP_STORE_ENCODING.RAW_UTF8);
+          return {
+            hash: actual,
+            bytes,
+            cacheHit: false,
+            loadedFrom: 'fallback-http',
+          };
+        }
+      }
+    }
+
+    throw new Error(`Media asset ${shortHex(cleanHash)} not found in local CAS or 0x0101 store.`);
+  }
+
+  /**
+   * Uploads an immutable binary artwork/media asset (`<= 256 KiB`) to `UI_BUNDLE_STORE` (`0x0101`)
+   * in `40 KiB` radio-safe chunks with automatic `keccak256` deduplication.
+   */
+  async uploadAssetBlob({ wallet, bytes, onStatus = null }) {
+    const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (!u8.length) throw new Error('Asset blob is empty (0 bytes).');
+    if (u8.length > 262_144) {
+      throw new Error(`Asset blob (${(u8.length / 1024).toFixed(1)} KiB) exceeds 256 KiB cap.`);
+    }
+    const emit = (msg) => {
+      if (typeof onStatus === 'function') onStatus(msg);
+    };
+    const standing = await checkSuperlexiconDeveloperStanding({
+      wallet,
+      rpcUrl: this.rpcUrl,
+    });
+    if (!standing.authorized) {
+      throw new Error(
+        standing.reason ||
+          'Only Superlexicon · Developers members are authorized to upload assets over Web RPC.'
+      );
+    }
+
+    const assetHash = keccak256Hex(u8).toLowerCase();
+    await SlxUiBundleCache.putRawBundle(assetHash, u8, APP_STORE_ENCODING.RAW_UTF8);
+
+    const existing = await this.fetchUiBundle(assetHash).catch(() => null);
+    if (existing?.exists && existing.bytes?.length === u8.length) {
+      emit(`✓ Asset ${shortHex(assetHash)} already sealed in UI_BUNDLE_STORE (0x0101)!`);
+      return { hash: assetHash, size: u8.length, deduplicated: true };
+    }
+
+    const myEoa = wallet.keypair.address;
+    const myPriv = wallet.keypair.privateKey;
+    const hashBytes = hexToBytes(assetHash);
+
+    if (u8.length <= UI_BUNDLE_RADIO_SAFE_PART_BYTES) {
+      const curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+      const signed = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: curNonce,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        data: bytesToHex(concatBytes(hashBytes, u8)),
+        gasLimit: 8_000_000n,
+      });
+      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+      await _waitReceipts(this.rpcUrl, [h]);
+      return { hash: assetHash, size: u8.length, deduplicated: false };
+    }
+
+    const parts = splitBundleIntoChunks(u8, UI_BUNDLE_RADIO_SAFE_PART_BYTES);
+    for (let idx = 0; idx < parts.length; idx += 1) {
+      const curNonce = BigInt(await slxNodeRpc(this.rpcUrl, 'eth_getTransactionCount', [myEoa, 'latest']));
+      const hdr = new Uint8Array([
+        (idx >> 8) & 0xff,
+        idx & 0xff,
+        (parts.length >> 8) & 0xff,
+        parts.length & 0xff,
+      ]);
+      const signed = signOrderedLexiconTx({
+        privateKey: myPriv,
+        nonce: curNonce,
+        to: UI_BUNDLE_STORE_ADDRESS,
+        data: bytesToHex(concatBytes(UI_BUNDLE_MULTIPART_MAGIC, hashBytes, hdr, parts[idx])),
+        gasLimit: 8_000_000n,
+      });
+      const h = await slxNodeRpc(this.rpcUrl, 'eth_sendRawTransaction', [signed.raw]);
+      await _waitReceipts(this.rpcUrl, [h]);
+    }
+    return { hash: assetHash, size: u8.length, deduplicated: false };
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -2918,6 +2918,20 @@ export function openSlxUseCaseInstructions(appId, tabKey = 'quickstart') {
  * Mounts standardized `🏛️ Description` (and `📖 Instructions` when not already provided by `game-guide.js`)
  * pills into a Unified Header container (`refs.extra`) and handles `?modal=description|instructions` deep links.
  */
+export function registerSlxUseCaseDocs(appId, { description = null, instructions = null, hasGameGuide = false } = {}) {
+  const id = normalizeUseCaseId(appId);
+  if (!id) return;
+  if (description && typeof description === 'object') {
+    USECASE_DESCRIPTIONS[id] = { id, ...description };
+  }
+  if (instructions && typeof instructions === 'object') {
+    USECASE_INSTRUCTIONS[id] = { id, ...instructions };
+  }
+  if (hasGameGuide) {
+    GAME_GUIDE_IDS.add(id);
+  }
+}
+
 export function mountSlxUseCaseHeaderDocs({ activeAppId, extraContainer }) {
   if (typeof document === 'undefined' || !extraContainer) return null;
   const id = normalizeUseCaseId(activeAppId);

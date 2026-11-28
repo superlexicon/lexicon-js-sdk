@@ -913,6 +913,66 @@ function _scopedCacheStorageKey() {
   return key === 'subnet1' ? STORAGE_KEY_HFS_CACHE : `${STORAGE_KEY_HFS_CACHE}:${key}`;
 }
 
+const _SLUG_MANIFEST_BINDINGS = Object.freeze({
+  jones: { objKey: 'jonesBlockchain', addrField: 'contractAddr', wasmKey: 'jones_blockchain' },
+  'volatile-voles': { objKey: 'volatileVoles', addrField: 'contractAddr', wasmKey: 'volatile_voles' },
+  rides: { objKey: 'rideExchange', addrField: 'contractAddr', wasmKey: 'ride_exchange' },
+  battleship: { objKey: 'battleship', addrField: 'contractAddr', cacheField: 'battleshipAddr', wasmKey: 'zk_battleship' },
+  'cipher-noir': { objKey: 'cipherNoir', addrField: 'contractAddr', wasmKey: 'cipher_noir' },
+  hegemony: { objKey: 'hegemony', addrField: 'contractAddr', wasmKey: 'hegemony' },
+  lottery: { objKey: 'quantumLottery', addrField: 'contractAddr', wasmKey: 'lottery' },
+  ballot: { objKey: 'secretBallot', addrField: 'contractAddr', wasmKey: 'secret_ballot' },
+  telephony: { objKey: 'webrtcSignal', addrField: 'contractAddr', wasmKey: 'webrtc_signal' },
+  crowdfunding: { objKey: 'crowdfunding', addrField: 'contractAddr', wasmKey: 'crowdfunding' },
+  rewards: { objKey: 'rewardVoucher', addrField: 'contractAddr', wasmKey: 'reward_voucher' },
+  accounting: { objKey: 'institutional', addrField: 'accountingLedger', cacheField: 'accountingLedgerAddr', wasmKey: 'accounting_ledger' },
+  charter: { objKey: 'institutional', addrField: 'corporateCharter', cacheField: 'corporateCharterAddr', wasmKey: 'corporate_charter' },
+  dex: { objKey: 'institutional', addrField: 'dexClob', cacheField: 'dexClobAddr', wasmKey: 'dex_clob' },
+  commerce: { objKey: 'institutional', addrField: 'productLedger', cacheField: 'corpProductLedgerAddr', wasmKey: 'product_ledger' },
+  social: { objKey: 'fleetSocial', addrField: 'charter', cacheField: 'socialCharterAddr', wasmKey: 'messaging' },
+});
+
+function _applyLiveMountedAppOverlay(manifestObj, mergedObj) {
+  const mounted =
+    typeof globalThis !== 'undefined' && globalThis.__SLX_MOUNTED_APP__
+      ? globalThis.__SLX_MOUNTED_APP__
+      : null;
+  if (!mounted || !mounted.slug) return manifestObj;
+  const slug = String(mounted.slug).trim().toLowerCase();
+  const bind = _SLUG_MANIFEST_BINDINGS[slug];
+  const ZERO20 = '0x0000000000000000000000000000000000000000';
+  const ZERO32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
+  const liveHfs = String(mounted.defaultHfsAddr || '').trim().toLowerCase();
+  const liveWasm = String(mounted.wasmCodeHash || '').trim().toLowerCase();
+  if ((!liveHfs || liveHfs === ZERO20) && (!liveWasm || liveWasm === ZERO32)) {
+    return manifestObj;
+  }
+
+  const nextManifest = manifestObj && typeof manifestObj === 'object' ? { ...manifestObj } : {};
+  nextManifest.codeHashes = { ...(nextManifest.codeHashes || {}) };
+
+  if (bind) {
+    if (liveHfs && liveHfs !== ZERO20) {
+      nextManifest[bind.objKey] = {
+        ...(nextManifest[bind.objKey] || {}),
+        [bind.addrField]: liveHfs,
+      };
+      if (bind.cacheField && mergedObj) {
+        mergedObj[bind.cacheField] = liveHfs;
+      }
+      if (bind.objKey === 'institutional' && mergedObj) {
+        mergedObj.institutional = nextManifest.institutional;
+      }
+    }
+    if (liveWasm && liveWasm !== ZERO32 && bind.wasmKey) {
+      nextManifest.codeHashes[bind.wasmKey] = liveWasm;
+      if (mergedObj) mergedObj.codeHashes = nextManifest.codeHashes;
+    }
+  }
+  nextManifest.__mountedApp = mounted;
+  return nextManifest;
+}
+
 export const SlxHfsCache = {
   load() {
     if (typeof localStorage === 'undefined') return {};
@@ -1037,6 +1097,7 @@ export const SlxHfsCache = {
       institutional: manifest?.institutional || null,
       codeHashes: manifest?.codeHashes || {},
     };
+    manifest = _applyLiveMountedAppOverlay(manifest, merged);
     this.save(merged);
     return { cache: merged, manifest, subnet: activeProf };
   },

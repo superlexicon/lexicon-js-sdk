@@ -1154,8 +1154,14 @@ function injectGuideStyles() {
  *  - Renders first-visit 3-Step Quick-Start card into `welcomeMountEl`
  *  - Renders live Contextual Coach bar into `coachMountEl`
  */
+export function registerSlxGameManual(gameId, spec) {
+  if (!gameId || !spec) return;
+  GAME_MANUALS[String(gameId).trim().toLowerCase()] = spec;
+}
+
 export function mountSlxGameGuide({
   gameId,
+  manualSpec = null,
   headerBtnEl,
   welcomeMountEl,
   coachMountEl,
@@ -1165,7 +1171,10 @@ export function mountSlxGameGuide({
   if (typeof document === 'undefined') {
     return { openModal: () => {}, updateCoach: () => {}, isWelcomeVisible: () => false };
   }
-  const spec = GAME_MANUALS[gameId];
+  if (manualSpec && gameId) {
+    GAME_MANUALS[String(gameId).trim().toLowerCase()] = manualSpec;
+  }
+  const spec = manualSpec || GAME_MANUALS[gameId];
   if (!spec) {
     throw new Error(`Unknown gameId for mountSlxGameGuide: ${gameId}`);
   }

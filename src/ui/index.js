@@ -38,6 +38,7 @@ import {
   USECASE_INSTRUCTIONS,
   openSlxUseCaseDescription,
   openSlxUseCaseInstructions,
+  registerSlxUseCaseDocs,
   mountSlxUseCaseHeaderDocs,
 } from './usecase-docs.js';
 import {
@@ -4434,3 +4435,5 @@ export function mountSlxBootLoader({
     isComplete: () => completed,
   };
 }
+
+export { registerSlxUseCaseDocs };
